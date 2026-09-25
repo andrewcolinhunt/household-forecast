@@ -15,7 +15,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     env:
-      PIXI_LOCKED: "1"
+      PIXI_LOCKED: "true"
     steps:
       - uses: actions/checkout@v6
 
@@ -33,7 +33,7 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     env:
-      PIXI_LOCKED: "1"
+      PIXI_LOCKED: "true"
     steps:
       - uses: actions/checkout@v6
 
@@ -48,7 +48,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      PIXI_LOCKED: "1"
+      PIXI_LOCKED: "true"
     steps:
       - uses: actions/checkout@v6
 
