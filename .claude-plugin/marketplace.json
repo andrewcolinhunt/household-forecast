@@ -1,0 +1,15 @@
+{
+  "name": "financial-model",
+  "owner": {
+    "name": "Andrew Hunt"
+  },
+  "plugins": [
+    {
+      "name": "financial-model",
+      "source": "./",
+      "strict": false,
+      "description": "In-repo Claude Code skills for this project",
+      "skills": ["./skills/example-skill"]
+    }
+  ]
+}

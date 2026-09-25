@@ -1,0 +1,8 @@
+/* Custom styles for financial-model docs.
+   Loaded via site.options.style in myst.yml. */
+
+@media (min-width: 640px) {
+  .myst-search-bar {
+    width: 10rem;
+  }
+}

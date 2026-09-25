@@ -1,0 +1,57 @@
+# Jupyter Book 2.x configuration (MyST-based)
+# https://mystmd.org/guide/quickstart
+
+version: 1
+
+project:
+  title: financial-model
+  copyright: "2026"
+
+  # Repository information
+  github: https://github.com/andrewcolinhunt/financial-model
+
+  # Bibliography
+  bibliography:
+    - references.bib
+
+  # Table of contents
+  toc:
+    - file: index.md
+    - title: Getting Started
+      children:
+        - file: getting-started/index.md
+    - title: How-to Guides
+      children:
+        - file: how-to-guides/index.md
+    - title: Concepts
+      children:
+        - file: concepts/index.md
+    - title: Reference
+      children:
+        - file: reference/index.md
+
+site:
+  title: financial-model
+
+  nav:
+    - title: Getting Started
+      url: /getting-started
+    - title: How-to Guides
+      url: /how-to-guides
+    - title: Concepts
+      url: /concepts
+    - title: Reference
+      url: /reference
+
+  actions:
+    - title: GitHub
+      url: https://github.com/andrewcolinhunt/financial-model
+
+  parts:
+    footer: footer.md
+    primary_sidebar_footer: primary-sidebar-footer.md
+
+  options:
+    logo_text: financial-model
+    folders: true
+    style: ./custom.css
