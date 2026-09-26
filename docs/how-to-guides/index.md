@@ -1,13 +1,31 @@
 # Using and Hosting the App
 
+## Create and edit scenarios
+
+**Scenarios** is the home page. Each saved scenario shows its location, tax year,
+monthly cash left over, and annual assets added.
+
+- Choose **New scenario** to start from scratch, or **Actions → Duplicate** to
+  start from an existing scenario. A duplicate stays unsaved until you save it.
+- Choose **Edit** to open a scenario. **Calculate** updates its preview without
+  saving. **Save** calculates and saves the current inputs and matching results.
+- **Unsaved changes** identifies edits that are not in the shared database.
+  A separate notice identifies results that need recalculation.
+
+Edits stay in your browser session when you switch pages or open another
+scenario. Use **Resume editing**, a scenario's **Edit** button, or the
+**Unsaved drafts** section to return. Save before closing the browser.
+
+If another person has changed or deleted a scenario, your save cannot overwrite
+that change. Keep your version with **Save as new scenario**, or use
+**Reload saved version → Discard edits and reload** when a saved version still
+exists. **Refresh** updates the library without replacing your drafts.
+
 ## Compare scenarios
 
-1. Select a saved scenario or enter a new one. Submit the form with **Calculate**.
-2. Select **Keep these results for comparison** to retain a snapshot in
-   this session. You can also compare with a saved scenario.
-3. Change the inputs and calculate again. Under Results, select **Compare with**.
-4. Choose **Overview**, **Cash flow**, or **Difference**. Both scenarios must
-   use the same tax year and current calculation rules.
+Open **Compare** in the top navigation and select two scenarios independently.
+The editor does not need to be open. Both scenarios must use the same tax year
+and current calculation rules.
 
 **Overview** compares monthly cash left over, annual savings and investments,
 and annual assets added if all leftover cash is kept. The savings breakdown
@@ -17,31 +35,38 @@ separates retirement, personal savings, retained stock, and purchased shares.
 Option purchases appear when present. Retained stock and employer retirement
 are excluded from spendable cash.
 
-**Difference** shows the current scenario minus the named comparison scenario.
+**Difference** shows the second scenario minus the first, using their names.
 Each bar is the running annual difference after the adjustment on that row.
 The final bar reconciles to the difference in total assets added. Stock and
 option changes appear when needed; transfers into your own savings accounts
 do not change the total. Negative values extend left of zero.
 
+To compare without saving, calculate in the editor and choose **Compare results**.
+The last calculated draft appears as a separate choice. **Keep snapshot** retains
+one calculated version while you change and recalculate the draft. Both session
+results are labeled; uncalculated edits never replace their inputs.
+
 Displayed amounts are rounded to whole dollars; calculations retain cents. See
 [calculation assumptions](../concepts/index.md) for the meaning of each total.
 
-## Save, duplicate, and recover
+## Delete a scenario
 
-**Calculate and save** calculates the visible form and saves matching inputs
-and results together. **Save as new scenario** creates a separate record; an
-unchanged name gets a “(copy)” suffix. **Calculate** alone leaves storage alone.
-Save before changing the selected scenario.
+In **Scenarios**, open its **Actions** menu and choose **Delete**. Check the name
+in the confirmation dialog, then choose **Delete scenario** or **Cancel**.
+Deletion removes the shared record for both people and its draft in your current
+session. It cannot be undone. Download a backup first if you want to keep a copy.
 
-If someone else saved first, your save is rejected and your draft stays open.
-Choose **Save as new scenario** to keep both versions, or **Reload saved** to
-discard your draft and load the latest shared version. **Refresh saved list**
-updates the list without replacing the current draft.
+A scenario changed since the dialog opened cannot be deleted until you refresh
+and review it again. Deleted scenarios disappear from comparison selectors.
+An open draft in another session can only be saved as a new scenario.
 
-Under **Backups**, download the last calculated scenario as JSON. To restore it,
-upload that file and choose **Load backup as new draft**, then calculate and
-save. Imports are limited to 1 MB and the supported schema. Keep these files
-private: they contain household financial inputs.
+## Back up and recover
+
+In the editor's **Backups** section, download the last calculated scenario as
+JSON. To restore it, upload the file under **Backups** in Scenarios or the editor and choose
+**Load backup as new draft**, then calculate and save. Imports are limited to
+1 MB and the supported schema. Keep these files private: they contain household
+financial inputs. Backups exclude edits made after the last calculation.
 
 ## Run the local database
 
@@ -58,7 +83,7 @@ service without removing that data; `docker compose up -d --wait` starts it
 again. Keep the named volume when recreating the container.
 
 Local credentials are in the ignored `.env` and `.streamlit/secrets.toml` files.
-The app uses a separate account with read/create/update access to scenarios.
+The app uses a separate account with read/create/update/delete access to scenarios.
 These files and the volume belong to this computer; cloning the repository does
 not copy the database. Local access does not provide a shared hosted URL.
 
@@ -77,7 +102,7 @@ JSON backups are also available in the app.
 
 Create a dedicated database, then apply `scripts/schema.sql` using its SQL
 console or a PostgreSQL client. The app never creates or migrates tables on
-startup. Give its runtime role `SELECT`, `INSERT`, and `UPDATE` on `scenarios`,
+startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `scenarios`,
 plus schema usage and database connection rights. Use a separate owner for
 schema changes.
 

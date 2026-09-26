@@ -58,11 +58,11 @@ See [calculation assumptions](../concepts/index.md) for formulas and coverage.
 ## Persistence
 
 `financial_model.storage` provides `list_scenarios`, `load_scenario`,
-`create_scenario`, and `update_scenario`. Each call uses a short transaction.
-Updates require the revision previously loaded and raise `RevisionConflictError`
-when stale. `import_backup(bytes) -> Scenario` validates a saved document and
+`create_scenario`, `update_scenario`, and `delete_scenario`. Each call uses a short
+transaction. Updates and deletions require the revision previously loaded and
+raise `RevisionConflictError` if the record changed or no longer exists. `import_backup(bytes) -> Scenario` validates a saved document and
 returns only the inputs for fresh calculation.
 
 Schema version 1 is the only accepted backup format. Unknown versions and
-unsupported facts fail validation. There is no general Excel import, deletion,
+unsupported facts fail validation. There is no general Excel import
 or revision-history API in this version.
