@@ -1,0 +1,165 @@
+{
+  "sources": {
+    "federal": "https://www.irs.gov/filing/federal-income-tax-rates-and-brackets",
+    "federal_amt": "https://www.irs.gov/pub/irs-pdf/f6251.pdf",
+    "california_amt": "https://www.ftb.ca.gov/forms/2025/2025-540-p.pdf",
+    "california": "https://www.ftb.ca.gov/forms/2025/2025-540-booklet.html",
+    "ca_sdi": "https://edd.ca.gov/en/Payroll_Taxes/Rates_and_Withholding",
+    "wa_2025": "https://paidleave.wa.gov/app/uploads/2024/10/2025-Premium-Rates-Employer-Mailer.pdf",
+    "wa_2026": "https://paidleave.wa.gov/updates/"
+  },
+  "description": "Synthetic joint filers, ages 40 and 38, standard deduction, $100,000 wages each unless overridden. Absolute tolerance is $0.05 for engine floating-point precision. Federal and 2025 CA ordinary/AMT values were also checked in the independent tax-engine evaluation. No family inputs.",
+  "cases": [
+    {
+      "id": "ca_2025_wages",
+      "year": 2025,
+      "state": "CA",
+      "expected": {
+        "federal_income_tax": 26898,
+        "state_income_tax": 10109.96,
+        "social_security": 12400,
+        "medicare": 2900,
+        "additional_medicare": 0,
+        "ca_sdi": 2400,
+        "wa_paid_leave": 0,
+        "wa_cares": 0,
+        "federal_amt": 0,
+        "state_amt": 0
+      }
+    },
+    {
+      "id": "wa_2025_wages",
+      "year": 2025,
+      "state": "WA",
+      "expected": {
+        "federal_income_tax": 26898,
+        "state_income_tax": 0,
+        "social_security": 12400,
+        "medicare": 2900,
+        "ca_sdi": 0,
+        "wa_paid_leave": 1315.97,
+        "wa_cares": 1160
+      }
+    },
+    {
+      "id": "ca_2025_iso",
+      "year": 2025,
+      "state": "CA",
+      "iso_spread": 500000,
+      "expected": {
+        "federal_income_tax": 152858,
+        "federal_amt": 125960,
+        "state_amt": 34061.81,
+        "state_income_tax": 44171.77,
+        "social_security": 12400,
+        "ca_sdi": 2400
+      }
+    },
+    {
+      "id": "wa_2025_iso",
+      "year": 2025,
+      "state": "WA",
+      "iso_spread": 500000,
+      "expected": {
+        "federal_income_tax": 152858,
+        "federal_amt": 125960,
+        "state_amt": 0,
+        "state_income_tax": 0,
+        "social_security": 12400
+      }
+    },
+    {
+      "id": "ca_2025_401k",
+      "year": 2025,
+      "state": "CA",
+      "contribution_each": 23500,
+      "expected": {
+        "federal_income_tax": 16558,
+        "state_income_tax": 5789.14,
+        "social_security": 12400,
+        "medicare": 2900,
+        "ca_sdi": 2400
+      }
+    },
+    {
+      "id": "wa_2026_wages",
+      "year": 2026,
+      "state": "WA",
+      "expected": {
+        "federal_income_tax": 26340,
+        "state_income_tax": 0,
+        "social_security": 12400,
+        "medicare": 2900,
+        "wa_paid_leave": 1614.32,
+        "wa_cares": 1160
+      }
+    },
+    {
+      "id": "ca_2026_projected",
+      "year": 2026,
+      "state": "CA",
+      "note": "CA income parameters are projected; assert federal and published payroll rules only.",
+      "expected": {
+        "federal_income_tax": 26340,
+        "social_security": 12400,
+        "medicare": 2900,
+        "ca_sdi": 2600
+      }
+    },
+    {
+      "id": "ca_2025_unequal_wages",
+      "year": 2025,
+      "state": "CA",
+      "wages": [300000, 100000],
+      "note": "2025 MFJ bracket boundaries $23,850/$96,950/$206,700 and $31,500 standard deduction give $74,134 on $400,000 wages.",
+      "expected": {
+        "federal_income_tax": 74134,
+        "social_security": 17118.2,
+        "medicare": 5800,
+        "additional_medicare": 1350,
+        "ca_sdi": 4800
+      }
+    },
+    {
+      "id": "ca_2025_two_children_care",
+      "year": 2025,
+      "state": "CA",
+      "children": [3, 6],
+      "care": 6000,
+      "expected": { "federal_income_tax": 21298, "state_income_tax": 9159.96 }
+    },
+    {
+      "id": "ca_2025_care_age_boundary",
+      "year": 2025,
+      "state": "CA",
+      "children": [3, 13],
+      "care": 6000,
+      "expected": { "federal_income_tax": 21898 }
+    },
+    {
+      "id": "ca_2025_ctc_age_boundary",
+      "year": 2025,
+      "state": "CA",
+      "children": [3, 17],
+      "care": 6000,
+      "expected": { "federal_income_tax": 23598 }
+    },
+    {
+      "id": "wa_2025_ctc_phaseout",
+      "year": 2025,
+      "state": "WA",
+      "wages": [310000, 100000],
+      "children": [6],
+      "expected": { "federal_income_tax": 74834 }
+    },
+    {
+      "id": "ca_2025_care_earnings_limit",
+      "year": 2025,
+      "state": "CA",
+      "wages": [200000, 0],
+      "children": [3],
+      "care": 6000,
+      "expected": { "federal_income_tax": 24698, "social_security": 10918.2 }
+    }
+  ]
+}
