@@ -47,6 +47,7 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 | --- | --- |
 | `annual_remaining_cash` | Cash after taxes, personal saving, option purchases, and living costs |
 | `monthly_remaining_cash` | Annual remaining cash / 12, rounded to cents |
+| `cash_added` | Derived net cash retained: additional cash saving + annual remaining cash, including any deficit; excludes all shares and retirement |
 | `extra_savings` | Personal savings goal beyond employee 401(k), funded from cash |
 | `rsu_tax_funding` | Incremental tax paid from vested RSUs |
 | `retained_rsus` | Gross vested RSUs less their tax funding |

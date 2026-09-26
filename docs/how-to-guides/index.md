@@ -37,9 +37,12 @@ ISO exercise costs appear when present. Retained RSUs and employer retirement
 are excluded from spendable cash. Each scenario has its own column; on a narrow
 screen, scroll the table horizontally while the row labels stay visible.
 
-**Saving & equity** separates your 401(k), employer retirement, additional cash
-saving, and RSUs retained after tax. Shares acquired by exercising ISOs appear
-separately. **Net saved from income** is compensation less taxes and living
+**Saving & equity** separates net cash added, retirement contributions, retained
+RSU shares, and option estimates. Cash added is planned cash saving plus the cash
+surplus or shortfall. Retirement has restricted access; shares have changing
+values and may have sale restrictions. Shares acquired by exercising ISOs appear
+separately. **Net saved from income** combines cash, retirement, and estimated
+RSU value; it is not spendable cash. It is compensation less taxes and living
 costs, including any cash shortfall. It excludes option award values, exercise
 spread, and investment growth. Expand **How this total adds up** to reconcile it.
 
@@ -72,7 +75,8 @@ In each adult's **Stock option award** section, select **Include an option
 award**. Enter ISO or NSO, the number vesting this year, and exercise price per
 share. Enter an assumed share value if known; leave it blank otherwise.
 
-The compensation view estimates the value above exercise cost before tax.
+The Compensation and Saving & equity views show option awards separately and
+estimate the value above exercise cost before tax.
 This describes this year's vesting, not the full multiyear grant or all vested
 options. It does not change cash, taxes, or saving totals, and a share-value
 estimate does not imply that the shares can be sold.

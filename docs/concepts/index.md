@@ -24,6 +24,33 @@ Remaining cash can be negative. A shortfall means the planned spending and
 saving require more cash than salary supplies. The app does not reduce saving,
 sell extra shares, or borrow to cover it.
 
+## Access and value certainty
+
+Liquidity describes how readily an asset can be used or sold. Its value can
+still change even if it is easy to sell. The app keeps these distinctions visible:
+
+| Category | Access | Value shown |
+| --- | --- | --- |
+| Cash | Available without selling shares or withdrawing retirement funds | Net cash added after expenses, retirement contributions, and ISO exercise costs |
+| Retirement | Withdrawal restrictions apply; employer plan vesting is not modeled | Contributions, before any future withdrawal taxes |
+| RSU shares | Shares delivered at vesting; sale restrictions may apply | Estimated vesting value after taxes, subject to price changes |
+| Exercised option shares | Shares owned; ability to sell is not recorded | Exercise-date value, not guaranteed sale proceeds |
+| Unexercised options | Rights to buy shares; exercise needs funding and sale may be unavailable | An uncertain estimate shown separately from saving totals |
+
+`cash added = additional cash saving + remaining cash`. A cash shortfall reduces
+this amount; it can be negative. This assumes additional saving and any surplus
+are kept in cash. It is a projected annual change, not an existing bank balance.
+The combined net-saving measure includes retirement and estimated shares, so it
+is not an amount available to spend.
+
+The model does not record public/private company status or trading restrictions.
+It assumes RSU shares are delivered at vesting and that enough can be sold to
+cover their taxes. It does not model private RSUs with delayed settlement or no
+sale available for tax funding. No share holdings are counted as available cash.
+
+See FINRA's explanations of [liquidity and investment risk](https://www.finra.org/investors/investing/investing-basics/risk)
+and [employee stock awards](https://syndication.finra.org/content/questions-employees-should-ask-about-stock-awards).
+
 ## RSUs and ISO shares
 
 RSUs count as wages once, at vesting. The model assumes enough vested shares are
