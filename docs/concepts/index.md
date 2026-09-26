@@ -7,7 +7,7 @@ predict paycheck timing or withholding.
 
 ## Saving and cash
 
-Each adult's personal savings goal is a percentage of cash compensation plus
+Each adult's cash-funded saving goal is a percentage of cash compensation plus
 vested RSUs. The employee's traditional 401(k) contribution counts toward that
 goal. Personal saving is at least the 401(k) contribution; any remainder is an
 after-tax allocation funded from cash. Employer retirement contributions are
@@ -20,8 +20,9 @@ remaining cash = cash pay − cash-funded taxes − personal saving
                  − option purchase cost − annual living costs
 ```
 
-Remaining cash can be negative. The app does not automatically sell shares or
-borrow to cover a shortfall.
+Remaining cash can be negative. A shortfall means the planned spending and
+saving require more cash than salary supplies. The app does not reduce saving,
+sell extra shares, or borrow to cover it.
 
 ## RSUs and ISO shares
 
@@ -37,10 +38,45 @@ are valued at shares × exercise-date fair market value. Positive exercise
 spread enters federal and California AMT. Later share sales, changing values,
 and AMT credit carryforwards are outside the model.
 
-Total savings and assets added combines remaining cash, personal saving,
-employer retirement, retained RSUs, and acquired option shares. Purchasing a
-share moves cash into an asset; the model does not count both as new wealth.
-The total is a planning measure, not spendable cash or a retirement forecast.
+## Option compensation
+
+An optional award record describes ISO or NSO options vesting this year. Its
+estimate is `vesting shares × max(assumed share value − exercise price, 0)`.
+A missing share value means **Not estimated**, not zero. A zero spread means
+there is no value above exercise cost at the assumed price; it does not value
+the option's remaining time or potential future appreciation.
+
+This record is informational. It is separate from an exercise event and does
+not enter wages, taxes, saving targets, or net saving. It represents one annual
+vesting estimate per adult, not a full grant schedule or vested-option
+inventory. NSO exercises, dispositions, and option-pricing models are excluded.
+
+## Net saving from income
+
+The headline annual measure is:
+
+```text
+net saved from income = cash pay + vested RSUs + employer retirement
+                        − total taxes − annual living costs
+```
+
+It includes cash surplus or shortfall, pretax retirement contributions, and
+retained RSUs. Planned contributions can be high even when cash is short, so the
+app shows both contributions and the shortfall. Moving cash into a 401(k),
+additional saving, or option shares does not itself increase this total.
+
+ISO exercise spread can come from options earned in earlier years. It is
+excluded from net saving; exercise-related taxes remain an expense. Acquired
+shares and their cash cost appear separately in **Saving & equity**. The
+reconciliation adds back the exercise cost to cash remaining because that cash
+was moved into shares rather than spent on living costs.
+
+The stored `total_savings_and_assets` combines remaining cash, personal saving,
+employer retirement, retained RSUs, and acquired shares at exercise-date value.
+It exceeds net saving by the option exercise spread. This accounting subtotal
+remains in annual calculation details, but is no longer the headline measure.
+Neither measure includes existing account balances or investment growth, and
+pretax retirement balances still have future tax obligations.
 
 ## Supported tax facts
 

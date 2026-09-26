@@ -3,7 +3,7 @@
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its location, tax year,
-monthly cash left over, and annual assets added.
+monthly cash surplus or shortfall, and annual net saving from income.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
@@ -28,23 +28,34 @@ Remove a selection with its × button; this does not delete the saved scenario.
 Selections stay in place when you switch pages. All selected scenarios must use
 the same tax year and current calculation rules.
 
-**Overview** compares monthly cash left over, annual savings and investments,
-and annual assets added if all leftover cash is kept, with one bar per scenario.
-The savings breakdown
-separates retirement, personal savings, retained stock, and purchased shares.
+**Compensation** separates salary and bonus, RSUs vesting before tax, employer
+retirement contributions, and option awards. Each amount has one bar per
+scenario; option awards appear in separate cards.
 
 **Cash flow** groups average monthly income, taxes, living costs, and savings.
-Option purchases appear when present. Retained stock and employer retirement
+ISO exercise costs appear when present. Retained RSUs and employer retirement
 are excluded from spendable cash. Each scenario has its own column; on a narrow
 screen, scroll the table horizontally while the row labels stay visible.
+
+**Saving & equity** separates your 401(k), employer retirement, additional cash
+saving, and RSUs retained after tax. Shares acquired by exercising ISOs appear
+separately. **Net saved from income** is compensation less taxes and living
+costs, including any cash shortfall. It excludes option award values, exercise
+spread, and investment growth. Expand **How this total adds up** to reconcile it.
+
+The editor uses these same three views for a single calculated scenario. A cash
+shortfall means planned spending and saving need additional cash; the app does
+not reduce planned saving or sell more shares automatically.
 
 **Component differences** compares each scenario with the **Reference scenario**
 you choose. Each bar shows that component's annual difference: right means more,
 left means less. Higher taxes and living costs extend right because they are
 larger expenses. Stock and option differences appear when present. The net
-difference in annual assets appears separately below the components.
+difference in annual net saving appears separately below the components. ISO
+exercise costs and acquired shares affect cash and holdings, but their spread
+is excluded from net saving.
 
-Scenario names, colors, and order stay consistent across the three views.
+Scenario names, colors, and order stay consistent across the views.
 Changing the reference only changes Component differences.
 
 To compare without saving, calculate in the editor and choose **Compare results**.
@@ -54,6 +65,20 @@ results are labeled; uncalculated edits never replace their inputs.
 
 Displayed amounts are rounded to whole dollars; calculations retain cents. See
 [calculation assumptions](../concepts/index.md) for the meaning of each total.
+
+## Enter option compensation
+
+In each adult's **Stock option award** section, select **Include an option
+award**. Enter ISO or NSO, the number vesting this year, and exercise price per
+share. Enter an assumed share value if known; leave it blank otherwise.
+
+The compensation view estimates the value above exercise cost before tax.
+This describes this year's vesting, not the full multiyear grant or all vested
+options. It does not change cash, taxes, or saving totals, and a share-value
+estimate does not imply that the shares can be sold.
+
+Use **ISO exercise and hold** separately for actual qualifying exercises held
+through year end. NSO exercises and share sales are not supported.
 
 ## Delete a scenario
 

@@ -7,7 +7,9 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 
 | Type | Content |
 | --- | --- |
-| `PersonInputs` | Name, year-end age, annual cash pay/RSUs, employee 401(k), savings/employer rates, WA Cares exemption, ISO event |
+| `PersonInputs` | Name, year-end age, annual cash pay/RSUs, employee 401(k), savings/employer rates, WA Cares exemption, ISO event, optional option award |
+| `OptionAward` | ISO/NSO, shares vesting this year, exercise price, optional assumed share value; informational only |
+| `ISOExercise` | Qualifying shares exercised and held, strike price, exercise-date fair market value |
 | `DependentInputs` | Qualifying child's year-end age |
 | `LivingCosts` | Monthly rent/childcare/other; annual eligible care expense; CA renter eligibility |
 | `Scenario` | Name, year, state, exactly two adults, children, costs, notes, confirmed household facts |
@@ -50,10 +52,16 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 | `retained_rsus` | Gross vested RSUs less their tax funding |
 | `option_value` | Purchased shares at exercise-date FMV |
 | `total_savings_and_assets` | Remaining cash + personal/employer saving + retained RSUs + purchased shares |
+| `net_saved_from_income` | Derived property: cash pay + RSUs + employer retirement − taxes − living costs; excludes option exercise spread |
 | `taxes.total` | Income taxes plus employee payroll taxes; AMT already included |
 | `effective_tax_rate` | Total tax / gross cash and RSU wages; `None` for zero wages |
 
 See [calculation assumptions](../concepts/index.md) for formulas and coverage.
+
+`OptionAward.exercise_spread` returns the nonnegative estimated value above
+exercise cost for this year's vesting, rounded to cents. It returns `None` when
+the assumed share value is unknown. Award inputs do not change calculated
+taxes or cash flows, but are included in the scenario's input digest when present.
 
 ## Persistence
 
@@ -66,3 +74,8 @@ returns only the inputs for fresh calculation.
 Schema version 1 is the only accepted backup format. Unknown versions and
 unsupported facts fail validation. There is no general Excel import
 or revision-history API in this version.
+
+An absent `PersonInputs.option_award` is omitted from JSON. Existing saved
+scenarios and backups therefore retain their original input digest without a
+data migration. The net-saving property derives from existing result fields;
+it is not a new stored calculation or tax rule.
