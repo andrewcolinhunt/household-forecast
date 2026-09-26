@@ -19,6 +19,12 @@ Open <http://localhost:8501>. Enter both adults' ages and household assumptions,
 then select **Calculate**. Without a database, the app runs in local preview:
 sessions are temporary, saving is disabled, and JSON backups keep your work.
 
+This computer's database is configured through `compose.yaml`. With Docker
+Desktop running, start it with `docker compose up -d --wait`. PostgreSQL listens
+only on `127.0.0.1:5433`; its named volume preserves scenarios across restarts.
+The ignored `.env` and `.streamlit/secrets.toml` files hold local credentials.
+See [local database operations](docs/how-to-guides/index.md#run-the-local-database).
+
 For shared persistence, create the table with `scripts/schema.sql` in a dedicated
 PostgreSQL database. Set `FINANCIAL_MODEL_DATABASE_URL`, or copy
 `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in the

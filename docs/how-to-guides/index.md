@@ -29,7 +29,37 @@ upload that file and choose **Load backup as new draft**, then calculate and
 save. Imports are limited to 1 MB and the supported schema. Keep these files
 private: they contain household financial inputs.
 
-## Connect PostgreSQL
+## Run the local database
+
+The configured local database uses Docker Desktop and `compose.yaml`:
+
+```bash
+docker compose up -d --wait
+pixi run --locked app
+```
+
+The database is `financial_model`, on `127.0.0.1:5433`. Its data lives in the
+`financial-model-postgres` Docker volume. `docker compose stop` stops the
+service without removing that data; `docker compose up -d --wait` starts it
+again. Keep the named volume when recreating the container.
+
+Local credentials are in the ignored `.env` and `.streamlit/secrets.toml` files.
+The app uses a separate account with read/create/update access to scenarios.
+These files and the volume belong to this computer; cloning the repository does
+not copy the database. Local access does not provide a shared hosted URL.
+
+For a database backup, choose a private destination outside the application
+repository and run:
+
+```bash
+docker compose exec -T db pg_dump -U financial_model_admin -d financial_model \
+  --format=custom > /path/to/private/financial-model.dump
+```
+
+The dump contains financial inputs and results. Keep it private. Scenario-level
+JSON backups are also available in the app.
+
+## Connect another PostgreSQL database
 
 Create a dedicated database, then apply `scripts/schema.sql` using its SQL
 console or a PostgreSQL client. The app never creates or migrates tables on
