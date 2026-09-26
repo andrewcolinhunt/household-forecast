@@ -23,23 +23,29 @@ exists. **Refresh** updates the library without replacing your drafts.
 
 ## Compare scenarios
 
-Open **Compare** in the top navigation and select two scenarios independently.
-The editor does not need to be open. Both scenarios must use the same tax year
-and current calculation rules.
+Open **Compare** in the top navigation and select two to four scenarios.
+Remove a selection with its × button; this does not delete the saved scenario.
+Selections stay in place when you switch pages. All selected scenarios must use
+the same tax year and current calculation rules.
 
 **Overview** compares monthly cash left over, annual savings and investments,
-and annual assets added if all leftover cash is kept. The savings breakdown
+and annual assets added if all leftover cash is kept, with one bar per scenario.
+The savings breakdown
 separates retirement, personal savings, retained stock, and purchased shares.
 
 **Cash flow** groups average monthly income, taxes, living costs, and savings.
 Option purchases appear when present. Retained stock and employer retirement
-are excluded from spendable cash.
+are excluded from spendable cash. Each scenario has its own column; on a narrow
+screen, scroll the table horizontally while the row labels stay visible.
 
-**Difference** shows the second scenario minus the first, using their names.
-Each bar is the running annual difference after the adjustment on that row.
-The final bar reconciles to the difference in total assets added. Stock and
-option changes appear when needed; transfers into your own savings accounts
-do not change the total. Negative values extend left of zero.
+**Component differences** compares each scenario with the **Reference scenario**
+you choose. Each bar shows that component's annual difference: right means more,
+left means less. Higher taxes and living costs extend right because they are
+larger expenses. Stock and option differences appear when present. The net
+difference in annual assets appears separately below the components.
+
+Scenario names, colors, and order stay consistent across the three views.
+Changing the reference only changes Component differences.
 
 To compare without saving, calculate in the editor and choose **Compare results**.
 The last calculated draft appears as a separate choice. **Keep snapshot** retains
