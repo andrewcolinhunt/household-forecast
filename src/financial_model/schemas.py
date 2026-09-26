@@ -59,6 +59,24 @@ class ISOExercise(ValueModel):
         return dollars(self.shares * max(self.fair_market_value - self.strike, ZERO))
 
 
+class OptionAward(ValueModel):
+    """Annual option vesting information, separate from taxable exercise events."""
+
+    kind: Literal["ISO", "NSO"] = "ISO"
+    vesting_shares: Annotated[int, Field(strict=True, ge=0)] = 0
+    strike: Price = ZERO
+    assumed_share_value: Price | None = None
+
+    @property
+    def exercise_spread(self) -> Decimal | None:
+        """Estimate vested options' value above exercise cost, before taxes."""
+        if self.assumed_share_value is None:
+            return None
+        return dollars(
+            self.vesting_shares * max(self.assumed_share_value - self.strike, ZERO)
+        )
+
+
 class PersonInputs(ValueModel):
     """Annual compensation and saving assumptions for one adult."""
 
@@ -71,6 +89,10 @@ class PersonInputs(ValueModel):
     employer_retirement_rate: Rate = ZERO
     wa_cares_exempt: Annotated[bool, Field(strict=True)] = False
     options: ISOExercise = Field(default_factory=ISOExercise)
+    # Omit absent awards so existing saved inputs keep their exact digest.
+    option_award: OptionAward | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def wages(self) -> Decimal:
@@ -235,6 +257,11 @@ class ScenarioResult(ValueModel):
     annual_remaining_cash: Amount
     monthly_remaining_cash: Amount
     total_savings_and_assets: Amount
+
+    @property
+    def net_saved_from_income(self) -> Decimal:
+        """Net annual saving, excluding value realized from existing option rights."""
+        return self.total_savings_and_assets - self.option_value + self.option_cost
 
     @property
     def effective_tax_rate(self) -> Decimal | None:

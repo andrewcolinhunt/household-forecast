@@ -66,6 +66,15 @@ def test_evaluate_scenario_annual_accounting(
     assert result.annual_remaining_cash == 43000
     assert result.monthly_remaining_cash == Decimal("3583.33")
     assert result.total_savings_and_assets == 118000
+    assert result.net_saved_from_income == 115000
+    assert (
+        result.net_saved_from_income
+        == result.gross_cash
+        + result.gross_rsus
+        + result.employer_retirement
+        - result.taxes.total
+        - result.living_cost
+    )
 
 
 @pytest.mark.parametrize(
@@ -127,3 +136,20 @@ def test_saved_scenario_result_integrity(
     corrupted = result.model_dump() | {"annual_remaining_cash": 999}
     with pytest.raises(ValidationError, match="does not reconcile"):
         ScenarioResult.model_validate(corrupted)
+
+
+def test_saved_scenario_without_awards_keeps_original_digest(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario
+) -> None:
+    import hashlib
+
+    monkeypatch.setattr(model, "calculate_taxes", lambda inputs: tax_result(10000))
+    result = model.evaluate_scenario(scenario)
+    old_json = scenario.model_dump_json(
+        exclude={"adults": {"__all__": {"option_award"}}}
+    )
+    old_digest = hashlib.sha256(old_json.encode()).hexdigest()
+    assert result.input_digest == old_digest
+    data = SavedScenario(inputs=scenario, result=result).model_dump(mode="json")
+    data["result"]["input_digest"] = old_digest
+    assert SavedScenario.model_validate(data).inputs == scenario

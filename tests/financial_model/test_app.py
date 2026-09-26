@@ -77,8 +77,9 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
     assert [tab.label for tab in page.tabs] == [
-        "Overview",
+        "Compensation",
         "Cash flow",
+        "Saving & equity",
         "Component differences",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
@@ -90,7 +91,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
         if "fm-components" in element.proto.body
     )
     assert "$20,000 more income" in difference
-    assert "Cash left over" in rendered
+    assert "Cash surplus / shortfall" in rendered
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
 
@@ -322,8 +323,9 @@ def test_compare_saved_scenarios_without_opening_editor(
     ).run()
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
-        "Overview",
+        "Compensation",
         "Cash flow",
+        "Saving & equity",
         "Component differences",
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
@@ -464,8 +466,9 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
     assert not page.exception
     assert page.multiselect[0].proto.max_selections == 4
     assert [tab.label for tab in page.tabs] == [
-        "Overview",
+        "Compensation",
         "Cash flow",
+        "Saving & equity",
         "Component differences",
     ]
     page.selectbox(key="comparison_reference").select(ids[-1]).run()
@@ -490,3 +493,57 @@ def test_compare_results_adds_draft_to_selection(scenario: Scenario) -> None:
     assert page.title[0].value == "Compare"
     assert page.multiselect[0].value == ["draft", "snapshot"]
     assert page.tabs
+
+
+@pytest.mark.integration
+def test_option_award_save_preserves_taxes_and_survives_reload(
+    database_url: str, scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financial_model.storage import import_backup
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    baseline = evaluate_scenario(scenario)
+    page = editor(scenario)
+    widget(page, "checkbox", "adult_0_award_enabled").check().run()
+    widget(page, "selectbox", "adult_0_award_kind").select("NSO").run()
+    widget(page, "number_input", "adult_0_award_shares").set_value(10000)
+    widget(page, "number_input", "adult_0_award_strike").set_value(2.0)
+    press(page, "Calculate")
+    assert "Not estimated" in "\n".join(e.proto.body for e in page.get("html"))
+    widget(page, "number_input", "adult_0_award_value").set_value(5.0)
+    press(page, "Save")
+    saved = list_scenarios(database_url)[0]
+    assert saved.inputs.adults[0].option_award.exercise_spread == 30000
+    assert saved.result.taxes == baseline.taxes
+    assert saved.result.net_saved_from_income == baseline.net_saved_from_income
+    assert saved.result.annual_remaining_cash == baseline.annual_remaining_cash
+    assert import_backup(saved.model_dump_json().encode()) == saved.inputs
+    second = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    press(second, "Edit")
+    assert widget(second, "selectbox", "adult_0_award_kind").value == "NSO"
+    assert widget(second, "number_input", "adult_0_award_shares").value == 10000
+    assert widget(second, "number_input", "adult_0_award_value").value == 5.0
+    assert not any("Unsaved changes" in c.value for c in second.caption)
+
+
+def test_cash_shortfall_visible_in_library_results_and_comparison(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = scenario.model_dump(mode="json")
+    data["living_costs"]["rent"] = 20000
+    inputs = Scenario.model_validate(data)
+    shortfall = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
+    other = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: (shortfall, other))
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    assert page.metric[0].label == "Monthly cash shortfall"
+    press(page, "Edit")
+    assert any("cash shortfall" in warning.value for warning in page.warning)
+    assert [tab.label for tab in page.tabs] == [
+        "Compensation",
+        "Cash flow",
+        "Saving & equity",
+    ]
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert any("cash shortfall" in warning.value for warning in page.warning)

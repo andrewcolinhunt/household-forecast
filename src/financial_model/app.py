@@ -14,8 +14,9 @@ from pydantic import ValidationError
 
 from financial_model.comparison import (
     cash_flow_html,
+    compensation_html,
     component_differences_html,
-    overview_html,
+    saving_html,
     scenario_names,
 )
 from financial_model.model import evaluate_scenario
@@ -153,7 +154,7 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
     }
     rates = {}
     for field, label, default in [
-        ("savings_rate", "Personal savings goal (% of cash + RSUs)", "0.10"),
+        ("savings_rate", "Cash-funded saving goal (% of salary + RSUs)", "0.10"),
         ("employer_retirement_rate", "Employer retirement (% of cash pay)", "0"),
     ]:
         percent = st.number_input(
@@ -163,6 +164,11 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
             value=float(Decimal(data.get(field, default)) * 100),
             step=1.0,
             key=_key(f"{prefix}_{field}"),
+            help=(
+                "Funded from salary. Your 401(k) counts toward this goal; retained RSUs and employer contributions are additional."
+                if field == "savings_rate"
+                else "Employer contribution as a percentage of cash salary and bonus."
+            ),
         )
         rates[field] = str(Decimal(str(percent)) / 100)
     exempt = st.checkbox(
@@ -177,6 +183,59 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
         **rates,
         "wa_cares_exempt": exempt if state == "WA" else False,
         "options": _option_inputs(prefix, data.get("options", {})),
+        "option_award": _option_award_inputs(prefix, data.get("option_award")),
+    }
+
+
+def _option_award_inputs(
+    prefix: str, data: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Record annual option vesting without treating it as cash or an exercise."""
+    with st.expander("Stock option award"):
+        if not st.checkbox(
+            "Include an option award",
+            value=data is not None,
+            key=_key(f"{prefix}_award_enabled"),
+        ):
+            return None
+        data = data or {}
+        st.caption(
+            "Record this year's vesting, not the full multiyear grant. Award estimates do not enter cash, tax, or saving totals."
+        )
+        kind = st.selectbox(
+            "Option type",
+            ["ISO", "NSO"],
+            index=["ISO", "NSO"].index(data.get("kind", "ISO")),
+            key=_key(f"{prefix}_award_kind"),
+        )
+        shares = st.number_input(
+            "Options vesting this year",
+            min_value=0,
+            value=data.get("vesting_shares", 0),
+            key=_key(f"{prefix}_award_shares"),
+        )
+        strike = st.number_input(
+            "Award exercise price ($/share)",
+            min_value=0.0,
+            value=float(data.get("strike", 0)),
+            format="%.6f",
+            key=_key(f"{prefix}_award_strike"),
+        )
+        value = st.number_input(
+            "Assumed share value ($/share)",
+            min_value=0.0,
+            value=float(data["assumed_share_value"])
+            if data.get("assumed_share_value") is not None
+            else None,
+            format="%.6f",
+            key=_key(f"{prefix}_award_value"),
+            help="Leave blank if unknown. An estimate does not mean shares can be sold at this price.",
+        )
+    return {
+        "kind": kind,
+        "vesting_shares": shares,
+        "strike": str(strike),
+        "assumed_share_value": str(value) if value is not None else None,
     }
 
 
@@ -184,7 +243,7 @@ def _option_inputs(prefix: str, data: dict[str, Any]) -> dict[str, Any]:
     """Collect only the supported ISO exercise-and-hold event."""
     with st.expander("ISO exercise and hold"):
         st.caption(
-            "Qualifying ISOs held through year end. No share sales or AMT credit carryforwards."
+            "Qualifying ISOs exercised and held through year end. NSO exercises, share sales, and AMT credit carryforwards are not supported."
         )
         shares = st.number_input(
             "Shares exercised",
@@ -266,7 +325,7 @@ def _form(dsn: str | None) -> None:
             key=_key("children"),
             help="Ages at year end, separated by commas. Leave blank for none. Supported ages: 0-17.",
         )
-        st.subheader("Income and savings")
+        st.subheader("Compensation and saving")
         adults = []
         for index, column in enumerate(st.columns(2)):
             with column:
@@ -411,7 +470,9 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
         "Remaining cash": result.annual_remaining_cash,
         "Retained RSUs": result.retained_rsus,
         "Purchased ISO shares (at exercise FMV)": result.option_value,
-        "Total savings and assets added": result.total_savings_and_assets,
+        "Cash + contributions + shares acquired": result.total_savings_and_assets,
+        "Less option exercise spread": result.option_cost - result.option_value,
+        "Net saved from income": result.net_saved_from_income,
     }
 
 
@@ -430,15 +491,9 @@ def _results(document: SavedScenario) -> None:
         st.warning(
             "2026 California income taxes use projected parameters in the pinned tax engine."
         )
-    if result.annual_remaining_cash < 0:
-        st.warning(
-            "This scenario has a cash shortfall. It does not automatically borrow or sell more shares."
-        )
-    st.metric("Monthly cash left over", f"${result.monthly_remaining_cash:,.0f}")
-    st.metric("Annual assets added", f"${result.total_savings_and_assets:,.0f}")
-    st.caption(
-        "Assumes leftover cash is saved; includes retirement and retained shares."
-    )
+    names = (document.inputs.name,)
+    _cash_shortfalls((document,), names)
+    _financial_views((document,), names)
     with st.container(horizontal=True):
         if st.button("Compare results", disabled=not _current(result)):
             st.session_state["pending_comparison"] = next(
@@ -461,7 +516,7 @@ def _results(document: SavedScenario) -> None:
             ]
         )
         st.caption(
-            "Total assets added includes remaining cash, personal saving, employer retirement, retained RSUs, and purchased shares. Purchased shares are not spendable cash."
+            "Net saving includes the cash surplus or shortfall and pretax retirement. Option award values and exercise spread are excluded."
         )
         _tax_detail(result)
         st.json(document.inputs.model_dump(mode="json"), expanded=False)
@@ -577,15 +632,39 @@ def _comparison(
         st.warning(
             "2026 California income taxes use projected parameters in the pinned tax engine."
         )
+    _cash_shortfalls(documents, names)
+    _financial_views(documents, names, selected)
+
+
+def _cash_shortfalls(
+    documents: tuple[SavedScenario, ...], names: tuple[str, ...]
+) -> None:
+    """Keep unfunded cash needs visible even when retained equity is substantial."""
+    for document, name in zip(documents, names, strict=True):
+        if document.result.annual_remaining_cash < 0:
+            st.warning(
+                f"{name}: ${-document.result.monthly_remaining_cash:,.0f}/month cash shortfall. "
+                "Planned saving is not reduced and no extra shares are sold automatically."
+            )
+
+
+def _financial_views(
+    documents: tuple[SavedScenario, ...],
+    names: tuple[str, ...],
+    selected: list[str] | None = None,
+) -> None:
+    """Use the same definitions for an individual result and all comparisons."""
     st.html(Path(__file__).with_name("comparison.css"))
-    overview, cash_flow, components = st.tabs(
-        ["Overview", "Cash flow", "Component differences"]
-    )
-    with overview:
-        st.html(overview_html(documents, names))
-    with cash_flow:
-        st.html(cash_flow_html(documents, names))
-    with components:
+    labels = ["Compensation", "Cash flow", "Saving & equity"]
+    tabs = st.tabs(labels + (["Component differences"] if selected else []))
+    for tab, render in zip(
+        tabs[:3], (compensation_html, cash_flow_html, saving_html), strict=True
+    ):
+        with tab:
+            st.html(render(documents, names))
+    if not selected:
+        return
+    with tabs[3]:
         reference_names = dict(zip(selected, names, strict=True))
         if st.session_state.get("comparison_reference") not in selected:
             st.session_state["comparison_reference"] = selected[0]
@@ -779,12 +858,21 @@ def _scenario_card(record: SavedScenario) -> None:
         name, cash, assets = st.columns([2, 1, 1], vertical_alignment="center")
         name.subheader(record.inputs.name)
         name.caption(f"{record.inputs.state} · {record.inputs.tax_year}")
+        remaining = record.result.monthly_remaining_cash
         cash.metric(
-            "Monthly cash left over", f"${record.result.monthly_remaining_cash:,.0f}"
+            "Monthly cash shortfall" if remaining < 0 else "Monthly cash surplus",
+            f"${abs(remaining):,.0f}",
+            help="After taxes, living costs, planned saving, and option exercise costs.",
         )
         assets.metric(
-            "Annual assets added", f"${record.result.total_savings_and_assets:,.0f}"
+            "Net saved from income / year",
+            f"${record.result.net_saved_from_income:,.0f}",
+            help="Salary + bonus + RSUs + employer retirement minus taxes and living costs. Includes cash shortfalls; excludes option award values, exercise spread, and investment growth.",
         )
+        if remaining < 0:
+            st.caption(
+                "Cash shortfall: planned spending and saving need additional cash."
+            )
         if not _current(record.result):
             st.caption("Recalculation needed: saved results use older rules.")
         with st.container(horizontal=True):
@@ -828,7 +916,9 @@ def scenarios_page() -> None:
                     )
                     st.switch_page(str(EDITOR_PAGE))
     if records:
-        st.caption("Annual assets include saved cash, retirement, and retained shares.")
+        st.caption(
+            "Net saving includes cash surplus or shortfall, pretax retirement, and retained RSUs. Option award values and exercise spread are excluded."
+        )
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"
         for record in records

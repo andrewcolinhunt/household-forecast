@@ -103,61 +103,172 @@ def _series(
     return f'<div class="fm-series">{"".join(rows)}</div>'
 
 
-def _savings_rows(result: ScenarioResult) -> dict[str, Decimal]:
-    """Separate cash saving, retirement, retained stock, and purchased shares."""
-    return {
-        "Your 401(k)s": result.employee_401k,
-        "Employer retirement": result.employer_retirement,
-        "Other personal savings": result.extra_savings,
-        "Stock kept after taxes": result.retained_rsus,
-        "Purchased option shares": result.option_value,
-    }
-
-
-def overview_html(
-    documents: tuple[SavedScenario, ...],
-    names: tuple[str, ...] | None = None,
+def _metric_sections(
+    names: tuple[str, ...], metrics: list[tuple[str, list[Decimal], str]]
 ) -> str:
-    """Compare each scenario's monthly cash, planned saving, and annual assets."""
+    """Show separately defined amounts using the same scenario bars throughout."""
+    sections = []
+    for label, values, definition in metrics:
+        sections.append(
+            f'<section class="fm-outcome"><h4>{escape(label)}</h4>'
+            f'<p class="fm-note">{escape(definition)}</p>'
+            f"{_series(names, values, *_domain(values))}</section>"
+        )
+    return f'<div class="fm-metrics">{"".join(sections)}</div>'
+
+
+def _option_awards(documents: tuple[SavedScenario, ...], names: tuple[str, ...]) -> str:
+    """Keep uncertain option value separate from compensation paid and cash saving."""
+    cards = []
+    for index, (document, name) in enumerate(zip(documents, names, strict=True)):
+        awards = []
+        for adult in document.inputs.adults:
+            if award := adult.option_award:
+                spread = award.exercise_spread
+                value = _money(spread) if spread is not None else "Not estimated"
+                price = (
+                    f"${award.assumed_share_value:,.6f}".rstrip("0").rstrip(".")
+                    if award.assumed_share_value is not None
+                    else "Not entered"
+                )
+                strike = f"${award.strike:,.6f}".rstrip("0").rstrip(".")
+                awards.append(
+                    f'<div class="fm-award"><p>{escape(adult.name)} · {award.kind}</p>'
+                    f"<dl><dt>Options vesting this year</dt><dd>{award.vesting_shares:,}</dd>"
+                    f"<dt>Exercise price / share</dt><dd>{strike}</dd>"
+                    f"<dt>Assumed share value</dt><dd>{price}</dd>"
+                    f"<dt>Value above exercise cost</dt><dd>{value}</dd></dl></div>"
+                )
+        cards.append(
+            '<section class="fm-option-card">'
+            f'<h4><span class="fm-swatch fm-scenario-{index}"></span>{escape(name)}</h4>'
+            f"{''.join(awards) or '<p>No award entered.</p>'}</section>"
+        )
+    return (
+        '<section class="fm-options"><h3>Stock option awards</h3>'
+        '<p class="fm-note">Annual vesting, not the full multiyear grant. Estimated value '
+        "above exercise cost is before tax and may not be available as cash. "
+        "A $0 estimate excludes potential future appreciation.</p>"
+        f'<div class="fm-metrics">{"".join(cards)}</div></section>'
+    )
+
+
+def compensation_html(
+    documents: tuple[SavedScenario, ...], names: tuple[str, ...] | None = None
+) -> str:
+    """Separate cash pay, vested RSUs, employer contributions, and option awards."""
     names = names or scenario_names(documents)
     results = [document.result for document in documents]
     metrics = [
         (
-            "Cash left after spending & saving / month",
-            [r.monthly_remaining_cash for r in results],
+            "Salary + bonus / year",
+            [r.gross_cash for r in results],
+            "Cash pay before taxes and saving.",
         ),
         (
-            "Savings & investments / year",
-            [r.total_savings_and_assets - r.annual_remaining_cash for r in results],
+            "RSUs vesting / year",
+            [r.gross_rsus for r in results],
+            "Share value before taxes; includes shares sold to pay tax.",
         ),
         (
-            "Assets added if all leftover cash is kept / year",
-            [r.total_savings_and_assets for r in results],
+            "Employer retirement / year",
+            [r.employer_retirement for r in results],
+            "Employer contributions, in addition to your salary.",
         ),
     ]
-    sections = []
-    for index, (label, values) in enumerate(metrics):
-        note = '<p class="fm-note">Excludes leftover cash.</p>' if index == 1 else ""
-        sections.append(
-            f'<section class="fm-outcome"><h4>{escape(label)}</h4>'
-            f"{_series(names, values, *_domain(values))}{note}</section>"
+    options = _option_awards(documents, names)
+    return (
+        f'<div class="fm-comparison">{_metric_sections(names, metrics)}{options}'
+        '<p class="fm-note">Option awards do not enter cash, taxes, or net saving. '
+        "Only qualifying ISO exercise-and-hold taxes are modeled. Other employer benefits are not modeled.</p></div>"
+    )
+
+
+def saving_html(
+    documents: tuple[SavedScenario, ...], names: tuple[str, ...] | None = None
+) -> str:
+    """Separate annual contributions and equity, then reconcile net saving."""
+    names = names or scenario_names(documents)
+    results = [document.result for document in documents]
+    metrics = [
+        (
+            "Your 401(k) contributions / year",
+            [r.employee_401k for r in results],
+            "From salary, before income tax. Employer contributions are separate.",
+        ),
+        (
+            "Employer retirement / year",
+            [r.employer_retirement for r in results],
+            "Paid into retirement by your employer.",
+        ),
+        (
+            "Additional cash saving / year",
+            [r.extra_savings for r in results],
+            "Planned saving from salary, beyond your 401(k).",
+        ),
+        (
+            "RSUs retained after tax / year",
+            [r.retained_rsus for r in results],
+            "Shares kept after selling enough to fund their estimated taxes.",
+        ),
+    ]
+    option_detail = ""
+    if any(adult.options.shares for d in documents for adult in d.inputs.adults):
+        option_detail = (
+            '<section class="fm-options"><h3>Shares acquired by exercising ISOs</h3>'
+            + _table(
+                names,
+                {
+                    "": [
+                        ("Cash paid to exercise", [r.option_cost for r in results]),
+                        (
+                            "Shares acquired at exercise value",
+                            [r.option_value for r in results],
+                        ),
+                        (
+                            "Value above exercise cost",
+                            [r.option_value - r.option_cost for r in results],
+                        ),
+                    ]
+                },
+            )
+            + '<p class="fm-note">Exercise moves cash into shares. Value above exercise cost is excluded from net saving; the options may have been earned in earlier years.</p></section>'
         )
-    savings = [_savings_rows(result) for result in results]
-    detail = _table(
+    reconciliation = _table(
         names,
         {
             "": [
-                (label, [rows[label] for rows in savings])
-                for label in savings[0]
-                if any(rows[label] for rows in savings)
+                ("Your 401(k) contributions", [r.employee_401k for r in results]),
+                ("Employer retirement", [r.employer_retirement for r in results]),
+                ("Additional cash saving", [r.extra_savings for r in results]),
+                ("RSUs retained after tax", [r.retained_rsus for r in results]),
+                (
+                    "Cash surplus / shortfall",
+                    [r.annual_remaining_cash for r in results],
+                ),
+                *(
+                    [
+                        (
+                            "Cash moved into option shares",
+                            [r.option_cost for r in results],
+                        )
+                    ]
+                    if any(r.option_cost for r in results)
+                    else []
+                ),
+                ("Net saved from income", [r.net_saved_from_income for r in results]),
             ]
         },
     )
+    values = [r.net_saved_from_income for r in results]
     return (
-        f'<div class="fm-comparison">{"".join(sections)}'
-        "<details><summary>Savings & investments breakdown / year</summary>"
-        f'{detail}<p class="fm-note">Excludes leftover cash. Includes pretax retirement and retained shares.</p>'
-        "</details></div>"
+        '<div class="fm-comparison"><p class="fm-note">Annual contributions and shares; existing account balances are not included.</p>'
+        f"{_metric_sections(names, metrics)}{option_detail}"
+        '<section class="fm-net"><h3>Net saved from income / year</h3>'
+        '<p class="fm-note">Salary + bonus + RSUs + employer retirement &minus; taxes &minus; living costs. '
+        "Includes cash shortfalls and pretax retirement. Excludes option award values, exercise spread, and investment growth.</p>"
+        f"{_series(names, values, *_domain(values))}"
+        f"<details><summary>How this total adds up</summary>{reconciliation}</details></section></div>"
     )
 
 
@@ -174,10 +285,10 @@ def _monthly_groups(document: SavedScenario) -> dict[str, dict[str, Decimal]]:
         },
         "Money set aside": {
             "Your 401(k)s": -result.employee_401k / 12,
-            "Other personal savings": -result.extra_savings / 12,
-            "Option purchases": -result.option_cost / 12,
+            "Additional cash saving": -result.extra_savings / 12,
+            "ISO exercise cost": -result.option_cost / 12,
         },
-        "Remaining": {"Cash left over": result.monthly_remaining_cash},
+        "Remaining": {"Cash surplus / shortfall": result.monthly_remaining_cash},
     }
 
 
@@ -191,15 +302,20 @@ def cash_flow_html(
         group: [
             (label, [rows[group][label] for rows in monthly])
             for label in values
-            if label != "Option purchases"
+            if label != "ISO exercise cost"
             or any(rows[group][label] for rows in monthly)
         ]
         for group, values in monthly[0].items()
     }
+    names = names or scenario_names(documents)
+    values = [d.result.monthly_remaining_cash for d in documents]
     return (
-        '<div class="fm-comparison"><h3>Average monthly cash flow</h3>'
-        f"{_table(names or scenario_names(documents), groups)}"
-        '<p class="fm-note">Annual amounts ÷ 12, rounded. Retained stock and employer retirement appear in Overview.</p></div>'
+        '<div class="fm-comparison"><h3>Monthly cash surplus / shortfall</h3>'
+        '<p class="fm-note">After taxes, living costs, planned saving, and option exercises. Negative means more cash is needed.</p>'
+        f"{_series(names, values, *_domain(values))}"
+        '<section class="fm-options"><h3>Average monthly cash flow</h3>'
+        f"{_table(names, groups)}</section>"
+        '<p class="fm-note">Annual amounts ÷ 12, rounded; not paycheck timing. Retained shares and employer retirement are not cash income.</p></div>'
     )
 
 
@@ -209,7 +325,7 @@ def component_differences(
     """Return each component's own difference, with higher costs also positive."""
     return {
         "Salary + bonus": other.gross_cash - reference.gross_cash,
-        "Stock compensation": other.gross_rsus - reference.gross_rsus,
+        "RSUs vesting": other.gross_rsus - reference.gross_rsus,
         "Taxes": other.taxes.total - reference.taxes.total,
         "Living costs": other.living_cost - reference.living_cost,
         "Employer retirement": other.employer_retirement
@@ -241,22 +357,21 @@ def component_differences_html(
         for document in documents
     ]
     net = [
-        document.result.total_savings_and_assets
-        - reference.result.total_savings_and_assets
+        document.result.net_saved_from_income - reference.result.net_saved_from_income
         for document in documents
     ]
     extent = max(abs(value) for rows in differences for value in rows.values())
     scale_extent = max(extent, *(abs(value) for value in net)) or Decimal(1)
     nouns = {
         "Salary + bonus": "income",
-        "Stock compensation": "stock compensation",
+        "RSUs vesting": "in vested RSUs",
         "Taxes": "tax",
         "Living costs": "spending",
         "Employer retirement": "employer retirement",
         "Option purchases": "in option costs",
         "Purchased option shares": "in option shares",
     }
-    optional = {"Stock compensation", "Option purchases", "Purchased option shares"}
+    optional = {"RSUs vesting", "Option purchases", "Purchased option shares"}
     sections = []
     if extent:
         for label, noun in nouns.items():
@@ -271,12 +386,17 @@ def component_differences_html(
     else:
         sections.append("<p>No component differences.</p>")
     net_chart = _series(
-        names, net, -scale_extent, scale_extent, noun="in assets", skip=reference_index
+        names,
+        net,
+        -scale_extent,
+        scale_extent,
+        noun="saved from income",
+        skip=reference_index,
     )
     return (
         '<div class="fm-comparison fm-components">'
         f"<p>Annual differences from {escape(names[reference_index])}. Right means more; left means less.</p>"
-        f'{"".join(sections)}<section class="fm-net"><h3>Net difference in annual assets added</h3>'
+        f'{"".join(sections)}<section class="fm-net"><h3>Difference in annual net saving</h3>'
         f'{net_chart}<p class="fm-note">Income and employer retirement add to assets; taxes and spending reduce them. '
-        "Assumes leftover cash is saved; includes retirement and retained shares.</p></section></div>"
+        "Includes cash shortfalls. Option exercise costs and acquired shares affect cash and holdings; their spread is excluded from this total.</p></section></div>"
     )

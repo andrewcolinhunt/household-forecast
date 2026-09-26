@@ -7,7 +7,13 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from financial_model.schemas import ISOExercise, LivingCosts, PersonInputs, Scenario
+from financial_model.schemas import (
+    ISOExercise,
+    LivingCosts,
+    OptionAward,
+    PersonInputs,
+    Scenario,
+)
 
 
 @pytest.mark.parametrize("value", [-1, "NaN", "Infinity", "1.001", True])
@@ -103,3 +109,54 @@ def test_iso_exercise_fractional_price_and_negative_spread() -> None:
         ISOExercise(shares=1.5)
     with pytest.raises(ValidationError):
         ISOExercise(treatment="nso")
+
+
+def test_option_award_distinguishes_unknown_zero_and_positive_value() -> None:
+    assert OptionAward(vesting_shares=1000, strike=2).exercise_spread is None
+    assert (
+        OptionAward(
+            vesting_shares=1000, strike=2, assumed_share_value=0
+        ).exercise_spread
+        == 0
+    )
+    assert (
+        OptionAward(
+            kind="NSO", vesting_shares=1000, strike=2, assumed_share_value=5
+        ).exercise_spread
+        == 3000
+    )
+    assert OptionAward(
+        vesting_shares=100, strike="1.001", assumed_share_value="1.002"
+    ).exercise_spread == Decimal("0.10")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"kind": "unknown"},
+        {"vesting_shares": -1},
+        {"vesting_shares": 1.5},
+        {"strike": -1},
+        {"assumed_share_value": "NaN"},
+    ],
+)
+def test_option_award_rejects_invalid_inputs(changes: dict) -> None:
+    with pytest.raises(ValidationError):
+        OptionAward.model_validate(changes)
+
+
+def test_option_award_round_trip_and_input_digest(scenario: Scenario) -> None:
+    data = scenario.model_dump(mode="json")
+    assert "option_award" not in data["adults"][0]
+    original_digest = scenario.digest()
+    data["adults"][0]["option_award"] = None
+    assert Scenario.model_validate(data).digest() == original_digest
+    data["adults"][0]["option_award"] = {
+        "kind": "NSO",
+        "vesting_shares": 1000,
+        "strike": "2",
+        "assumed_share_value": None,
+    }
+    updated = Scenario.model_validate(data)
+    assert updated.digest() != original_digest
+    assert Scenario.model_validate_json(updated.model_dump_json()) == updated
