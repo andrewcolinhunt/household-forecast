@@ -1,5 +1,7 @@
 # Environment and secrets
 .env
+.streamlit/secrets.toml
+*.scenario.json
 
 # macOS system files
 .DS_Store
