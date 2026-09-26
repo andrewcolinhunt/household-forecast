@@ -11,7 +11,12 @@ from streamlit.testing.v1 import AppTest
 from financial_model import app
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import SavedScenario, Scenario
-from financial_model.storage import create_scenario, list_scenarios, load_scenario
+from financial_model.storage import (
+    create_scenario,
+    delete_scenario,
+    list_scenarios,
+    load_scenario,
+)
 
 ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
 
@@ -22,6 +27,9 @@ def editor(scenario: Scenario | None = None) -> AppTest:
     if scenario:
         page.session_state["pending_inputs"] = scenario
     page.run()
+    if not scenario:
+        press(page, "New scenario")
+    page.switch_page("src/financial_model/pages/editor.py")
     assert not page.exception
     return page
 
@@ -29,6 +37,11 @@ def editor(scenario: Scenario | None = None) -> AppTest:
 def press(page: AppTest, label: str) -> AppTest:
     next(button for button in page.button if button.label == label).click().run()
     assert not page.exception
+    # AppTest does not retain the destination of an in-app st.switch_page call.
+    target = {"Scenarios": "scenarios", "Compare": "compare"}.get(
+        page.title[0].value, "editor"
+    )
+    page.switch_page(f"src/financial_model/pages/{target}.py")
     return page
 
 
@@ -46,9 +59,7 @@ def test_main_requires_household_facts() -> None:
     press(page, "Calculate")
     assert page.error
     assert page.session_state["document"] is None
-    assert next(
-        button for button in page.button if button.label == "Calculate and save"
-    ).disabled
+    assert next(button for button in page.button if button.label == "Save").disabled
 
 
 def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
@@ -56,10 +67,12 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     press(page, "Calculate")
     original = page.session_state["document"]
     assert original.inputs == scenario
-    press(page, "Keep these results for comparison")
+    press(page, "Keep snapshot")
     widget(page, "number_input", "adult_0_cash_pay").set_value(120000.0)
     press(page, "Calculate")
-    page.selectbox(key="baseline_choice").select("session").run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    page.selectbox(key="compare_left").select("snapshot").run()
+    page.selectbox(key="compare_right").select("draft").run()
     assert not page.exception
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
@@ -75,7 +88,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert "<strong>$20,000</strong>" in difference
     assert "Cash left over" in rendered
     assert not page.dataframe
-    assert page.session_state["session_baseline"] == original
+    assert page.session_state["session_snapshot"] == original
 
 
 @pytest.mark.parametrize("outdated", [False, True])
@@ -84,16 +97,18 @@ def test_main_comparison_rejects_mismatched_snapshots(
 ) -> None:
     page = editor(scenario)
     press(page, "Calculate")
-    press(page, "Keep these results for comparison")
+    press(page, "Keep snapshot")
     if outdated:
-        saved = page.session_state["session_baseline"]
-        page.session_state["session_baseline"] = saved.model_copy(
+        saved = page.session_state["session_snapshot"]
+        page.session_state["session_snapshot"] = saved.model_copy(
             update={"result": saved.result.model_copy(update={"model_revision": "old"})}
         )
     else:
         widget(page, "selectbox", "year_").select(2026)
         press(page, "Calculate")
-    page.selectbox(key="baseline_choice").select("session").run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    page.selectbox(key="compare_left").select("snapshot").run()
+    page.selectbox(key="compare_right").select("draft").run()
     assert not page.exception
     assert not page.tabs
     assert page.info
@@ -124,12 +139,12 @@ def test_main_saves_current_form_and_successive_revisions(
     press(page, "Calculate")
     assert not list_scenarios(database_url)
     widget(page, "number_input", "adult_0_cash_pay").set_value(110000.0)
-    press(page, "Calculate and save")
+    press(page, "Save")
     saved = list_scenarios(database_url)[0]
     assert saved.inputs.adults[0].cash_pay == 110000
     for revision, cash in [(2, 120000), (3, 130000)]:
         widget(page, "number_input", "adult_0_cash_pay").set_value(float(cash))
-        press(page, "Calculate and save")
+        press(page, "Save")
         saved = load_scenario(database_url, saved.id)
         assert saved.revision == revision
         assert saved.inputs.adults[0].cash_pay == cash
@@ -143,9 +158,12 @@ def test_main_duplicate_gets_new_identity(
 ) -> None:
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     page = editor(scenario)
-    press(page, "Calculate and save")
+    press(page, "Save")
     original = list_scenarios(database_url)[0]
-    press(page, "Save as new scenario")
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    press(page, "Duplicate")
+    assert len(list_scenarios(database_url)) == 1
+    press(page, "Save")
     records = list_scenarios(database_url)
     assert len(records) == 2
     assert any(
@@ -165,12 +183,14 @@ def test_main_two_sessions_conflict_keeps_draft(
     )
     first, second = editor(), editor()
     for page in [first, second]:
-        page.selectbox(key="scenario_choice").select(str(saved.id)).run()
+        page.switch_page("src/financial_model/pages/scenarios.py").run()
+        page.button(key=f"edit_{saved.id}").click().run()
+        page.switch_page("src/financial_model/pages/editor.py")
     widget(first, "number_input", "adult_0_cash_pay").set_value(120000.0)
-    press(first, "Calculate and save")
+    press(first, "Save")
     widget(second, "number_input", "adult_0_cash_pay").set_value(130000.0)
-    press(second, "Calculate and save")
-    assert any("newer saved revision" in warning.value for warning in second.warning)
+    press(second, "Save")
+    assert any("changed or was deleted" in warning.value for warning in second.warning)
     assert second.session_state["document"].inputs.adults[0].cash_pay == 130000
     assert load_scenario(database_url, saved.id).inputs.adults[0].cash_pay == 120000
     assert not second.success
@@ -190,7 +210,7 @@ def test_main_failed_save_preserves_result(
         raise psycopg.OperationalError(message)
 
     monkeypatch.setattr(app, "create_scenario", unavailable)
-    press(page, "Calculate and save")
+    press(page, "Save")
     assert any("Save failed" in error.value for error in page.error)
     assert all("private connection" not in error.value for error in page.error)
     assert page.session_state["document"].inputs == scenario
@@ -206,7 +226,9 @@ def test_main_old_result_is_labeled_and_recalculated(
     result = evaluate_scenario(scenario).model_copy(update={"model_revision": "old"})
     saved = create_scenario(database_url, SavedScenario(inputs=scenario, result=result))
     page = editor()
-    page.selectbox(key="scenario_choice").select(str(saved.id)).run()
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    page.button(key=f"edit_{saved.id}").click().run()
+    page.switch_page("src/financial_model/pages/editor.py")
     assert any("older calculation rules" in warning.value for warning in page.warning)
     press(page, "Calculate")
     assert not page.warning
@@ -248,3 +270,159 @@ def test_main_invalid_backup_keeps_existing_results(
     press(page, "Load backup as new draft")
     assert page.error
     assert page.session_state["document"] == original
+
+
+def test_main_starts_with_library() -> None:
+    page = AppTest.from_file(str(ENTRY)).run()
+    assert not page.exception
+    assert page.title[0].value == "Scenarios"
+    assert not page.number_input
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert page.title[0].value == "Compare"
+    assert not page.number_input
+
+
+def test_editor_preserves_unsubmitted_inputs_across_pages(scenario: Scenario) -> None:
+    page = editor(scenario)
+    press(page, "Calculate")
+    original = page.session_state["document"]
+    widget(page, "number_input", "adult_0_cash_pay").set_value(130000.0).run()
+    widget(page, "text_input", "children_").set_value("not an age").run()
+    assert any("Inputs changed" in item.value for item in page.info)
+    for target in ("compare", "scenarios", "editor"):
+        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+        assert not page.exception
+    assert widget(page, "number_input", "adult_0_cash_pay").value == 130000
+    assert widget(page, "text_input", "children_").value == "not an age"
+    assert page.session_state["document"] == original
+    press(page, "Calculate")
+    assert page.error
+    assert page.session_state["document"] == original
+
+
+@pytest.mark.integration
+def test_compare_saved_scenarios_without_opening_editor(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    first = create_scenario(
+        database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    )
+    inputs = Scenario.model_validate(scenario.model_dump() | {"name": "Second place"})
+    second = create_scenario(
+        database_url, SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
+    )
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    page.selectbox(key="compare_left").select(str(first.id)).run()
+    page.selectbox(key="compare_right").select(str(second.id)).run()
+    assert not page.exception
+    assert [tab.label for tab in page.tabs] == ["Overview", "Cash flow", "Difference"]
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert page.selectbox(key="compare_left").value == str(first.id)
+    assert page.selectbox(key="compare_right").value == str(second.id)
+    delete_scenario(database_url, second.id, second.revision)
+    page.run()
+    assert not page.exception
+    assert page.selectbox(key="compare_right").value is None
+    assert not page.tabs
+
+
+@pytest.mark.integration
+def test_editor_keeps_separate_drafts_for_saved_scenarios(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    first = create_scenario(
+        database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    )
+    second = create_scenario(
+        database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    )
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    page.button(key=f"edit_{first.id}").click().run()
+    page.switch_page("src/financial_model/pages/editor.py")
+    widget(page, "number_input", "adult_0_cash_pay").set_value(150000.0).run()
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    page.button(key=f"edit_{second.id}").click().run()
+    page.switch_page("src/financial_model/pages/editor.py")
+    assert widget(page, "number_input", "adult_0_cash_pay").value == 100000
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    page.button(key=f"edit_{first.id}").click().run()
+    page.switch_page("src/financial_model/pages/editor.py")
+    assert widget(page, "number_input", "adult_0_cash_pay").value == 150000
+    assert load_scenario(database_url, first.id).inputs.adults[0].cash_pay == 100000
+
+
+@pytest.mark.integration
+def test_delete_requires_confirmation_and_cleans_session(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = editor(scenario)
+    press(page, "Save")
+    saved = list_scenarios(database_url)[0]
+    press(page, "Keep snapshot")
+    page.session_state["compare_left"] = str(saved.id)
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    press(page, "Delete")
+    assert load_scenario(database_url, saved.id) is not None
+    press(page, "Cancel")
+    assert load_scenario(database_url, saved.id) is not None
+    press(page, "Delete")
+    press(page, "Delete scenario")
+    assert not list_scenarios(database_url)
+    assert "document" not in page.session_state
+    assert "session_snapshot" not in page.session_state
+    assert not page.session_state["drafts"]
+    assert page.session_state["compare_left"] is None
+    assert page.success
+
+
+@pytest.mark.integration
+def test_delete_conflict_and_database_failure_preserve_record(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financial_model.storage import update_scenario
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    saved = create_scenario(
+        database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    )
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    press(page, "Delete")
+    changed = update_scenario(database_url, saved)
+    press(page, "Delete scenario")
+    assert page.warning
+    assert load_scenario(database_url, saved.id) == changed
+    press(page, "Cancel")
+    press(page, "Delete")
+
+    def unavailable(*args, **kwargs):
+        message = "private connection details"
+        raise psycopg.OperationalError(message)
+
+    monkeypatch.setattr(app, "delete_scenario", unavailable)
+    press(page, "Delete scenario")
+    assert any("Delete failed" in error.value for error in page.error)
+    assert all("private connection" not in error.value for error in page.error)
+    assert load_scenario(database_url, saved.id) == changed
+
+
+@pytest.mark.integration
+def test_deleted_scenario_cannot_be_saved_back_by_another_session(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = editor(scenario)
+    press(page, "Save")
+    saved = list_scenarios(database_url)[0]
+    widget(page, "number_input", "adult_0_cash_pay").set_value(140000.0).run()
+    delete_scenario(database_url, saved.id, saved.revision)
+    page.run()
+    assert any("was deleted" in warning.value for warning in page.warning)
+    assert next(button for button in page.button if button.label == "Save").disabled
+    press(page, "Save as new scenario")
+    assert list_scenarios(database_url)[0].id != saved.id
+    assert list_scenarios(database_url)[0].inputs.adults[0].cash_pay == 140000

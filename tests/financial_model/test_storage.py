@@ -13,6 +13,7 @@ from financial_model.schemas import SavedScenario, Scenario
 from financial_model.storage import (
     RevisionConflictError,
     create_scenario,
+    delete_scenario,
     import_backup,
     list_scenarios,
     load_scenario,
@@ -92,3 +93,33 @@ def test_import_backup_rejects_invalid_content(document: SavedScenario) -> None:
     data = document.model_dump() | {"schema_version": 2}
     with pytest.raises(ValidationError, match="schema_version"):
         SavedScenario.model_validate(data)
+
+
+@pytest.mark.integration
+def test_delete_scenario_removes_only_requested_record(
+    database_url: str, document: SavedScenario
+) -> None:
+    create_scenario(database_url, document)
+    other = create_scenario(
+        database_url, SavedScenario(inputs=document.inputs, result=document.result)
+    )
+    delete_scenario(database_url, document.id, document.revision)
+    assert load_scenario(database_url, document.id) is None
+    assert list_scenarios(database_url) == (other,)
+    with pytest.raises(RevisionConflictError):
+        update_scenario(database_url, document)
+    assert load_scenario(database_url, document.id) is None
+
+
+@pytest.mark.integration
+def test_delete_scenario_rejects_stale_and_missing_revisions(
+    database_url: str, document: SavedScenario
+) -> None:
+    create_scenario(database_url, document)
+    updated = update_scenario(database_url, document)
+    with pytest.raises(RevisionConflictError):
+        delete_scenario(database_url, document.id, document.revision)
+    assert load_scenario(database_url, document.id) == updated
+    delete_scenario(database_url, updated.id, updated.revision)
+    with pytest.raises(RevisionConflictError):
+        delete_scenario(database_url, updated.id, updated.revision)

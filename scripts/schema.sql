@@ -1,4 +1,4 @@
--- Apply once with a database owner. The app role needs SELECT/INSERT/UPDATE only.
+-- Apply once with a database owner. The app role needs SELECT/INSERT/UPDATE/DELETE.
 CREATE TABLE IF NOT EXISTS scenarios (
     id UUID PRIMARY KEY,
     revision INTEGER NOT NULL CHECK (revision >= 1),

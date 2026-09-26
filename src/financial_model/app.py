@@ -23,13 +23,18 @@ from financial_model.schemas import (
 from financial_model.storage import (
     RevisionConflictError,
     create_scenario,
+    delete_scenario,
     import_backup,
     list_scenarios,
     update_scenario,
 )
 from financial_model.taxes import CORE_VERSION, CORRECTION_VERSION, ENGINE_VERSION
 
-NEW_SCENARIO = "__new__"
+PAGE_DIR = Path(__file__).with_name("pages")
+SCENARIOS_PAGE = PAGE_DIR / "scenarios.py"
+EDITOR_PAGE = PAGE_DIR / "editor.py"
+COMPARE_PAGE = PAGE_DIR / "compare.py"
+DRAFT_FIELDS = ("draft_data", "draft_ages", "loaded_record", "document", "draft_id")
 
 
 def _database_url() -> str | None:
@@ -60,45 +65,42 @@ def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
 
 
 def _set_editor(inputs: Scenario | None, record: SavedScenario | None = None) -> None:
-    """Replace the editing buffer and reset widget identities when loading inputs."""
+    """Replace the active editing buffer with validated inputs or a blank draft."""
     st.session_state["editor_epoch"] = st.session_state.get("editor_epoch", 0) + 1
     st.session_state["draft_data"] = inputs.model_dump(mode="json") if inputs else {}
+    st.session_state["draft_ages"] = (
+        ", ".join(str(child.age) for child in inputs.dependents) if inputs else ""
+    )
     st.session_state["loaded_record"] = record
     st.session_state["document"] = record
     st.session_state["draft_id"] = record.id if record else uuid4()
+    _remember_draft()
 
 
-def _scenario_picker(records: tuple[SavedScenario, ...]) -> None:
-    """Load explicitly selected records while retaining drafts on ordinary reruns."""
-    by_id = {str(record.id): record for record in records}
-    if "editor_epoch" not in st.session_state:
-        _set_editor(None)
-    if pending := st.session_state.pop("pending_selection", None):
-        st.session_state["scenario_choice"] = pending
-    if imported := st.session_state.pop("pending_inputs", None):
-        _set_editor(imported)
-        st.session_state["loaded_selection"] = NEW_SCENARIO
-    choices = [NEW_SCENARIO, *by_id]
-    selected = st.selectbox(
-        "Scenario",
-        choices,
-        key="scenario_choice",
-        format_func=lambda key: "New scenario"
-        if key == NEW_SCENARIO
-        else (
-            f"{by_id[key].inputs.name} · {by_id[key].inputs.state} {by_id[key].inputs.tax_year}"
-        ),
-    )
-    if selected != st.session_state.get("loaded_selection", NEW_SCENARIO):
-        record = by_id.get(selected)
-        _set_editor(record.inputs if record else None, record)
-    st.session_state["loaded_selection"] = selected
-    reload_column, refresh_column = st.columns(2)
-    if reload_column.button("Reload saved", disabled=selected == NEW_SCENARIO):
-        record = by_id[selected]
-        _set_editor(record.inputs, record)
-    refresh_column.button("Refresh saved list")
-    st.caption("Calculate to update results. Save before switching scenarios.")
+def _remember_draft() -> None:
+    """Retain raw edits separately from widgets that disappear on page changes."""
+    drafts = st.session_state.setdefault("drafts", {})
+    drafts[str(st.session_state["draft_id"])] = {
+        key: st.session_state[key] for key in DRAFT_FIELDS
+    }
+
+
+def _open_editor(
+    record: SavedScenario | None = None, *, duplicate: bool = False
+) -> None:
+    """Open a saved scenario's existing draft or start a distinct new draft."""
+    cached = st.session_state.get("drafts", {}).get(str(record.id)) if record else None
+    if cached and not duplicate:
+        st.session_state.update(cached)
+        st.session_state["editor_epoch"] = st.session_state.get("editor_epoch", 0) + 1
+    else:
+        inputs = record.inputs if record else None
+        if inputs and duplicate:
+            inputs = Scenario.model_validate(
+                inputs.model_dump() | {"name": inputs.name[:73] + " (copy)"}
+            )
+        _set_editor(inputs, None if duplicate else record)
+    st.switch_page(str(EDITOR_PAGE))
 
 
 def _key(name: str) -> str:
@@ -234,9 +236,9 @@ def _living_inputs(data: dict[str, Any], state: str) -> dict[str, Any]:
 
 
 def _form(dsn: str | None) -> None:
-    """Submit all visible inputs together for calculation or persistence."""
+    """Retain edits on each rerun; calculate and save only on explicit actions."""
     data = st.session_state["draft_data"]
-    with st.form(_key("scenario_form")):
+    with st.container():
         name = st.text_input(
             "Scenario name", value=data.get("name", "New scenario"), key=_key("name")
         )
@@ -255,7 +257,7 @@ def _form(dsn: str | None) -> None:
         )
         ages = st.text_input(
             "Qualifying children's ages",
-            value=", ".join(str(child["age"]) for child in data.get("dependents", [])),
+            value=st.session_state["draft_ages"],
             key=_key("children"),
             help="Ages at year end, separated by commas. Leave blank for none. Supported ages: 0-17.",
         )
@@ -278,28 +280,43 @@ def _form(dsn: str | None) -> None:
             value=data.get("assumptions_confirmed", False),
             key=_key("confirmed"),
         )
-        calculate = st.form_submit_button("Calculate", type="primary")
-        save = st.form_submit_button(
-            "Calculate and save", disabled=not st.session_state["store_available"]
+    data = {
+        "name": name,
+        "tax_year": year,
+        "state": state,
+        "adults": adults,
+        "living_costs": living,
+        "notes": notes,
+        "assumptions_confirmed": confirmed,
+    }
+    st.session_state["draft_data"] = data
+    st.session_state["draft_ages"] = ages
+    _remember_draft()
+    loaded = st.session_state.get("loaded_record")
+    missing = loaded is not None and all(
+        record.id != loaded.id for record in st.session_state["records"]
+    )
+    if missing and st.session_state["store_available"]:
+        st.warning(
+            "This scenario was deleted. Save as new scenario to keep this draft."
         )
-        copy = st.form_submit_button(
-            "Save as new scenario", disabled=not st.session_state["store_available"]
+    with st.container(horizontal=True):
+        calculate = st.button("Calculate")
+        save = st.button(
+            "Save",
+            type="primary",
+            disabled=not st.session_state["store_available"] or missing,
+            help="Calculate and save the current inputs.",
+        )
+        copy = (
+            st.button(
+                "Save as new scenario", disabled=not st.session_state["store_available"]
+            )
+            if loaded
+            else False
         )
     if calculate or save or copy:
-        _submit(
-            {
-                "name": name,
-                "tax_year": year,
-                "state": state,
-                "adults": adults,
-                "living_costs": living,
-                "notes": notes,
-                "assumptions_confirmed": confirmed,
-            },
-            ages,
-            "copy" if copy else "save" if save else "calculate",
-            dsn,
-        )
+        _submit(data, ages, "copy" if copy else "save" if save else "calculate", dsn)
 
 
 def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> None:
@@ -308,10 +325,7 @@ def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> No
     if action == "copy" and loaded and data["name"] == loaded.inputs.name:
         data["name"] = data["name"][:73] + " (copy)"
     try:
-        data["dependents"] = [
-            {"age": int(age.strip())} for age in ages.split(",") if age.strip()
-        ]
-        inputs = Scenario.model_validate(data)
+        inputs = _parse_inputs(data, ages)
     except (ValidationError, ValueError) as error:
         _input_error(error)
         return
@@ -323,8 +337,8 @@ def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> No
         id=st.session_state["draft_id"],
         revision=loaded.revision if loaded else 1,
     )
-    st.session_state["draft_data"] = inputs.model_dump(mode="json")
     st.session_state["document"] = document
+    _remember_draft()
     if action != "calculate" and dsn:
         _save(dsn, document, new=action == "copy" or loaded is None)
 
@@ -358,9 +372,9 @@ def _save(dsn: str, document: SavedScenario, *, new: bool) -> None:
             "Save failed. Your calculated draft is still here; retry or download a backup."
         )
         return
+    if not st.session_state.get("loaded_record"):
+        st.session_state["drafts"].pop(str(st.session_state["draft_id"]), None)
     _set_editor(saved.inputs, saved)
-    st.session_state["loaded_selection"] = str(saved.id)
-    st.session_state["pending_selection"] = str(saved.id)
     st.session_state["notice"] = "Scenario saved."
     st.rerun()
 
@@ -396,7 +410,7 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
     }
 
 
-def _results(document: SavedScenario, records: tuple[SavedScenario, ...]) -> None:
+def _results(document: SavedScenario) -> None:
     """Display the last calculated or loaded document, never unsubmitted edits."""
     result = document.result
     st.subheader("Results")
@@ -415,16 +429,25 @@ def _results(document: SavedScenario, records: tuple[SavedScenario, ...]) -> Non
         st.warning(
             "This scenario has a cash shortfall. It does not automatically borrow or sell more shares."
         )
-    if not _comparison(document, records):
-        columns = st.columns(3)
-        columns[0].metric(
-            "Average monthly remaining cash", f"${result.monthly_remaining_cash:,.2f}"
-        )
-        columns[1].metric("Annual retained RSUs", f"${result.retained_rsus:,.2f}")
-        columns[2].metric(
-            "Annual retirement contributions",
-            f"${result.employee_401k + result.employer_retirement:,.2f}",
-        )
+    st.metric("Monthly cash left over", f"${result.monthly_remaining_cash:,.0f}")
+    st.metric("Annual assets added", f"${result.total_savings_and_assets:,.0f}")
+    st.caption(
+        "Assumes leftover cash is saved; includes retirement and retained shares."
+    )
+    with st.container(horizontal=True):
+        if st.button("Compare results", disabled=not _current(result)):
+            st.session_state["compare_right"] = next(
+                (
+                    str(record.id)
+                    for record in st.session_state["records"]
+                    if record == document
+                ),
+                "draft",
+            )
+            st.switch_page(str(COMPARE_PAGE))
+        if st.button("Keep snapshot", disabled=not _current(result)):
+            st.session_state["session_snapshot"] = document
+            st.toast("Snapshot kept for comparison.")
     with st.expander("Annual calculation details"):
         st.table(
             [
@@ -471,42 +494,74 @@ def _tax_detail(result: ScenarioResult) -> None:
     )
 
 
-def _comparison(document: SavedScenario, records: tuple[SavedScenario, ...]) -> bool:
-    """Render three named comparison views when snapshots have matching rules."""
-    if st.button(
-        "Keep these results for comparison",
-        disabled=not _current(document.result),
+def compare_page() -> None:
+    """Compare two independently selected saved scenarios or session results."""
+    st.title("Compare")
+    records = st.session_state["records"]
+    choices = {str(record.id): record for record in records}
+    document = st.session_state.get("document")
+    if document and document not in records:
+        choices["draft"] = document
+    if snapshot := st.session_state.get("session_snapshot"):
+        choices["snapshot"] = snapshot
+    if len(choices) < 2:
+        st.info("Create or duplicate a scenario to compare two sets of results.")
+    selected = []
+    for column, key, label in zip(
+        st.columns(2),
+        ("compare_left", "compare_right"),
+        ("First scenario", "Second scenario"),
+        strict=True,
     ):
-        st.session_state["session_baseline"] = document
-    baselines = {str(record.id): record for record in records}
-    if baseline := st.session_state.get("session_baseline"):
-        baselines["session"] = baseline
-    selected = st.selectbox(
-        "Compare with",
-        ["none", *baselines],
-        format_func=lambda key: "Choose a scenario"
-        if key == "none"
-        else (
-            f"{'Current session: ' if key == 'session' else ''}{baselines[key].inputs.name}"
-        ),
-        key="baseline_choice",
-    )
-    if selected == "none":
-        return False
-    baseline = baselines[selected]
-    if baseline.inputs.tax_year != document.inputs.tax_year:
+        if st.session_state.get(key) not in choices:
+            st.session_state[key] = None
+        with column:
+            choice = st.selectbox(
+                label,
+                list(choices),
+                index=None,
+                placeholder="Choose a scenario",
+                key=key,
+                format_func=lambda value: (
+                    choices[value].inputs.name
+                    + (
+                        " (last calculated draft)"
+                        if value == "draft"
+                        else " (kept snapshot)"
+                        if value == "snapshot"
+                        else ""
+                    )
+                ),
+            )
+        selected.append(choices[choice] if choice is not None else None)
+    first, second = selected
+    if first is None or second is None:
+        return
+    if st.session_state["compare_left"] == st.session_state["compare_right"]:
+        st.info("Choose two different scenarios.")
+        return
+    _comparison(first, second)
+
+
+def _comparison(first: SavedScenario, second: SavedScenario) -> None:
+    """Render the approved views only for comparable calculation snapshots."""
+    if first.inputs.tax_year != second.inputs.tax_year:
         st.info(
             "Choose scenarios from the same tax year for a like-for-like comparison."
         )
-        return False
-    if not _current(baseline.result) or not _current(document.result):
-        st.info("Recalculate scenarios with the current rules before comparing them.")
-        return False
-    if (
-        baseline.result.taxes.rules_status == "projected_ca_parameters"
-        and document.result.taxes.rules_status != "projected_ca_parameters"
+        return
+    if not all(_current(record.result) for record in (first, second)):
+        st.info(
+            "Recalculate and save scenarios with the current rules before comparing them."
+        )
+        return
+    if any(
+        record.result.taxes.rules_status == "projected_ca_parameters"
+        for record in (first, second)
     ):
-        st.warning("The comparison scenario uses projected 2026 California parameters.")
+        st.warning(
+            "2026 California income taxes use projected parameters in the pinned tax engine."
+        )
     st.html(Path(__file__).with_name("comparison.css"))
     for tab, render in zip(
         st.tabs(["Overview", "Cash flow", "Difference"]),
@@ -514,8 +569,7 @@ def _comparison(document: SavedScenario, records: tuple[SavedScenario, ...]) -> 
         strict=True,
     ):
         with tab:
-            st.html(render(baseline, document))
-    return True
+            st.html(render(first, second))
 
 
 def _backups(document: SavedScenario | None) -> None:
@@ -539,9 +593,8 @@ def _backups(document: SavedScenario | None) -> None:
                     str(error)
                 )
                 return
-            st.session_state["pending_inputs"] = inputs
-            st.session_state["pending_selection"] = NEW_SCENARIO
-            st.rerun()
+            _set_editor(inputs)
+            st.switch_page(str(EDITOR_PAGE))
         st.caption(
             "Backups contain your financial inputs. Imported results are recalculated before saving a new copy."
         )
@@ -564,25 +617,232 @@ def _assumptions() -> None:
         )
 
 
+def _parse_inputs(data: dict[str, Any], ages: str) -> Scenario:
+    """Validate the raw editing buffer without changing it."""
+    return Scenario.model_validate(
+        data
+        | {
+            "dependents": [
+                {"age": int(age.strip())} for age in ages.split(",") if age.strip()
+            ]
+        }
+    )
+
+
+def _draft_status() -> tuple[bool, bool]:
+    """Return whether the editor differs from saved and calculated inputs."""
+    try:
+        inputs = _parse_inputs(
+            st.session_state["draft_data"], st.session_state["draft_ages"]
+        )
+    except ValueError:
+        return True, True
+    loaded = st.session_state.get("loaded_record")
+    document = st.session_state.get("document")
+    return (
+        loaded is None or inputs != loaded.inputs,
+        document is None or inputs != document.inputs,
+    )
+
+
+def editor_page() -> None:
+    """Edit a session draft beside its last calculated result."""
+    if "editor_epoch" not in st.session_state:
+        _set_editor(None)
+    st.page_link(
+        str(SCENARIOS_PAGE), label="All scenarios", icon=":material/arrow_back:"
+    )
+    st.title(
+        "Edit scenario" if st.session_state.get("loaded_record") else "New scenario"
+    )
+    status = st.empty()
+    inputs, preview = st.columns([2, 1], gap="large")
+    with inputs:
+        _form(_database_url())
+        _assumptions()
+        loaded = st.session_state.get("loaded_record")
+        latest = next(
+            (
+                record
+                for record in st.session_state["records"]
+                if loaded and record.id == loaded.id
+            ),
+            None,
+        )
+        if latest:
+            with st.expander("Reload saved version"):
+                st.caption(
+                    "Discard edits to this scenario and load its latest saved version."
+                )
+                if st.button(
+                    "Discard edits and reload",
+                    disabled=not st.session_state["store_available"],
+                ):
+                    _set_editor(latest.inputs, latest)
+                    st.rerun()
+    unsaved, stale = _draft_status()
+    status.caption("Unsaved changes" if unsaved else "Saved")
+    with preview:
+        document = st.session_state.get("document")
+        if document:
+            if stale:
+                st.info("Inputs changed. Calculate to update these results.")
+            _results(document)
+        else:
+            st.subheader("Results")
+            st.caption("Calculate to see income, taxes, and savings.")
+        _backups(document)
+
+
+@st.dialog("Delete scenario?", dismissible=False)
+def _confirm_delete(record: SavedScenario) -> None:
+    """Require confirmation of a specific saved revision before deleting it."""
+    st.write(record.inputs.name)
+    st.caption(
+        "This removes the scenario for both of you, including its draft in this session. It cannot be undone."
+    )
+    cancel, confirm = st.columns(2)
+    if cancel.button("Cancel", width="stretch"):
+        st.session_state.pop("pending_delete", None)
+        st.rerun()
+    if confirm.button("Delete scenario", type="primary", width="stretch"):
+        dsn = _database_url()
+        if not dsn:
+            st.error("The saved scenario store is unavailable.")
+            return
+        try:
+            delete_scenario(dsn, record.id, record.revision)
+        except RevisionConflictError as error:
+            st.warning(str(error))
+            return
+        except psycopg.Error:
+            st.error("Delete failed. The scenario has not been removed; try again.")
+            return
+        _forget_scenario(record)
+        st.session_state.pop("pending_delete", None)
+        st.session_state["notice"] = "Scenario deleted."
+        st.rerun()
+
+
+def _forget_scenario(record: SavedScenario) -> None:
+    """Remove references to a deleted record from this browser session."""
+    st.session_state.get("drafts", {}).pop(str(record.id), None)
+    st.session_state["last_records"] = tuple(
+        item
+        for item in st.session_state.get("last_records", ())
+        if item.id != record.id
+    )
+    if st.session_state.get("draft_id") == record.id:
+        for key in (*DRAFT_FIELDS, "editor_epoch"):
+            st.session_state.pop(key, None)
+    snapshot = st.session_state.get("session_snapshot")
+    if snapshot and snapshot.id == record.id:
+        st.session_state.pop("session_snapshot")
+    for key in ("compare_left", "compare_right"):
+        if st.session_state.get(key) == str(record.id):
+            st.session_state[key] = None
+
+
+def _scenario_card(record: SavedScenario) -> None:
+    """Show a saved scenario's outcomes and its edit, copy, and delete actions."""
+    with st.container(border=True):
+        name, cash, assets = st.columns([2, 1, 1], vertical_alignment="center")
+        name.subheader(record.inputs.name)
+        name.caption(f"{record.inputs.state} · {record.inputs.tax_year}")
+        cash.metric(
+            "Monthly cash left over", f"${record.result.monthly_remaining_cash:,.0f}"
+        )
+        assets.metric(
+            "Annual assets added", f"${record.result.total_savings_and_assets:,.0f}"
+        )
+        if not _current(record.result):
+            st.caption("Recalculation needed: saved results use older rules.")
+        with st.container(horizontal=True):
+            if st.button("Edit", key=f"edit_{record.id}"):
+                _open_editor(record)
+            with st.popover("Actions"):
+                if st.button("Duplicate", key=f"duplicate_{record.id}"):
+                    _open_editor(record, duplicate=True)
+                if st.button(
+                    "Delete",
+                    key=f"delete_{record.id}",
+                    disabled=not st.session_state["store_available"],
+                ):
+                    st.session_state["pending_delete"] = record
+
+
+def scenarios_page() -> None:
+    """List saved household scenarios and provide entry points to their drafts."""
+    st.title("Scenarios")
+    with st.container(horizontal=True):
+        if st.button("New scenario", type="primary"):
+            _open_editor()
+        if "draft_id" in st.session_state:
+            st.page_link(str(EDITOR_PAGE), label="Resume editing")
+        st.button("Refresh", help="Read the latest saved scenarios.")
+    records = st.session_state["records"]
+    if not records:
+        st.info("No saved scenarios yet. Create one to get started.")
+    for record in records:
+        _scenario_card(record)
+    drafts = [
+        draft
+        for draft in st.session_state.get("drafts", {}).values()
+        if draft["loaded_record"] is None
+    ]
+    if drafts:
+        with st.expander("Unsaved drafts"):
+            for draft in drafts:
+                label = draft["draft_data"].get("name", "New scenario")
+                if st.button(label, key=f"resume_{draft['draft_id']}"):
+                    st.session_state.update(draft)
+                    st.session_state["editor_epoch"] = (
+                        st.session_state.get("editor_epoch", 0) + 1
+                    )
+                    st.switch_page(str(EDITOR_PAGE))
+    if records:
+        st.caption("Annual assets include saved cash, retirement, and retained shares.")
+    if any(
+        record.result.taxes.rules_status == "projected_ca_parameters"
+        for record in records
+    ):
+        st.caption("2026 California tax estimates use projected parameters.")
+    _backups(None)
+    if pending := st.session_state.get("pending_delete"):
+        _confirm_delete(pending)
+
+
 def main() -> None:
-    """Run the household editor with either shared persistence or local preview."""
+    """Route the app through top navigation with an editor opened from the library."""
     st.set_page_config(
         page_title="Family financial model", page_icon="🏡", layout="wide"
     )
-    st.title("Family financial model")
-    st.write("Compare income, living costs, and what you can save in a year.")
+    page = st.navigation(
+        [
+            st.Page(str(SCENARIOS_PAGE), title="Scenarios", default=True),
+            st.Page(str(COMPARE_PAGE), title="Compare", url_path="compare"),
+            st.Page(
+                str(EDITOR_PAGE),
+                title="Scenario editor",
+                url_path="editor",
+                visibility="hidden",
+            ),
+        ],
+        position="top",
+    )
     dsn = _database_url()
     if not dsn:
         st.info(
-            "Local preview: drafts last only for this session. Download a backup to keep your work. Shared saving needs a database connection."
+            "Local preview: drafts last for this session. Download a backup to keep them."
         )
-    records = _read_store(dsn)
+    st.session_state["records"] = _read_store(dsn)
     if notice := st.session_state.pop("notice", None):
         st.success(notice)
-    _scenario_picker(records)
-    _assumptions()
-    _form(dsn)
-    document = st.session_state.get("document")
-    if document:
-        _results(document, records)
-    _backups(document)
+    if imported := st.session_state.pop("pending_inputs", None):
+        _set_editor(imported)
+        st.switch_page(str(EDITOR_PAGE))
+    # Page widgets are transient; persist comparison choices between visits.
+    for key in ("compare_left", "compare_right"):
+        if key in st.session_state:
+            st.session_state[key] = st.session_state[key]
+    page.run()

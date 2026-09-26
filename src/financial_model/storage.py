@@ -17,7 +17,7 @@ MAX_BACKUP_BYTES = 1_000_000
 
 
 class RevisionConflictError(Exception):
-    """The scenario changed after this session loaded it."""
+    """The scenario changed or was deleted after this session loaded it."""
 
 
 def _connect(dsn: str) -> psycopg.Connection[dict[str, Any]]:
@@ -101,11 +101,32 @@ def update_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
             ),
         ).fetchone()
         if row is None:
-            message = (
-                "This scenario has a newer saved revision. Reload or save a new copy."
-            )
+            message = "This scenario changed or was deleted. Reload or save a new copy."
             raise RevisionConflictError(message)
     return updated
+
+
+def delete_scenario(dsn: str, scenario_id: UUID, revision: int) -> None:
+    """Delete only the revision the user reviewed in the confirmation dialog.
+
+    Args:
+        dsn: PostgreSQL connection string.
+        scenario_id: Identity of the scenario to remove.
+        revision: Revision shown when deletion was requested.
+
+    Raises:
+        RevisionConflictError: If the scenario changed or was already deleted.
+    """
+    with _connect(dsn) as connection:
+        row = connection.execute(
+            "DELETE FROM scenarios WHERE id = %s AND revision = %s RETURNING id",
+            (scenario_id, revision),
+        ).fetchone()
+        if row is None:
+            message = (
+                "This scenario changed or was deleted. Refresh the list and try again."
+            )
+            raise RevisionConflictError(message)
 
 
 def import_backup(data: bytes) -> Scenario:
