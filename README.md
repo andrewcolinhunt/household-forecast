@@ -1,52 +1,62 @@
 # financial-model
 
-A financial model for personal and family financial planning.
+A shared household planning app built with Streamlit. Compare annual income,
+living costs, taxes, cash savings, and retained equity across California and
+Washington scenarios. Pydantic validates inputs and saved results; a pinned
+PolicyEngine module calculates federal, state, and employee payroll taxes.
 
-## Setup
+## Run locally
 
-Prerequisites: [Pixi](https://pixi.sh).
+Install [Pixi](https://pixi.sh), then:
 
 ```bash
 pixi install --locked
-pixi run --locked setup    # installs pre-commit hooks
+pixi run --locked setup
+pixi run --locked app
 ```
 
-## Common tasks
+Open <http://localhost:8501>. Enter both adults' ages and household assumptions,
+then select **Calculate**. Without a database, the app runs in local preview:
+sessions are temporary, saving is disabled, and JSON backups keep your work.
+
+For shared persistence, create the table with `scripts/schema.sql` in a dedicated
+PostgreSQL database. Set `FINANCIAL_MODEL_DATABASE_URL`, or copy
+`.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in the
+connection string. Remote connections require verified TLS. Keep credentials
+out of Git.
+
+[Usage and deployment](docs/how-to-guides/index.md) ·
+[Calculation assumptions](docs/concepts/index.md) ·
+[Data model reference](docs/reference/index.md)
+
+## Scope
+
+Supports 2025 and 2026, married filing jointly, adults aged 18–64, qualifying
+children, full-year CA/WA wage income, traditional 401(k) contributions, RSUs,
+and qualifying ISO exercise-and-hold. The app uses standard deductions.
+**2026 California income-tax parameters are projected in the pinned engine.**
+Moving-year returns, stock sales, Simplifi imports, and retirement projections
+are outside this version. See the calculation reference before using a scenario.
+
+## Development
 
 ```bash
-pixi run --locked test             # all tests
-pixi run --locked test-unit        # unit tests only
-pixi run --locked test-integration # integration tests (parallel)
-pixi run --locked fmt              # ruff format + lint with auto-fix
-pixi run --locked docs-build       # build HTML docs
-pixi run --locked docs-serve       # serve docs at http://localhost:8000
-pixi run --locked docs-clean       # remove built docs
+pixi run --locked fmt
+pixi run --locked test
+pixi run --locked mypy
+pixi run --locked docs-build
+pixi run --locked check-cloud
 ```
 
-## Layout
+Database tests skip unless `FINANCIAL_MODEL_TEST_DATABASE_URL` points to a local,
+dedicated database whose name ends in `_test`. Each test creates an isolated
+schema. CI supplies PostgreSQL and runs these tests. Never point tests at the
+family database.
 
-```
-src/financial_model/   # package source (src layout, py.typed)
-tests/financial_model/ # tests mirror the src tree
-docs/                  # Jupyter Book 2 / MyST
-scripts/setup.sh       # idempotent post-install fixups
-AGENTS.md              # shared instructions for coding agents
-CLAUDE.md              # Claude Code adapter importing AGENTS.md
-GEMINI.md              # Gemini CLI adapter importing AGENTS.md
-skills/                # canonical Agent Skills packages
-.agents/skills/        # cross-agent discovery symlinks
-.claude/skills/        # Claude Code discovery symlinks
-.claude-plugin/        # Claude Code distribution adapter
-_dev/                  # gitignored symlink → ~/git/notes/<project>/
-```
+`pyproject.toml` and `pixi.lock` are the dependency source of truth.
+`pixi run --locked export-cloud` generates the Linux `environment.yml` used by
+Streamlit Community Cloud. Commit it alongside intentional dependency changes.
 
-## Notes / design docs
-
-Design notes, scratch, and tool-specific personal overrides live in
-`~/git/notes/financial-model/`, symlinked into the repo as `_dev/` and
-`CLAUDE.local.md`. Both are gitignored.
-
-## CI
-
-Lint, pre-commit, and tests run on every push and PR via
-`.github/workflows/ci.yaml`.
+Source is in `src/financial_model/`; tests mirror it in `tests/financial_model/`.
+Private design and research notes live in `~/git/notes/financial-model/`, linked
+through the ignored `_dev` directory. Notes have separate Git history.

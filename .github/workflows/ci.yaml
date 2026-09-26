@@ -47,8 +47,21 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: financial_test
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: financial_model_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U financial_test -d financial_model_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       PIXI_LOCKED: "true"
+      FINANCIAL_MODEL_TEST_DATABASE_URL: postgresql://financial_test:ci-test-only@127.0.0.1:5432/financial_model_test
     steps:
       - uses: actions/checkout@v6
 
@@ -59,3 +72,27 @@ jobs:
 
       - name: Run tests
         run: pixi run test
+
+      - name: Check deployment environment
+        run: pixi run --locked check-cloud
+
+      - name: Check types
+        run: pixi run --locked mypy
+
+      - name: Build documentation
+        run: pixi run --locked docs-build
+
+  cloud-environment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Test exported deployment environment
+        run: |
+          docker run --rm --user root \
+            -v "$PWD:/workspace" -w /workspace \
+            -e SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 \
+            mambaorg/micromamba:2.3.3 bash -lc \
+            'micromamba create -y -n verify -f environment.yml &&
+             micromamba run -n verify python -m pip check &&
+             micromamba run -n verify python -m pytest -m "not integration" -q'
