@@ -1,18 +1,18 @@
-"""Comparison accounting and display boundaries using synthetic households."""
+"""Multi-scenario display and component differences using synthetic households."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from decimal import Decimal
+from html import escape
 
 import pytest
 
 from financial_model.comparison import (
     _monthly_groups,
     cash_flow_html,
-    difference_html,
-    difference_steps,
+    component_differences,
+    component_differences_html,
     overview_html,
 )
 from financial_model.model import evaluate_scenario
@@ -20,73 +20,97 @@ from financial_model.schemas import SavedScenario, Scenario
 
 
 @pytest.fixture
-def documents(scenario: Scenario) -> tuple[SavedScenario, SavedScenario]:
-    """Include different wages, RSUs, retirement, expenses, and ISO purchases."""
-    left = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
-    data = scenario.model_dump(mode="json")
-    data["name"] = "Synthetic change"
-    data["adults"][0].update(
-        cash_pay=120000,
-        rsu_vesting=24000,
-        employee_401k=12000,
-        employer_retirement_rate="0.05",
-    )
-    data["adults"][0]["options"].update(shares=1000, strike=3, fair_market_value=8)
-    data["living_costs"].update(rent=2000, other=3000)
-    right_inputs = Scenario.model_validate(data)
-    right = SavedScenario(inputs=right_inputs, result=evaluate_scenario(right_inputs))
-    return left, right
+def documents(scenario: Scenario) -> tuple[SavedScenario, ...]:
+    """Vary wages, RSUs, retirement, expenses, and option purchases in four plans."""
+    result = [SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))]
+    for index, cash in enumerate((120000, 80000, 160000), start=1):
+        data = scenario.model_dump(mode="json")
+        data["name"] = f"Synthetic option {index}"
+        data["adults"][0].update(
+            cash_pay=cash,
+            rsu_vesting=24000,
+            employee_401k=12000,
+            employer_retirement_rate="0.05",
+        )
+        data["adults"][0]["options"].update(shares=1000, strike=3, fair_market_value=8)
+        data["living_costs"].update(rent=2000, other=3000)
+        inputs = Scenario.model_validate(data)
+        result.append(SavedScenario(inputs=inputs, result=evaluate_scenario(inputs)))
+    return tuple(result)
 
 
-def test_difference_steps_reconciles_all_asset_sources(
-    documents: tuple[SavedScenario, SavedScenario],
-) -> None:
-    left, right = documents
-    steps = difference_steps(left.result, right.result)
-    amounts = {label: change for label, change, _ in steps}
+def test_component_differences_reconcile_without_cumulative_totals(documents) -> None:
+    left, right = documents[:2]
+    amounts = component_differences(left.result, right.result)
     assert amounts["Salary + bonus"] == 20000
     assert amounts["Stock compensation"] == 24000
-    assert amounts["Living costs"] == -60000
+    assert amounts["Living costs"] == 60000
     assert amounts["Employer retirement"] == 6000
-    assert amounts["Option purchases"] == -3000
+    assert amounts["Option purchases"] == 3000
     assert amounts["Purchased option shares"] == 8000
+    assert amounts["Taxes"] == right.result.taxes.total - left.result.taxes.total
+    net = (
+        amounts["Salary + bonus"]
+        + amounts["Stock compensation"]
+        - amounts["Taxes"]
+        - amounts["Living costs"]
+        + amounts["Employer retirement"]
+        - amounts["Option purchases"]
+        + amounts["Purchased option shares"]
+    )
     assert (
-        steps[-1][2]
+        net
         == right.result.total_savings_and_assets - left.result.total_savings_and_assets
     )
-    reversed_steps = difference_steps(right.result, left.result)
-    assert [
-        (label, -change, -total) for label, change, total in steps
-    ] == reversed_steps
+    assert component_differences(right.result, left.result) == {
+        name: -value for name, value in amounts.items()
+    }
 
 
-def test_monthly_groups_reconciles_cash_and_option_purchases(
-    documents: tuple[SavedScenario, SavedScenario],
+@pytest.mark.parametrize("count", [2, 3, 4])
+def test_comparison_views_include_every_selected_scenario_in_order(
+    documents, count
 ) -> None:
-    _, document = documents
-    groups = _monthly_groups(document)
-    total = sum(
-        value
-        for group, rows in groups.items()
-        if group != "Remaining"
-        for value in rows.values()
+    selected = documents[:count]
+    for render in (overview_html, cash_flow_html, component_differences_html):
+        html = render(selected)
+        for document in selected:
+            assert document.inputs.name in html
+        assert documents[-1].inputs.name not in html if count < 4 else True
+    overview = overview_html(selected)
+    assert overview.count('class="fm-track"') == count * 3
+    table = cash_flow_html(selected)
+    assert table.count('scope="col"') == count + 1
+    assert [table.index(document.inputs.name) for document in selected] == sorted(
+        table.index(document.inputs.name) for document in selected
     )
-    assert abs(total * 12 - document.result.annual_remaining_cash) < Decimal("0.00001")
-    assert groups["Money set aside"]["Option purchases"] == -250
-    assert (
-        groups["Taxes & living costs"]["Taxes paid from cash"]
-        == -document.result.cash_funded_tax / 12
-    )
-    html = cash_flow_html(*documents)
+    assert 'tabindex="0"' in table
+    assert 'class="fm-table-scroll"' in table
+
+
+def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
+    for document in documents:
+        groups = _monthly_groups(document)
+        total = sum(
+            value
+            for group, rows in groups.items()
+            if group != "Remaining"
+            for value in rows.values()
+        )
+        assert abs(total * 12 - document.result.annual_remaining_cash) < Decimal(
+            "0.00001"
+        )
+        assert (
+            groups["Taxes & living costs"]["Taxes paid from cash"]
+            == -document.result.cash_funded_tax / 12
+        )
+    html = cash_flow_html(documents)
     assert "Option purchases" in html
     assert "\N{MINUS SIGN}$250" in html
 
 
-def test_overview_html_separates_leftover_cash_from_savings(
-    documents: tuple[SavedScenario, SavedScenario],
-) -> None:
-    left, right = documents
-    html = overview_html(left, right)
+def test_overview_html_separates_leftover_cash_from_savings(documents) -> None:
+    html = overview_html(documents)
     for document in documents:
         planned = (
             document.result.total_savings_and_assets
@@ -97,59 +121,51 @@ def test_overview_html_separates_leftover_cash_from_savings(
     assert "Excludes leftover cash" in html
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-def test_difference_html_mixed_sign_bars_fit_shared_scale(
-    documents: tuple[SavedScenario, SavedScenario], reverse: bool
+@pytest.mark.parametrize("reference", range(4))
+def test_component_bars_use_own_values_and_keep_scenario_colors(
+    documents, reference
 ) -> None:
-    left, right = reversed(documents) if reverse else documents
-    html = difference_html(left, right)
-    geometry = re.findall(r'style="left:([\d.]+)%;width:([\d.]+)%"', html)
-    assert len(geometry) == 7
-    for position, width in geometry:
-        assert Decimal(position) >= 0
-        assert Decimal(width) >= 0
+    html = component_differences_html(documents, reference)
+    assert f"Annual differences from {documents[reference].inputs.name}" in html
+    assert f'class="fm-swatch fm-scenario-{reference}"' not in html
+    for index in range(4):
+        if index != reference:
+            assert f'class="fm-swatch fm-scenario-{index}"' in html
+    for position, width in re.findall(r'style="left:([\d.]+)%;width:([\d.]+)%"', html):
+        assert 0 <= Decimal(position) <= 50
         assert Decimal(position) + Decimal(width) <= Decimal("100.000001")
-    assert html.index('class="fm-scale"') > html.rindex('class="fm-step"')
-    assert "\N{MINUS SIGN}$" in html
+    assert "Running total" not in html
+    assert "Net difference in annual assets added" in html
+    if reference == 0:
+        assert "$20,000 more income" in html
+        assert "$20,000 less income" in html
+        assert "$60,000 more spending" in html
+        assert "more tax" in html
+        assert html.index('class="fm-net"') > html.index('class="fm-scale"')
 
 
-def test_difference_html_identical_scenarios_has_no_misleading_scale(
-    documents: tuple[SavedScenario, SavedScenario],
+def test_component_differences_identical_values_show_zero_state(documents) -> None:
+    left = documents[0]
+    html = component_differences_html((left, left))
+    assert "No component differences" in html
+    assert "No change" in html
+    assert 'class="fm-scale"' not in html
+
+
+@pytest.mark.parametrize(
+    "render", [overview_html, cash_flow_html, component_differences_html]
+)
+def test_comparison_html_escapes_names_and_distinguishes_all_duplicates(
+    documents, render
 ) -> None:
-    left, _ = documents
-    html = difference_html(left, left)
-    assert "No difference in annual assets added" in html
-    assert 'class="fm-track"' not in html
-
-
-def test_difference_html_zero_near_endpoint_does_not_overlap_tick(
-    documents: tuple[SavedScenario, SavedScenario],
-) -> None:
-    left, right = documents
-    data = right.inputs.model_dump(mode="json")
-    data["living_costs"]["other"] = 1000000
-    inputs = Scenario.model_validate(data)
-    right = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
-    html = difference_html(left, right)
-    assert "fm-scale-middle" not in html
-    assert 'class="fm-scale"' in html
-
-
-@pytest.mark.parametrize("render", [overview_html, cash_flow_html, difference_html])
-def test_comparison_html_escapes_names_and_keeps_duplicate_columns(
-    documents: tuple[SavedScenario, SavedScenario],
-    render: Callable[[SavedScenario, SavedScenario], str],
-) -> None:
-    left, right = documents
     name = '<img src=x onerror="alert(1)">'
-    left = left.model_copy(
-        update={"inputs": left.inputs.model_copy(update={"name": name})}
+    renamed = tuple(
+        document.model_copy(
+            update={"inputs": document.inputs.model_copy(update={"name": name})}
+        )
+        for document in documents
     )
-    right = right.model_copy(
-        update={"inputs": right.inputs.model_copy(update={"name": name})}
-    )
-    html = render(left, right)
+    html = render(renamed)
     assert "<img" not in html
-    assert "&lt;img" in html
-    assert "(comparison)" in html
-    assert "(current)" in html
+    for index in range(4):
+        assert f"{escape(name)} ({index + 1})" in html

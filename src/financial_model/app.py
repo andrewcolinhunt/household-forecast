@@ -12,7 +12,12 @@ import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
-from financial_model.comparison import cash_flow_html, difference_html, overview_html
+from financial_model.comparison import (
+    cash_flow_html,
+    component_differences_html,
+    overview_html,
+    scenario_names,
+)
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import (
     MODEL_REVISION,
@@ -436,7 +441,7 @@ def _results(document: SavedScenario) -> None:
     )
     with st.container(horizontal=True):
         if st.button("Compare results", disabled=not _current(result)):
-            st.session_state["compare_right"] = next(
+            st.session_state["pending_comparison"] = next(
                 (
                     str(record.id)
                     for record in st.session_state["records"]
@@ -495,7 +500,7 @@ def _tax_detail(result: ScenarioResult) -> None:
 
 
 def compare_page() -> None:
-    """Compare two independently selected saved scenarios or session results."""
+    """Compare two to four saved scenarios or explicitly calculated session results."""
     st.title("Compare")
     records = st.session_state["records"]
     choices = {str(record.id): record for record in records}
@@ -504,72 +509,93 @@ def compare_page() -> None:
         choices["draft"] = document
     if snapshot := st.session_state.get("session_snapshot"):
         choices["snapshot"] = snapshot
-    if len(choices) < 2:
-        st.info("Create or duplicate a scenario to compare two sets of results.")
-    selected = []
-    for column, key, label in zip(
-        st.columns(2),
-        ("compare_left", "compare_right"),
-        ("First scenario", "Second scenario"),
-        strict=True,
-    ):
-        if st.session_state.get(key) not in choices:
-            st.session_state[key] = None
-        with column:
-            choice = st.selectbox(
-                label,
-                list(choices),
-                index=None,
-                placeholder="Choose a scenario",
-                key=key,
-                format_func=lambda value: (
-                    choices[value].inputs.name
-                    + (
-                        " (last calculated draft)"
-                        if value == "draft"
-                        else " (kept snapshot)"
-                        if value == "snapshot"
-                        else ""
-                    )
-                ),
-            )
-        selected.append(choices[choice] if choice is not None else None)
-    first, second = selected
-    if first is None or second is None:
+    names = dict(zip(choices, scenario_names(tuple(choices.values())), strict=True))
+    names = {
+        key: name
+        + (
+            " (last calculated draft)"
+            if key == "draft"
+            else " (kept snapshot)"
+            if key == "snapshot"
+            else ""
+        )
+        for key, name in names.items()
+    }
+    selected = [
+        key
+        for key in st.session_state.get("comparison_selection", list(choices)[:2])
+        if key in choices
+    ]
+    pending = st.session_state.pop("pending_comparison", None)
+    if pending in choices and pending not in selected:
+        if len(selected) < 4:
+            selected.append(pending)
+        else:
+            st.info(f"Remove one scenario to include {names[pending]}.")
+    st.session_state["comparison_selection"] = selected
+    selected = st.multiselect(
+        "Scenarios",
+        list(choices),
+        key="comparison_selection",
+        max_selections=4,
+        placeholder="Choose two to four scenarios",
+        format_func=names.__getitem__,
+        help="Choose up to four. Removing a name here only removes it from this comparison.",
+    )
+    if len(selected) < 2:
+        st.info(
+            "Select at least two scenarios."
+            if len(choices) >= 2
+            else "Create or duplicate a scenario to compare two sets of results."
+        )
         return
-    if st.session_state["compare_left"] == st.session_state["compare_right"]:
-        st.info("Choose two different scenarios.")
-        return
-    _comparison(first, second)
+    _comparison(
+        tuple(choices[key] for key in selected),
+        selected,
+        tuple(names[key] for key in selected),
+    )
 
 
-def _comparison(first: SavedScenario, second: SavedScenario) -> None:
+def _comparison(
+    documents: tuple[SavedScenario, ...], selected: list[str], names: tuple[str, ...]
+) -> None:
     """Render the approved views only for comparable calculation snapshots."""
-    if first.inputs.tax_year != second.inputs.tax_year:
+    if len({record.inputs.tax_year for record in documents}) != 1:
         st.info(
             "Choose scenarios from the same tax year for a like-for-like comparison."
         )
         return
-    if not all(_current(record.result) for record in (first, second)):
+    if not all(_current(record.result) for record in documents):
         st.info(
             "Recalculate and save scenarios with the current rules before comparing them."
         )
         return
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"
-        for record in (first, second)
+        for record in documents
     ):
         st.warning(
             "2026 California income taxes use projected parameters in the pinned tax engine."
         )
     st.html(Path(__file__).with_name("comparison.css"))
-    for tab, render in zip(
-        st.tabs(["Overview", "Cash flow", "Difference"]),
-        (overview_html, cash_flow_html, difference_html),
-        strict=True,
-    ):
-        with tab:
-            st.html(render(first, second))
+    overview, cash_flow, components = st.tabs(
+        ["Overview", "Cash flow", "Component differences"]
+    )
+    with overview:
+        st.html(overview_html(documents, names))
+    with cash_flow:
+        st.html(cash_flow_html(documents, names))
+    with components:
+        reference_names = dict(zip(selected, names, strict=True))
+        if st.session_state.get("comparison_reference") not in selected:
+            st.session_state["comparison_reference"] = selected[0]
+        reference = st.selectbox(
+            "Reference scenario",
+            selected,
+            key="comparison_reference",
+            format_func=reference_names.__getitem__,
+        )
+        st.html(component_differences_html(documents, selected.index(reference), names))
 
 
 def _backups(document: SavedScenario | None) -> None:
@@ -738,9 +764,13 @@ def _forget_scenario(record: SavedScenario) -> None:
     snapshot = st.session_state.get("session_snapshot")
     if snapshot and snapshot.id == record.id:
         st.session_state.pop("session_snapshot")
-    for key in ("compare_left", "compare_right"):
-        if st.session_state.get(key) == str(record.id):
-            st.session_state[key] = None
+    st.session_state["comparison_selection"] = [
+        key
+        for key in st.session_state.get("comparison_selection", [])
+        if key != str(record.id)
+    ]
+    if st.session_state.get("comparison_reference") == str(record.id):
+        st.session_state.pop("comparison_reference", None)
 
 
 def _scenario_card(record: SavedScenario) -> None:
@@ -839,7 +869,7 @@ def main() -> None:
         _set_editor(imported)
         st.switch_page(str(EDITOR_PAGE))
     # Page widgets are transient; persist comparison choices between visits.
-    for key in ("compare_left", "compare_right"):
+    for key in ("comparison_selection", "comparison_reference"):
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
     page.run()
