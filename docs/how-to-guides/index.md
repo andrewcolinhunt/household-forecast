@@ -13,8 +13,8 @@ monthly cash left over, and annual assets added.
   A separate notice identifies results that need recalculation.
 
 Edits stay in your browser session when you switch pages or open another
-scenario. Use **Resume editing**, a scenario's **Edit** button, or the
-**Unsaved drafts** section to return. Save before closing the browser.
+scenario. Use a scenario's **Edit** button or the **Unsaved drafts** section to
+return. Save before closing the browser.
 
 If another person has changed or deleted a scenario, your save cannot overwrite
 that change. Keep your version with **Save as new scenario**, or use

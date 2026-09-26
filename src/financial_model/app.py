@@ -777,8 +777,6 @@ def scenarios_page() -> None:
     with st.container(horizontal=True):
         if st.button("New scenario", type="primary"):
             _open_editor()
-        if "draft_id" in st.session_state:
-            st.page_link(str(EDITOR_PAGE), label="Resume editing")
         st.button("Refresh", help="Read the latest saved scenarios.")
     records = st.session_state["records"]
     if not records:
