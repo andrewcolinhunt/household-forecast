@@ -760,15 +760,14 @@ def _scenario_card(record: SavedScenario) -> None:
         with st.container(horizontal=True):
             if st.button("Edit", key=f"edit_{record.id}"):
                 _open_editor(record)
-            with st.popover("Actions"):
-                if st.button("Duplicate", key=f"duplicate_{record.id}"):
-                    _open_editor(record, duplicate=True)
-                if st.button(
-                    "Delete",
-                    key=f"delete_{record.id}",
-                    disabled=not st.session_state["store_available"],
-                ):
-                    st.session_state["pending_delete"] = record
+            if st.button("Duplicate", key=f"duplicate_{record.id}"):
+                _open_editor(record, duplicate=True)
+            if st.button(
+                "Delete",
+                key=f"delete_{record.id}",
+                disabled=not st.session_state["store_available"],
+            ):
+                st.session_state["pending_delete"] = record
 
 
 def scenarios_page() -> None:

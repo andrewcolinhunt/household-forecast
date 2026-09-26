@@ -5,7 +5,7 @@
 **Scenarios** is the home page. Each saved scenario shows its location, tax year,
 monthly cash left over, and annual assets added.
 
-- Choose **New scenario** to start from scratch, or **Actions → Duplicate** to
+- Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
 - Choose **Edit** to open a scenario. **Calculate** updates its preview without
   saving. **Save** calculates and saves the current inputs and matching results.
@@ -51,7 +51,7 @@ Displayed amounts are rounded to whole dollars; calculations retain cents. See
 
 ## Delete a scenario
 
-In **Scenarios**, open its **Actions** menu and choose **Delete**. Check the name
+In **Scenarios**, choose **Delete** on the scenario's card. Check the name
 in the confirmation dialog, then choose **Delete scenario** or **Cancel**.
 Deletion removes the shared record for both people and its draft in your current
 session. It cannot be undone. Download a backup first if you want to keep a copy.
