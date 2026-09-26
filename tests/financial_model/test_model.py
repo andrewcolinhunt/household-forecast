@@ -64,6 +64,7 @@ def test_evaluate_scenario_annual_accounting(
     assert result.option_cost == 2000
     assert result.option_value == 5000
     assert result.annual_remaining_cash == 43000
+    assert result.cash_added == 65000
     assert result.monthly_remaining_cash == Decimal("3583.33")
     assert result.total_savings_and_assets == 118000
     assert result.net_saved_from_income == 115000
@@ -73,6 +74,31 @@ def test_evaluate_scenario_annual_accounting(
         + result.gross_rsus
         + result.employer_retirement
         - result.taxes.total
+        - result.living_cost
+    )
+
+
+@pytest.mark.parametrize(("rent", "expected"), [(14000, 10000), (16000, -14000)])
+def test_cash_added_excludes_equity_and_retirement_and_includes_deficits(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario, rent: int, expected: int
+) -> None:
+    data = scenario.model_dump(mode="json")
+    data["adults"][0].update(
+        rsu_vesting=100000, employee_401k=10000, employer_retirement_rate="0.04"
+    )
+    data["adults"][0]["options"].update(shares=1000, strike=2, fair_market_value=50)
+    data["living_costs"]["rent"] = rent
+    monkeypatch.setattr(
+        model, "calculate_taxes", lambda *args, **kwargs: tax_result(10000)
+    )
+    result = model.evaluate_scenario(Scenario.model_validate(data))
+    assert result.annual_remaining_cash < 0
+    assert result.cash_added == expected
+    assert result.cash_added == (
+        result.gross_cash
+        - result.cash_funded_tax
+        - result.employee_401k
+        - result.option_cost
         - result.living_cost
     )
 

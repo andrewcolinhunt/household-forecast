@@ -145,7 +145,16 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
         key=_key(f"{prefix}_age"),
     )
     amounts = {
-        field: _money_input(label, data.get(field), f"{prefix}_{field}")
+        field: _money_input(
+            label,
+            data.get(field),
+            f"{prefix}_{field}",
+            help_text=(
+                "Assumes shares are delivered at vesting and enough can be sold to pay vesting taxes. The remaining shares stay separate from cash."
+                if field == "rsu_vesting"
+                else None
+            ),
+        )
         for field, label in [
             ("cash_pay", "Annual cash salary + bonus ($)"),
             ("rsu_vesting", "Annual RSU vesting value ($)"),
@@ -468,6 +477,7 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
         "Living costs": result.living_cost,
         "ISO purchase cost": result.option_cost,
         "Remaining cash": result.annual_remaining_cash,
+        "Net cash added (saving + remaining cash)": result.cash_added,
         "Retained RSUs": result.retained_rsus,
         "Purchased ISO shares (at exercise FMV)": result.option_value,
         "Cash + contributions + shares acquired": result.total_savings_and_assets,
@@ -516,7 +526,7 @@ def _results(document: SavedScenario) -> None:
             ]
         )
         st.caption(
-            "Net saving includes the cash surplus or shortfall and pretax retirement. Option award values and exercise spread are excluded."
+            "Net saving combines cash, retirement, and estimated RSU value. It is not spendable cash. Option award values and exercise spread are excluded."
         )
         _tax_detail(result)
         st.json(document.inputs.model_dump(mode="json"), expanded=False)
@@ -867,7 +877,7 @@ def _scenario_card(record: SavedScenario) -> None:
         assets.metric(
             "Net saved from income / year",
             f"${record.result.net_saved_from_income:,.0f}",
-            help="Salary + bonus + RSUs + employer retirement minus taxes and living costs. Includes cash shortfalls; excludes option award values, exercise spread, and investment growth.",
+            help="Combined cash, retirement, and estimated RSU value, not spendable cash. Includes cash shortfalls; excludes option award values, exercise spread, and investment growth.",
         )
         if remaining < 0:
             st.caption(
@@ -917,7 +927,7 @@ def scenarios_page() -> None:
                     st.switch_page(str(EDITOR_PAGE))
     if records:
         st.caption(
-            "Net saving includes cash surplus or shortfall, pretax retirement, and retained RSUs. Option award values and exercise spread are excluded."
+            "Net saving combines cash, retirement, and estimated RSU value; it is not all spendable. Options are excluded."
         )
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"

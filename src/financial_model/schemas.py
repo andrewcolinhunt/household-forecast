@@ -259,6 +259,11 @@ class ScenarioResult(ValueModel):
     total_savings_and_assets: Amount
 
     @property
+    def cash_added(self) -> Decimal:
+        """Net cash retained, including planned cash saving and any cash deficit."""
+        return self.extra_savings + self.annual_remaining_cash
+
+    @property
     def net_saved_from_income(self) -> Decimal:
         """Net annual saving, excluding value realized from existing option rights."""
         return self.total_savings_and_assets - self.option_value + self.option_cost

@@ -145,9 +145,9 @@ def _option_awards(documents: tuple[SavedScenario, ...], names: tuple[str, ...])
             f"{''.join(awards) or '<p>No award entered.</p>'}</section>"
         )
     return (
-        '<section class="fm-options"><h3>Stock option awards</h3>'
+        '<section class="fm-options"><h3>Options · uncertain value</h3>'
         '<p class="fm-note">Annual vesting, not the full multiyear grant. Estimated value '
-        "above exercise cost is before tax and may not be available as cash. "
+        "above exercise cost is before tax, not spendable cash. Exercise requires funding; a sale may not be possible. "
         "A $0 estimate excludes potential future appreciation.</p>"
         f'<div class="fm-metrics">{"".join(cards)}</div></section>'
     )
@@ -168,7 +168,7 @@ def compensation_html(
         (
             "RSUs vesting / year",
             [r.gross_rsus for r in results],
-            "Share value before taxes; includes shares sold to pay tax.",
+            "Estimated share value before tax. Shares are not cash; value and sale availability can change.",
         ),
         (
             "Employer retirement / year",
@@ -192,30 +192,30 @@ def saving_html(
     results = [document.result for document in documents]
     metrics = [
         (
-            "Your 401(k) contributions / year",
-            [r.employee_401k for r in results],
-            "From salary, before income tax. Employer contributions are separate.",
+            "Cash · net added / year",
+            [r.cash_added for r in results],
+            "Available cash: planned cash saving plus surplus or shortfall. Assumes surplus is kept.",
         ),
         (
-            "Employer retirement / year",
-            [r.employer_retirement for r in results],
-            "Paid into retirement by your employer.",
-        ),
-        (
-            "Additional cash saving / year",
-            [r.extra_savings for r in results],
-            "Planned saving from salary, beyond your 401(k).",
-        ),
-        (
-            "RSUs retained after tax / year",
+            "Shares · retained RSUs / year",
             [r.retained_rsus for r in results],
-            "Shares kept after selling enough to fund their estimated taxes.",
+            "Estimated value after vesting taxes. Value can change; sale restrictions may apply.",
+        ),
+        (
+            "Retirement · your 401(k) / year",
+            [r.employee_401k for r in results],
+            "Restricted access. Pretax contributions from salary; future withdrawals may be taxed.",
+        ),
+        (
+            "Retirement · employer / year",
+            [r.employer_retirement for r in results],
+            "Restricted access. Employer contributions, counted as yours; plan vesting is not modeled.",
         ),
     ]
     option_detail = ""
     if any(adult.options.shares for d in documents for adult in d.inputs.adults):
         option_detail = (
-            '<section class="fm-options"><h3>Shares acquired by exercising ISOs</h3>'
+            '<section class="fm-options"><h3>Shares · exercised ISOs</h3>'
             + _table(
                 names,
                 {
@@ -232,7 +232,7 @@ def saving_html(
                     ]
                 },
             )
-            + '<p class="fm-note">Exercise moves cash into shares. Value above exercise cost is excluded from net saving; the options may have been earned in earlier years.</p></section>'
+            + '<p class="fm-note">Shares owned, valued at exercise. Sale availability and current value are unknown. Exercise moves cash into shares; the spread is excluded from net saving.</p></section>'
         )
     reconciliation = _table(
         names,
@@ -261,14 +261,19 @@ def saving_html(
         },
     )
     values = [r.net_saved_from_income for r in results]
+    awards = (
+        _option_awards(documents, names)
+        if any(adult.option_award for d in documents for adult in d.inputs.adults)
+        else ""
+    )
     return (
-        '<div class="fm-comparison"><p class="fm-note">Annual contributions and shares; existing account balances are not included.</p>'
-        f"{_metric_sections(names, metrics)}{option_detail}"
+        '<div class="fm-comparison"><p class="fm-note">Planned additions this year, separated by access and value certainty. Existing balances are not included.</p>'
+        f"{_metric_sections(names, metrics)}{option_detail}{awards}"
         '<section class="fm-net"><h3>Net saved from income / year</h3>'
-        '<p class="fm-note">Salary + bonus + RSUs + employer retirement &minus; taxes &minus; living costs. '
-        "Includes cash shortfalls and pretax retirement. Excludes option award values, exercise spread, and investment growth.</p>"
+        '<p class="fm-note">Combined cash, retirement, and estimated RSU value, not spendable cash. '
+        "Includes cash shortfalls. Excludes option award values, exercise spread, and investment growth.</p>"
         f"{_series(names, values, *_domain(values))}"
-        f"<details><summary>How this total adds up</summary>{reconciliation}</details></section></div>"
+        f'<details><summary>How this total adds up</summary><p class="fm-note">Salary + bonus + RSUs + employer retirement &minus; taxes &minus; living costs. Cash paid for option shares is an asset transfer.</p>{reconciliation}</details></section></div>'
     )
 
 

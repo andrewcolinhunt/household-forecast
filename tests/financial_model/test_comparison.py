@@ -132,7 +132,11 @@ def test_saving_html_reconciles_shortfalls_and_excludes_option_spread(
         assert f"${expected:,.0f}" in html
     assert "Cash surplus / shortfall" in html
     assert "Cash moved into option shares" in html
-    assert "Shares acquired by exercising ISOs" in html
+    assert "Shares · exercised ISOs" in html
+    assert "Cash · net added / year" in html
+    assert "Shares · retained RSUs / year" in html
+    assert "Retirement · your 401(k) / year" in html
+    assert "not spendable cash" in html
     assert "Savings &amp; investments" not in html
     assert "Net saved from income" in html
 
@@ -166,6 +170,10 @@ def test_compensation_html_distinguishes_missing_and_zero_option_estimates(
     assert "&lt;Alex &amp; Sam&gt; · NSO" in html
     assert "<Alex" not in html
     assert "No award entered" in compensation_html(documents)
+    saving = saving_html(tuple(awards))
+    assert "Options · uncertain value" in saving
+    assert "Not estimated" in saving
+    assert "$58,765" in saving
 
 
 @pytest.mark.parametrize("reference", range(4))
