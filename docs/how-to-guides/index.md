@@ -3,13 +3,27 @@
 ## Compare scenarios
 
 1. Select a saved scenario or enter a new one. Submit the form with **Calculate**.
-2. Select **Use these results as comparison baseline** to keep a baseline in
-   this session. Saved scenarios can also serve as baselines.
-3. Change the inputs and calculate again. Choose the baseline below Results.
-4. Read the difference as **alternative minus baseline**. Both scenarios must
+2. Select **Keep these results for comparison** to retain a snapshot in
+   this session. You can also compare with a saved scenario.
+3. Change the inputs and calculate again. Under Results, select **Compare with**.
+4. Choose **Overview**, **Cash flow**, or **Difference**. Both scenarios must
    use the same tax year and current calculation rules.
 
-The table uses annual amounts except the labeled monthly cash row. See
+**Overview** compares monthly cash left over, annual savings and investments,
+and annual assets added if all leftover cash is kept. The savings breakdown
+separates retirement, personal savings, retained stock, and purchased shares.
+
+**Cash flow** groups average monthly income, taxes, living costs, and savings.
+Option purchases appear when present. Retained stock and employer retirement
+are excluded from spendable cash.
+
+**Difference** shows the current scenario minus the named comparison scenario.
+Each bar is the running annual difference after the adjustment on that row.
+The final bar reconciles to the difference in total assets added. Stock and
+option changes appear when needed; transfers into your own savings accounts
+do not change the total. Negative values extend left of zero.
+
+Displayed amounts are rounded to whole dollars; calculations retain cents. See
 [calculation assumptions](../concepts/index.md) for the meaning of each total.
 
 ## Save, duplicate, and recover
