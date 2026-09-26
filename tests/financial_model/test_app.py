@@ -56,19 +56,47 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     press(page, "Calculate")
     original = page.session_state["document"]
     assert original.inputs == scenario
-    press(page, "Use these results as comparison baseline")
+    press(page, "Keep these results for comparison")
     widget(page, "number_input", "adult_0_cash_pay").set_value(120000.0)
     press(page, "Calculate")
     page.selectbox(key="baseline_choice").select("session").run()
     assert not page.exception
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
-    rows = page.dataframe[0].value
-    assert (
-        rows.loc[rows.Measure == "Cash compensation", "Difference"].iloc[0]
-        == "$+20,000.00"
+    assert [tab.label for tab in page.tabs] == ["Overview", "Cash flow", "Difference"]
+    rendered = "\n".join(element.proto.body for element in page.get("html"))
+    assert "Synthetic baseline (comparison)" in rendered
+    assert "Synthetic baseline (current)" in rendered
+    difference = next(
+        element.proto.body
+        for element in page.get("html")
+        if 'class="fm-columns"' in element.proto.body
     )
+    assert "<strong>$20,000</strong>" in difference
+    assert "Cash left over" in rendered
+    assert not page.dataframe
     assert page.session_state["session_baseline"] == original
+
+
+@pytest.mark.parametrize("outdated", [False, True])
+def test_main_comparison_rejects_mismatched_snapshots(
+    scenario: Scenario, outdated: bool
+) -> None:
+    page = editor(scenario)
+    press(page, "Calculate")
+    press(page, "Keep these results for comparison")
+    if outdated:
+        saved = page.session_state["session_baseline"]
+        page.session_state["session_baseline"] = saved.model_copy(
+            update={"result": saved.result.model_copy(update={"model_revision": "old"})}
+        )
+    else:
+        widget(page, "selectbox", "year_").select(2026)
+        press(page, "Calculate")
+    page.selectbox(key="baseline_choice").select("session").run()
+    assert not page.exception
+    assert not page.tabs
+    assert page.info
 
 
 def test_main_state_change_and_exemption_submit_together(scenario: Scenario) -> None:

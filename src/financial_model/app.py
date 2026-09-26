@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
+from financial_model.comparison import cash_flow_html, difference_html, overview_html
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import (
     MODEL_REVISION,
@@ -409,20 +411,20 @@ def _results(document: SavedScenario, records: tuple[SavedScenario, ...]) -> Non
         st.warning(
             "2026 California income taxes use projected parameters in the pinned tax engine."
         )
-    columns = st.columns(3)
-    columns[0].metric(
-        "Average monthly remaining cash", f"${result.monthly_remaining_cash:,.2f}"
-    )
-    columns[1].metric("Annual retained RSUs", f"${result.retained_rsus:,.2f}")
-    columns[2].metric(
-        "Annual retirement contributions",
-        f"${result.employee_401k + result.employer_retirement:,.2f}",
-    )
     if result.annual_remaining_cash < 0:
         st.warning(
             "This scenario has a cash shortfall. It does not automatically borrow or sell more shares."
         )
-    _comparison(document, records)
+    if not _comparison(document, records):
+        columns = st.columns(3)
+        columns[0].metric(
+            "Average monthly remaining cash", f"${result.monthly_remaining_cash:,.2f}"
+        )
+        columns[1].metric("Annual retained RSUs", f"${result.retained_rsus:,.2f}")
+        columns[2].metric(
+            "Annual retirement contributions",
+            f"${result.employee_401k + result.employer_retirement:,.2f}",
+        )
     with st.expander("Annual calculation details"):
         st.table(
             [
@@ -469,10 +471,10 @@ def _tax_detail(result: ScenarioResult) -> None:
     )
 
 
-def _comparison(document: SavedScenario, records: tuple[SavedScenario, ...]) -> None:
-    """Compare submitted annual scenarios with an explicit direction for deltas."""
+def _comparison(document: SavedScenario, records: tuple[SavedScenario, ...]) -> bool:
+    """Render three named comparison views when snapshots have matching rules."""
     if st.button(
-        "Use these results as comparison baseline",
+        "Keep these results for comparison",
         disabled=not _current(document.result),
     ):
         st.session_state["session_baseline"] = document
@@ -480,9 +482,9 @@ def _comparison(document: SavedScenario, records: tuple[SavedScenario, ...]) -> 
     if baseline := st.session_state.get("session_baseline"):
         baselines["session"] = baseline
     selected = st.selectbox(
-        "Compare with baseline",
+        "Compare with",
         ["none", *baselines],
-        format_func=lambda key: "Choose a baseline"
+        format_func=lambda key: "Choose a scenario"
         if key == "none"
         else (
             f"{'Current session: ' if key == 'session' else ''}{baselines[key].inputs.name}"
@@ -490,43 +492,30 @@ def _comparison(document: SavedScenario, records: tuple[SavedScenario, ...]) -> 
         key="baseline_choice",
     )
     if selected == "none":
-        return
+        return False
     baseline = baselines[selected]
     if baseline.inputs.tax_year != document.inputs.tax_year:
         st.info(
             "Choose scenarios from the same tax year for a like-for-like comparison."
         )
-        return
+        return False
     if not _current(baseline.result) or not _current(document.result):
         st.info("Recalculate scenarios with the current rules before comparing them.")
-        return
-    if baseline.result.taxes.rules_status == "projected_ca_parameters":
-        st.warning("The baseline uses projected 2026 California parameters.")
-    left, right = _annual_rows(baseline.result), _annual_rows(document.result)
-    st.caption(
-        f"{document.inputs.name} minus {baseline.inputs.name}. All rows are annual except average monthly cash."
-    )
-    left = {
-        "Average monthly remaining cash": baseline.result.monthly_remaining_cash,
-        **left,
-    }
-    right = {
-        "Average monthly remaining cash": document.result.monthly_remaining_cash,
-        **right,
-    }
-    st.dataframe(
-        [
-            {
-                "Measure": label,
-                "Baseline": f"${value:,.2f}",
-                "Alternative": f"${right[label]:,.2f}",
-                "Difference": f"${right[label] - value:+,.2f}",
-            }
-            for label, value in left.items()
-        ],
-        hide_index=True,
-        width="stretch",
-    )
+        return False
+    if (
+        baseline.result.taxes.rules_status == "projected_ca_parameters"
+        and document.result.taxes.rules_status != "projected_ca_parameters"
+    ):
+        st.warning("The comparison scenario uses projected 2026 California parameters.")
+    st.html(Path(__file__).with_name("comparison.css"))
+    for tab, render in zip(
+        st.tabs(["Overview", "Cash flow", "Difference"]),
+        (overview_html, cash_flow_html, difference_html),
+        strict=True,
+    ):
+        with tab:
+            st.html(render(baseline, document))
+    return True
 
 
 def _backups(document: SavedScenario | None) -> None:

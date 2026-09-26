@@ -1,0 +1,53 @@
+.fm-comparison {
+  color: inherit;
+  font-family: inherit;
+  max-width: 880px;
+  --fm-track: color-mix(in srgb, currentColor 8%, transparent);
+  --fm-line: color-mix(in srgb, currentColor 20%, transparent);
+  --fm-left: #439f94;
+  --fm-right: #9984ce;
+}
+.fm-comparison * { box-sizing: border-box; }
+.fm-comparison h3 { font-size: 1.3rem; margin: 0 0 8px; overflow-wrap: anywhere; }
+.fm-comparison h4 { font-size: 1rem; font-weight: 600; margin: 0 0 14px; }
+.fm-comparison p { margin: 10px 0; }
+.fm-comparison .fm-note { font-size: .85rem; opacity: .8; }
+.fm-comparison .fm-outcome { padding: 22px 0; border-bottom: 1px solid var(--fm-line); }
+.fm-comparison .fm-outcome:first-child { padding-top: 8px; }
+.fm-comparison .fm-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.fm-comparison .fm-pair > div { min-width: 0; overflow-wrap: anywhere; }
+.fm-comparison strong { display: block; font-weight: 600; font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.fm-comparison .fm-track { height: 20px; background: var(--fm-track); position: relative; margin-top: 8px; }
+.fm-comparison .fm-pair .fm-track { height: 6px; }
+.fm-comparison .fm-fill { position: absolute; height: 100%; }
+.fm-comparison .fm-left { background: var(--fm-left); }
+.fm-comparison .fm-right { background: var(--fm-right); }
+.fm-comparison .fm-zero { position: absolute; width: 1px; height: 100%; background: currentColor; opacity: .45; }
+.fm-comparison summary { padding: 18px 0; cursor: pointer; }
+.fm-comparison .fm-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .95rem; }
+.fm-comparison .fm-table th, .fm-comparison .fm-table td { padding: 10px 8px; vertical-align: top; overflow-wrap: anywhere; }
+.fm-comparison .fm-table th { text-align: left; font-weight: 500; }
+.fm-comparison .fm-table tr { border-bottom: 1px solid var(--fm-line); }
+.fm-comparison .fm-table th:not(:first-child), .fm-comparison .fm-table td { text-align: right; font-variant-numeric: tabular-nums; }
+.fm-comparison .fm-table td { white-space: nowrap; }
+.fm-comparison .fm-group { border-bottom: 0; }
+.fm-comparison .fm-group th { padding-top: 22px; padding-bottom: 3px; font-size: .85rem; opacity: .8; }
+.fm-comparison .fm-table tbody tr:last-child { font-weight: 600; }
+.fm-comparison .fm-columns, .fm-comparison .fm-step-label { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.fm-comparison .fm-columns { font-size: .85rem; opacity: .8; margin: 22px 0 12px; }
+.fm-comparison .fm-step + .fm-step { margin-top: 26px; }
+.fm-comparison .fm-step-label > span { overflow-wrap: anywhere; }
+.fm-comparison .fm-adjustment { white-space: nowrap; }
+.fm-comparison .fm-step-label strong { font-size: 1.35rem; white-space: nowrap; }
+.fm-comparison .fm-scale { position: relative; height: 26px; margin-top: 8px; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.fm-comparison .fm-scale span { position: absolute; }
+.fm-comparison .fm-scale .fm-scale-middle { transform: translateX(-50%); }
+.fm-comparison .fm-scale span:last-child { right: 0; }
+@media (max-width: 520px) {
+  .fm-comparison .fm-pair { gap: 12px; }
+  .fm-comparison strong { font-size: 1.2rem; }
+  .fm-comparison .fm-table { font-size: .8rem; }
+  .fm-comparison .fm-table th, .fm-comparison .fm-table td { padding-left: 3px; padding-right: 3px; }
+  .fm-comparison .fm-step-label { gap: 8px; }
+  .fm-comparison .fm-step-label strong { font-size: 1.1rem; }
+}
