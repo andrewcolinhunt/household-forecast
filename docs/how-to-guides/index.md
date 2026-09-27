@@ -28,45 +28,54 @@ Remove a selection with its × button; this does not delete the saved scenario.
 Selections stay in place when you switch pages. All selected scenarios must use
 the same tax year and current calculation rules.
 
-**Compensation** separates salary and bonus, RSUs vesting before tax, employer
-retirement contributions, and option awards. Each amount has one bar per
-scenario; option awards appear in separate cards.
+Each view uses a table with the same scenario columns and order. On a narrow
+screen, scroll horizontally while row labels stay visible. Expand **Definitions**
+for the meaning of an amount.
+
+**Overview** opens first. It shows monthly cash surplus or shortfall, followed by
+annual cash added, retirement contributions, retained RSUs, and net saving.
+Cash moved into option shares appears when present. Monthly and annual amounts
+are grouped separately.
 
 **Cash flow** groups average monthly income, taxes, living costs, and savings.
 ISO exercise costs appear when present. Retained RSUs and employer retirement
-are excluded from spendable cash. Each scenario has its own column; on a narrow
-screen, scroll the table horizontally while the row labels stay visible.
+are excluded from spendable cash. Minus signs show cash going out.
+
+**Compensation** separates annual salary and bonus, RSUs vesting before tax, and
+employer retirement contributions. Expand **By person** to see each adult's
+amounts. The separate options table shows annual vesting counts, per-share
+prices, share value if exercised, cost to exercise, and value above cost.
+An unknown estimate stays unknown; a dash means no matching person or award.
 
 **Saving & equity** separates net cash added, retirement contributions, retained
-RSU shares, and option estimates. Cash added is planned cash saving plus the cash
+RSU shares. Cash added is planned cash saving plus the cash
 surplus or shortfall. Retirement has restricted access; shares have changing
 values and may have sale restrictions. Shares acquired by exercising ISOs appear
 separately. **Net saved from income** combines cash, retirement, and estimated
 RSU value; it is not spendable cash. It is compensation less taxes and living
 costs, including any cash shortfall. It excludes option award values, exercise
-spread, and investment growth. Expand **How this total adds up** to reconcile it.
+spread, and investment growth. The table shows the reconciliation directly;
+**Net cash added** is a subtotal. Cash paid for option shares is an asset transfer.
 
-The editor uses these same three views for a single calculated scenario. A cash
+The editor uses these same four views for a single calculated scenario. A cash
 shortfall means planned spending and saving need additional cash; the app does
 not reduce planned saving or sell more shares automatically.
 
-**Component differences** compares each scenario with the **Reference scenario**
-you choose. Each bar shows that component's annual difference: right means more,
-left means less. Higher taxes and living costs extend right because they are
-larger expenses. Stock and option differences appear when present. The net
-difference in annual net saving appears separately below the components. ISO
-exercise costs and acquired shares affect cash and holdings, but their spread
-is excluded from net saving.
-
-Scenario names, colors, and order stay consistent across the views.
-Changing the reference only changes Component differences.
+Turn on **Show differences** and choose a **Reference scenario** to add signed
+changes beneath values in every table. Changes use the same units as the row:
+monthly dollars, annual dollars, option counts, or per-share prices. For cash
+outflows, a more negative change means more cash going out. Differences are
+neutral comparisons, not ratings of whether a scenario is better. Unknown
+values have no difference. The reference choice stays when you hide differences
+or switch pages; removing that scenario selects the first remaining scenario.
 
 To compare without saving, calculate in the editor and choose **Compare results**.
 The last calculated draft appears as a separate choice. **Keep snapshot** retains
 one calculated version while you change and recalculate the draft. Both session
 results are labeled; uncalculated edits never replace their inputs.
 
-Displayed amounts are rounded to whole dollars; calculations retain cents. See
+Dollar totals are rounded to whole dollars; per-share prices retain up to six
+decimal places. Calculations retain cents. See
 [calculation assumptions](../concepts/index.md) for the meaning of each total.
 
 ## Enter option compensation
@@ -75,8 +84,8 @@ In each adult's **Stock option award** section, select **Include an option
 award**. Enter ISO or NSO, the number vesting this year, and exercise price per
 share. Enter an assumed share value if known; leave it blank otherwise.
 
-The Compensation and Saving & equity views show option awards separately and
-estimate the value above exercise cost before tax.
+The **Compensation** view shows option awards separately and estimates the value
+above exercise cost before tax.
 This describes this year's vesting, not the full multiyear grant or all vested
 options. It does not change cash, taxes, or saving totals, and a share-value
 estimate does not imply that the shares can be sold.
