@@ -7,7 +7,7 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 
 | Type | Content |
 | --- | --- |
-| `PersonInputs` | Name, year-end age, annual cash pay/RSUs, employee 401(k), savings/employer rates, WA Cares exemption, ISO event, optional option award |
+| `PersonInputs` | Name, optional employer, explicit not-working flag, year-end age, annual cash pay/RSUs, employee 401(k), savings/employer rates, WA Cares exemption, ISO event, optional option award |
 | `OptionAward` | ISO/NSO, shares vesting this year, exercise price, optional assumed share value; informational only |
 | `ISOExercise` | Qualifying shares exercised and held, strike price, exercise-date fair market value |
 | `DependentInputs` | Qualifying child's year-end age |
@@ -64,6 +64,13 @@ exercise cost for this year's vesting, rounded to cents. It returns `None` when
 the assumed share value is unknown. Award inputs do not change calculated
 taxes or cash flows, but are included in the scenario's input digest when present.
 
+`PersonInputs.employer` is an optional name of up to 80 characters. Leading and
+trailing whitespace is removed; blank text becomes `None`. `not_working` is a
+strict boolean that defaults to `False`. An employer and `not_working=True`
+cannot both be set. Neither field changes compensation, tax calculations, or
+saving, and neither is inferred from salary. Changes are included in the input
+digest and require a matching calculation snapshot when saved.
+
 ## Persistence
 
 `financial_model.storage` provides `list_scenarios`, `load_scenario`,
@@ -76,7 +83,8 @@ Schema version 1 is the only accepted backup format. Unknown versions and
 unsupported facts fail validation. There is no general Excel import
 or revision-history API in this version.
 
-An absent `PersonInputs.option_award` is omitted from JSON. Existing saved
-scenarios and backups therefore retain their original input digest without a
-data migration. The net-saving property derives from existing result fields;
-it is not a new stored calculation or tax rule.
+Absent `PersonInputs.option_award` and `PersonInputs.employer` values, and a false
+`not_working` flag, are omitted from JSON. Existing saved scenarios and backups
+therefore retain their original input digest without a data migration. The
+net-saving property derives from existing result fields; it is not a new stored
+calculation or tax rule.

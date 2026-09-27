@@ -2,8 +2,9 @@
 
 ## Create and edit scenarios
 
-**Scenarios** is the home page. Each saved scenario shows its location, tax year,
-monthly cash surplus or shortfall, and annual net saving from income.
+**Scenarios** is the home page. Each saved scenario shows its chosen name,
+location, tax year, each person's employer, monthly cash surplus or shortfall,
+and annual net saving from income.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
@@ -11,6 +12,17 @@ monthly cash surplus or shortfall, and annual net saving from income.
   saving. **Save** calculates and saves the current inputs and matching results.
 - **Unsaved changes** identifies edits that are not in the shared database.
   A separate notice identifies results that need recalculation.
+
+Use a short **Scenario name**, such as “Both working” or “Higher rent.” State,
+year, and employers appear separately in cards and comparison headings. Changing
+those details does not rename the scenario. Existing names remain as entered.
+
+Enter **Employer** within each person's section. Use a short name for table
+headings; leave it blank if unknown. Select **Not working in this scenario** to
+show that status explicitly. A blank employer or zero salary does not mean
+someone is not working. Checking the box removes the current employer when you
+calculate or save; it does not change any compensation amounts. Set those
+separately. Employer details follow the same calculate/save process as other inputs.
 
 Edits stay in your browser session when you switch pages or open another
 scenario. Use a scenario's **Edit** button or the **Unsaved drafts** section to
@@ -31,6 +43,12 @@ the same tax year and current calculation rules.
 Each view uses a table with the same scenario columns and order. On a narrow
 screen, scroll horizontally while row labels stay visible. Expand **Definitions**
 for the meaning of an amount.
+
+Column headings show the name above state, year, and each person's employer.
+Selectors use compact versions of those details. Matching names are distinguished
+by context; when all displayed details match, a numbered marker identifies each
+entry without changing its saved name. Rename those scenarios to make them easier
+to tell apart. Draft and snapshot labels appear separately from the name.
 
 **Overview** opens first. It shows monthly cash surplus or shortfall, followed by
 annual cash added, retirement contributions, retained RSUs, and net saving.
