@@ -12,7 +12,7 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 | `ISOExercise` | Qualifying shares exercised and held, strike price, exercise-date fair market value |
 | `DependentInputs` | Qualifying child's year-end age |
 | `LivingCosts` | Monthly rent/childcare/other; annual eligible care expense; CA renter eligibility |
-| `Scenario` | Name, year, state, exactly two adults, children, costs, notes, confirmed household facts |
+| `Scenario` | Optional custom label (`name`), year, state, exactly two adults, children, costs, notes, confirmed household facts |
 | `TaxResult` | Federal/state income tax, employee payroll components, included AMT detail, coverage and engine versions |
 | `ScenarioResult` | Annual cash/savings/assets, monthly cash, tax result, input digest and calculation provenance |
 | `SavedScenario` | Schema version, UUID, revision, update timestamp, inputs and matching result |
@@ -70,6 +70,18 @@ strict boolean that defaults to `False`. An employer and `not_working=True`
 cannot both be set. Neither field changes compensation, tax calculations, or
 saving, and neither is inferred from salary. Changes are included in the input
 digest and require a matching calculation snapshot when saved.
+
+`Scenario.name` defaults to an empty string and allows up to 80 characters.
+An empty or whitespace-only label uses a generated display title; the generated
+title is not stored as an input. Existing named documents retain their digests.
+Changing a label follows the same calculation/save process as other inputs.
+Scenario UUIDs identify records regardless of their labels.
+
+`financial_model.scenario_display` supplies shared titles, selector labels, and
+HTML. It compares matching headings against variable household assumptions,
+retains exact input precision, and displays only the fields needed to distinguish
+unique assumption sets. Identical sets use saved timestamps and record IDs.
+Display context does not change saved inputs or calculation outputs.
 
 ## Persistence
 

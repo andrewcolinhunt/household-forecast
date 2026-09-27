@@ -2,7 +2,7 @@
 
 ## Create and edit scenarios
 
-**Scenarios** is the home page. Each saved scenario shows its chosen name,
+**Scenarios** is the home page. Each saved scenario shows its title,
 location, tax year, each person's employer, monthly cash surplus or shortfall,
 and annual net saving from income.
 
@@ -13,9 +13,15 @@ and annual net saving from income.
 - **Unsaved changes** identifies edits that are not in the shared database.
   A separate notice identifies results that need recalculation.
 
-Use a short **Scenario name**, such as “Both working” or “Higher rent.” State,
-year, and employers appear separately in cards and comparison headings. Changing
-those details does not rename the scenario. Existing names remain as entered.
+Leave **Custom label (optional)** blank for an automatic title such as
+“California · Both working” or “Washington · Andrew only.” The title follows the
+state and explicit employment details. If employment is unknown, it shows only
+the state; pay does not determine who is working.
+
+Enter a label such as “Higher rent” when useful. Labels need not be unique and
+stay as written when inputs change. Clear a label to return to the automatic
+title. Existing names remain custom labels until cleared. Duplicate and
+**Save as new scenario** preserve the label, including a blank one.
 
 Enter **Employer** within each person's section. Use a short name for table
 headings; leave it blank if unknown. Select **Not working in this scenario** to
@@ -44,11 +50,17 @@ Each view uses a table with the same scenario columns and order. On a narrow
 screen, scroll horizontally while row labels stay visible. Expand **Definitions**
 for the meaning of an amount.
 
-Column headings show the name above state, year, and each person's employer.
-Selectors use compact versions of those details. Matching names are distinguished
-by context; when all displayed details match, a numbered marker identifies each
-entry without changing its saved name. Rename those scenarios to make them easier
-to tell apart. Draft and snapshot labels appear separately from the name.
+Column headings and cards show the title above year and employer details. State
+appears in the details when a custom label replaces the automatic title.
+Selectors use compact versions of the same information.
+
+When titles and context match, the app adds enough differing inputs to distinguish
+the scenarios, such as rent per month or one person's saving goal. Titles stay
+stable when the comparison selection changes. Identical assumptions are marked
+**Same assumptions**. Saved records with identical details include their last
+saved date, with a short record identifier when dates also match. The database
+does not store creation dates. Draft and snapshot labels remain separate. Notes do not count as a change
+to financial assumptions.
 
 **Overview** opens first. It shows monthly cash surplus or shortfall, followed by
 annual cash added, retirement contributions, retained RSUs, and net saving.
