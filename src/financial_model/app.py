@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from financial_model.comparison import (
     cash_flow_html,
     compensation_html,
-    component_differences_html,
+    overview_html,
     saving_html,
     scenario_names,
 )
@@ -654,26 +654,38 @@ def _financial_views(
 ) -> None:
     """Use the same definitions for an individual result and all comparisons."""
     st.html(Path(__file__).with_name("comparison.css"))
-    labels = ["Compensation", "Cash flow", "Saving & equity"]
-    tabs = st.tabs(labels + (["Component differences"] if selected else []))
+    reference = _comparison_reference(selected, names) if selected else None
+    tabs = st.tabs(["Overview", "Cash flow", "Compensation", "Saving & equity"])
     for tab, render in zip(
-        tabs[:3], (compensation_html, cash_flow_html, saving_html), strict=True
+        tabs,
+        (overview_html, cash_flow_html, compensation_html, saving_html),
+        strict=True,
     ):
         with tab:
-            st.html(render(documents, names))
-    if not selected:
-        return
-    with tabs[3]:
-        reference_names = dict(zip(selected, names, strict=True))
-        if st.session_state.get("comparison_reference") not in selected:
-            st.session_state["comparison_reference"] = selected[0]
-        reference = st.selectbox(
-            "Reference scenario",
-            selected,
-            key="comparison_reference",
-            format_func=reference_names.__getitem__,
-        )
-        st.html(component_differences_html(documents, selected.index(reference), names))
+            st.html(render(documents, names, reference))
+
+
+def _comparison_reference(selected: list[str], names: tuple[str, ...]) -> int | None:
+    """Keep the reference choice when differences are hidden or pages change."""
+    if st.session_state.get("comparison_reference") not in selected:
+        st.session_state["comparison_reference"] = selected[0]
+    toggle, selector = st.columns([1, 2], vertical_alignment="center")
+    enabled = toggle.toggle(
+        "Show differences",
+        key="comparison_show_differences",
+        help="Changes appear below each amount, in the same units as its row. "
+        "For cash outflows, a more negative change means more cash going out.",
+    )
+    if not enabled:
+        return None
+    reference_names = dict(zip(selected, names, strict=True))
+    reference = selector.selectbox(
+        "Reference scenario",
+        selected,
+        key="comparison_reference",
+        format_func=reference_names.__getitem__,
+    )
+    return selected.index(reference)
 
 
 def _backups(document: SavedScenario | None) -> None:
@@ -958,7 +970,11 @@ def main() -> None:
         _set_editor(imported)
         st.switch_page(str(EDITOR_PAGE))
     # Page widgets are transient; persist comparison choices between visits.
-    for key in ("comparison_selection", "comparison_reference"):
+    for key in (
+        "comparison_selection",
+        "comparison_reference",
+        "comparison_show_differences",
+    ):
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
     page.run()

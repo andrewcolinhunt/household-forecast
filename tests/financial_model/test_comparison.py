@@ -1,23 +1,35 @@
-"""Multi-scenario display and component differences using synthetic households."""
+"""Scenario tables, accounting boundaries, and differences for synthetic households."""
 
 from __future__ import annotations
 
 import re
 from decimal import Decimal
-from html import escape
+from html import escape, unescape
 
 import pytest
 
 from financial_model.comparison import (
     _monthly_groups,
+    _number,
     cash_flow_html,
     compensation_html,
-    component_differences,
-    component_differences_html,
+    overview_html,
     saving_html,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import OptionAward, SavedScenario, Scenario
+
+RENDERERS = (overview_html, cash_flow_html, compensation_html, saving_html)
+
+
+def cells(html: str, label: str) -> list[str]:
+    """Read each scenario's visible value and optional delta from a named row."""
+    row = re.search(rf'<th scope="row">{re.escape(escape(label))}</th>(.*?)</tr>', html)
+    assert row is not None, label
+    return [
+        unescape(re.sub(r"<[^>]+>", " ", value)).strip()
+        for value in re.findall(r"<td>(.*?)</td>", row[1])
+    ]
 
 
 @pytest.fixture
@@ -40,58 +52,49 @@ def documents(scenario: Scenario) -> tuple[SavedScenario, ...]:
     return tuple(result)
 
 
-def test_component_differences_reconcile_without_cumulative_totals(documents) -> None:
-    left, right = documents[:2]
-    amounts = component_differences(left.result, right.result)
-    assert amounts["Salary + bonus"] == 20000
-    assert amounts["RSUs vesting"] == 24000
-    assert amounts["Living costs"] == 60000
-    assert amounts["Employer retirement"] == 6000
-    assert amounts["Option purchases"] == 3000
-    assert amounts["Purchased option shares"] == 8000
-    assert amounts["Taxes"] == right.result.taxes.total - left.result.taxes.total
-    net = (
-        amounts["Salary + bonus"]
-        + amounts["RSUs vesting"]
-        - amounts["Taxes"]
-        - amounts["Living costs"]
-        + amounts["Employer retirement"]
-        - amounts["Option purchases"]
-        + amounts["Purchased option shares"]
-    )
-    assert (
-        net
-        == right.result.total_savings_and_assets - left.result.total_savings_and_assets
-    )
-    assert component_differences(right.result, left.result) == {
-        name: -value for name, value in amounts.items()
-    }
-
-
-@pytest.mark.parametrize("count", [2, 3, 4])
-def test_comparison_views_include_every_selected_scenario_in_order(
-    documents, count
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+@pytest.mark.parametrize("render", RENDERERS)
+def test_tables_include_every_selected_scenario_in_order(
+    documents, count, render
 ) -> None:
     selected = documents[:count]
-    for render in (
-        compensation_html,
-        cash_flow_html,
-        saving_html,
-        component_differences_html,
-    ):
-        html = render(selected)
-        for document in selected:
-            assert document.inputs.name in html
-        assert documents[-1].inputs.name not in html if count < 4 else True
-    overview = compensation_html(selected)
-    assert overview.count('class="fm-track"') == count * 3
-    table = cash_flow_html(selected)
-    assert table.count('scope="col"') == count + 1
-    assert [table.index(document.inputs.name) for document in selected] == sorted(
-        table.index(document.inputs.name) for document in selected
-    )
-    assert 'tabindex="0"' in table
-    assert 'class="fm-table-scroll"' in table
+    html = render(selected)
+    for table in re.findall(r"<table.*?</table>", html):
+        assert table.count('scope="col"') == count + 1
+        assert [table.index(document.inputs.name) for document in selected] == sorted(
+            table.index(document.inputs.name) for document in selected
+        )
+    if count < 4:
+        assert documents[-1].inputs.name not in html
+    assert 'tabindex="0"' in html
+    assert "<caption>" in html
+    assert 'class="fm-table-scroll"' in html
+    assert 'class="fm-delta"' not in html
+    assert 'class="fm-track"' not in html
+
+
+def test_overview_separates_monthly_cash_from_annual_assets(documents) -> None:
+    html = overview_html(documents)
+    assert html.index("Per month") < html.index("Per year")
+    for index, document in enumerate(documents):
+        result = document.result
+        assert cells(html, "Cash surplus / shortfall")[index] == _number(
+            result.monthly_remaining_cash
+        )
+        assert cells(html, "Net cash added")[index] == _number(result.cash_added)
+        assert cells(html, "Retirement contributions")[index] == _number(
+            result.employee_401k + result.employer_retirement
+        )
+        assert cells(html, "Net saved from income")[index] == _number(
+            result.net_saved_from_income
+        )
+    assert cells(html, "Cash moved into option shares") == [
+        "$0",
+        "$3,000",
+        "$3,000",
+        "$3,000",
+    ]
+    assert "Cash moved into option shares</th>" not in overview_html(documents[:1])
 
 
 def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
@@ -111,124 +114,243 @@ def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
             == -document.result.cash_funded_tax / 12
         )
     html = cash_flow_html(documents)
-    assert "ISO exercise cost" in html
-    assert "\N{MINUS SIGN}$250" in html
+    assert cells(html, "ISO exercise cost") == [
+        "$0",
+        "\N{MINUS SIGN}$250",
+        "\N{MINUS SIGN}$250",
+        "\N{MINUS SIGN}$250",
+    ]
+    assert "ISO exercise cost</th>" not in cash_flow_html(documents[:1])
 
 
-def test_saving_html_reconciles_shortfalls_and_excludes_option_spread(
-    documents,
-) -> None:
+def test_saving_reconciles_income_and_excludes_option_spread(documents) -> None:
     html = saving_html(documents)
-    for document in documents:
+    assert "How this total adds up" not in html
+    for index, document in enumerate(documents):
         r = document.result
-        expected = (
-            r.gross_cash
+        assert (
+            r.net_saved_from_income
+            == r.gross_cash
             + r.gross_rsus
             + r.employer_retirement
             - r.taxes.total
             - r.living_cost
         )
-        assert r.net_saved_from_income == expected
-        assert f"${expected:,.0f}" in html
-    assert "Cash surplus / shortfall" in html
-    assert "Cash moved into option shares" in html
-    assert "Shares · exercised ISOs" in html
-    assert "Cash · net added / year" in html
-    assert "Shares · retained RSUs / year" in html
-    assert "Retirement · your 401(k) / year" in html
-    assert "not spendable cash" in html
-    assert "Savings &amp; investments" not in html
-    assert "Net saved from income" in html
+        assert (
+            r.net_saved_from_income
+            == r.cash_added
+            + r.employee_401k
+            + r.employer_retirement
+            + r.retained_rsus
+            + r.option_cost
+        )
+        assert cells(html, "Net saved from income")[index] == _number(
+            r.net_saved_from_income
+        )
+        assert cells(html, "Net cash added")[index] == _number(
+            r.extra_savings + r.annual_remaining_cash
+        )
+    assert cells(html, "Value above exercise cost") == [
+        "$0",
+        "$5,000",
+        "$5,000",
+        "$5,000",
+    ]
+    assert "Exercised ISOs" in html
+    assert "not all spendable cash" in html
 
 
-def test_compensation_html_distinguishes_missing_and_zero_option_estimates(
-    documents,
-) -> None:
-    awards = []
-    for document, value in zip(documents, (None, 0, 8, 2), strict=True):
-        adult = document.inputs.adults[0].model_copy(
-            update={
-                "name": "<Alex & Sam>",
-                "option_award": OptionAward(
-                    kind="NSO",
-                    vesting_shares=10000,
-                    strike=Decimal("2.123456"),
-                    assumed_share_value=value,
-                ),
-            }
-        )
-        inputs = document.inputs.model_copy(
-            update={"adults": (adult, document.inputs.adults[1])}
-        )
-        awards.append(document.model_copy(update={"inputs": inputs}))
-    html = compensation_html(tuple(awards))
-    assert html.count("Not estimated") == 2
-    assert html.count("Not entered") == 1
-    assert html.count("Cost to exercise</dt><dd>$21,235") == 4
-    assert "Share value if exercised</dt><dd>Not estimated" in html
-    assert "Share value if exercised</dt><dd>$0" in html
-    assert "Share value if exercised</dt><dd>$80,000" in html
-    assert "Share value if exercised</dt><dd>$20,000" in html
-    assert html.count("Value above exercise cost</dt><dd>$0") == 2
-    assert "Value above exercise cost</dt><dd>$58,765" in html
-    assert html.count("$2.123456") == 4
-    assert "&lt;Alex &amp; Sam&gt; · NSO" in html
+def with_award(document, value, strike=Decimal("2.123456"), shares=10000):
+    adult = document.inputs.adults[0].model_copy(
+        update={
+            "name": "<Alex & Sam>",
+            "option_award": OptionAward(
+                kind="NSO",
+                vesting_shares=shares,
+                strike=strike,
+                assumed_share_value=value,
+            ),
+        }
+    )
+    return document.model_copy(
+        update={
+            "inputs": document.inputs.model_copy(
+                update={"adults": (adult, document.inputs.adults[1])}
+            )
+        }
+    )
+
+
+def test_options_distinguish_absent_unknown_zero_and_positive_values(documents) -> None:
+    awards = tuple(
+        with_award(d, value)
+        for d, value in zip(documents, (None, 0, 8, 2), strict=True)
+    )
+    html = compensation_html(awards)
+    assert cells(html, "Options vesting / year") == ["10,000"] * 4
+    assert cells(html, "Exercise price / share") == ["$2.123456"] * 4
+    assert cells(html, "Assumed value / share") == ["Not entered", "$0", "$8", "$2"]
+    assert cells(html, "Cost to exercise") == ["$21,235"] * 4
+    assert cells(html, "Share value if exercised") == [
+        "Not estimated",
+        "$0",
+        "$80,000",
+        "$20,000",
+    ]
+    assert cells(html, "Value above exercise cost") == [
+        "Not estimated",
+        "$0",
+        "$58,765",
+        "$0",
+    ]
+    assert "&lt;Alex &amp; Sam&gt;" in html
     assert "<Alex" not in html
-    assert "No award entered" in compensation_html(documents)
-    saving = saving_html(tuple(awards))
-    assert "Options · uncertain value" in saving
-    assert "Not estimated" in saving
-    assert "$58,765" in saving
-    assert "Share value if exercised</dt><dd>$80,000" in saving
-    assert "Cost to exercise</dt><dd>$21,235" in saving
+    assert "No option awards entered" in compensation_html(documents)
+    assert "Options vesting / year" not in saving_html(awards)
+    # One scenario has the person but no award; another has no matching person.
+    no_award = awards[0].inputs.adults[0].model_copy(update={"option_award": None})
+    absent = awards[0].model_copy(
+        update={
+            "inputs": awards[0].inputs.model_copy(
+                update={"adults": (no_award, awards[0].inputs.adults[1])}
+            )
+        }
+    )
+    mixed = compensation_html((awards[0], absent, documents[1]), reference_index=0)
+    assert cells(mixed, "Share value if exercised") == ["Not estimated", "—", "—"]
+
+
+def test_option_differences_preserve_counts_and_per_share_units(documents) -> None:
+    awards = (
+        with_award(documents[0], 8),
+        with_award(documents[1], 9, Decimal("2.123457"), 12000),
+    )
+    html = compensation_html(awards, reference_index=0)
+    assert cells(html, "Options vesting / year") == ["10,000", "12,000  +2,000"]
+    assert cells(html, "Exercise price / share") == [
+        "$2.123456",
+        "$2.123457  +$0.000001",
+    ]
+    assert cells(html, "Assumed value / share") == ["$8", "$9  +$1"]
+    assert cells(html, "Option type") == ["NSO", "NSO"]
+    unknown = compensation_html(
+        (with_award(documents[0], None), awards[1]), reference_index=0
+    )
+    assert cells(unknown, "Assumed value / share") == ["Not entered", "$9"]
 
 
 @pytest.mark.parametrize("reference", range(4))
-def test_component_bars_use_own_values_and_keep_scenario_colors(
+def test_differences_keep_row_units_reference_and_column_order(
     documents, reference
 ) -> None:
-    html = component_differences_html(documents, reference)
-    assert f"Annual differences from {documents[reference].inputs.name}" in html
-    assert f'class="fm-swatch fm-scenario-{reference}"' not in html
-    for index in range(4):
-        if index != reference:
-            assert f'class="fm-swatch fm-scenario-{index}"' in html
-    for position, width in re.findall(r'style="left:([\d.]+)%;width:([\d.]+)%"', html):
-        assert 0 <= Decimal(position) <= 50
-        assert Decimal(position) + Decimal(width) <= Decimal("100.000001")
-    assert "Running total" not in html
-    assert "Difference in annual net saving" in html
+    for render, label, amounts in (
+        (compensation_html, "Salary + bonus", [d.result.gross_cash for d in documents]),
+        (
+            cash_flow_html,
+            "Salary + bonus",
+            [d.result.gross_cash / 12 for d in documents],
+        ),
+        (cash_flow_html, "Rent", [-d.inputs.living_costs.rent for d in documents]),
+        (
+            overview_html,
+            "Net saved from income",
+            [d.result.net_saved_from_income for d in documents],
+        ),
+        (saving_html, "Net cash added", [d.result.cash_added for d in documents]),
+    ):
+        html = render(documents, reference_index=reference)
+        assert (
+            f'{documents[reference].inputs.name}<span class="fm-reference">Reference</span>'
+            in html
+        )
+        values = cells(html, label)
+        assert values[reference] == _number(amounts[reference])
+        for index, amount in enumerate(amounts):
+            if index == reference:
+                continue
+            delta = amount - amounts[reference]
+            expected = (
+                "No change"
+                if not delta
+                else ("+" if delta > 0 else "") + _number(delta)
+            )
+            assert values[index] == f"{_number(amount)}  {expected}"
     if reference == 0:
-        assert "$20,000 more income" in html
-        assert "$20,000 less income" in html
-        assert "$60,000 more spending" in html
-        assert "more tax" in html
-        assert html.index('class="fm-net"') > html.index('class="fm-scale"')
+        assert cells(compensation_html(documents, reference_index=0), "Salary + bonus")[
+            1
+        ].endswith("+$20,000")
+        assert cells(cash_flow_html(documents, reference_index=0), "Salary + bonus")[
+            1
+        ].endswith("+$1,667")
+        assert cells(cash_flow_html(documents, reference_index=0), "Rent")[1].endswith(
+            "\N{MINUS SIGN}$2,000"
+        )
 
 
-def test_component_differences_identical_values_show_zero_state(documents) -> None:
-    left = documents[0]
-    html = component_differences_html((left, left))
-    assert "No component differences" in html
-    assert "No change" in html
-    assert 'class="fm-scale"' not in html
+def test_people_align_by_name_when_adult_order_changes(documents) -> None:
+    first = documents[1]
+    reversed_people = first.model_copy(
+        update={
+            "inputs": first.inputs.model_copy(
+                update={"adults": tuple(reversed(first.inputs.adults))}
+            )
+        }
+    )
+    html = compensation_html((first, reversed_people), reference_index=0)
+    detail = html.split("<summary>By person</summary>")[1]
+    assert cells(detail, "Salary + bonus") == ["$120,000", "$120,000  No change"]
+    assert detail.index("Adult A") < detail.index("Adult B")
+    duplicate = first.model_copy(
+        update={
+            "inputs": first.inputs.model_copy(
+                update={
+                    "adults": tuple(
+                        a.model_copy(update={"name": "Sam"})
+                        for a in first.inputs.adults
+                    )
+                }
+            )
+        }
+    )
+    html = compensation_html((duplicate, duplicate))
+    assert "Sam (1)" in html
+    assert "Sam (2)" in html
+
+
+def test_cash_deficits_remain_visible_with_positive_retirement(scenario) -> None:
+    inputs = scenario.model_copy(
+        update={
+            "living_costs": scenario.living_costs.model_copy(
+                update={"rent": Decimal(20000)}
+            )
+        }
+    )
+    document = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
+    assert document.result.cash_added < 0
+    for render in (overview_html, cash_flow_html, saving_html):
+        assert 'class="fm-deficit"' in render((document,))
+        assert "\N{MINUS SIGN}$" in render((document,))
 
 
 @pytest.mark.parametrize(
-    "render",
-    [compensation_html, cash_flow_html, saving_html, component_differences_html],
+    ("value", "expected"),
+    [("-0.4", "$0"), ("0.4", "$0"), ("-0.5", "\N{MINUS SIGN}$1"), ("0.5", "$1")],
 )
-def test_comparison_html_escapes_names_and_distinguishes_all_duplicates(
+def test_money_rounding_avoids_negative_zero(value, expected) -> None:
+    assert _number(Decimal(value)) == expected
+
+
+@pytest.mark.parametrize("render", RENDERERS)
+def test_identical_values_show_no_change_and_escape_duplicate_names(
     documents, render
 ) -> None:
     name = '<img src=x onerror="alert(1)">'
-    renamed = tuple(
-        document.model_copy(
-            update={"inputs": document.inputs.model_copy(update={"name": name})}
-        )
-        for document in documents
+    first = documents[0].model_copy(
+        update={"inputs": documents[0].inputs.model_copy(update={"name": name})}
     )
-    html = render(renamed)
+    html = render((first,) * 4, reference_index=2)
     assert "<img" not in html
+    assert "No change" in html
+    assert "+$0" not in html
     for index in range(4):
         assert f"{escape(name)} ({index + 1})" in html

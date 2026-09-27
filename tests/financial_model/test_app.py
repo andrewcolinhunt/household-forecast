@@ -72,25 +72,22 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     press(page, "Calculate")
     page.switch_page("src/financial_model/pages/compare.py").run()
     page.multiselect(key="comparison_selection").set_value(["snapshot", "draft"]).run()
+    page.toggle(key="comparison_show_differences").set_value(True).run()
     page.selectbox(key="comparison_reference").select("snapshot").run()
     assert not page.exception
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
     assert [tab.label for tab in page.tabs] == [
-        "Compensation",
+        "Overview",
         "Cash flow",
+        "Compensation",
         "Saving & equity",
-        "Component differences",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert "Synthetic baseline (1)" in rendered
     assert "Synthetic baseline (2)" in rendered
-    difference = next(
-        element.proto.body
-        for element in page.get("html")
-        if "fm-components" in element.proto.body
-    )
-    assert "$20,000 more income" in difference
+    assert "+$20,000</span>" in rendered
+    assert "+$1,667</span>" in rendered
     assert "Cash surplus / shortfall" in rendered
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
@@ -323,10 +320,10 @@ def test_compare_saved_scenarios_without_opening_editor(
     ).run()
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
-        "Compensation",
+        "Overview",
         "Cash flow",
+        "Compensation",
         "Saving & equity",
-        "Component differences",
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()
@@ -466,17 +463,29 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
     assert not page.exception
     assert page.multiselect[0].proto.max_selections == 4
     assert [tab.label for tab in page.tabs] == [
-        "Compensation",
+        "Overview",
         "Cash flow",
+        "Compensation",
         "Saving & equity",
-        "Component differences",
     ]
+    assert not page.toggle(key="comparison_show_differences").value
+    assert not page.selectbox
+    page.toggle(key="comparison_show_differences").set_value(True).run()
     page.selectbox(key="comparison_reference").select(ids[-1]).run()
     rendered = "\n".join(element.proto.body for element in page.get("html"))
-    assert f"Annual differences from Option {count - 1}" in rendered
+    assert f'Option {count - 1}<span class="fm-reference">Reference</span>' in rendered
+    page.toggle(key="comparison_show_differences").set_value(False).run()
+    assert not page.selectbox
+    assert 'class="fm-delta"' not in "\n".join(e.proto.body for e in page.get("html"))
     for target in ("scenarios", "compare"):
         page.switch_page(f"src/financial_model/pages/{target}.py").run()
     assert page.multiselect[0].value == ids
+    assert not page.toggle(key="comparison_show_differences").value
+    page.toggle(key="comparison_show_differences").set_value(True).run()
+    assert page.selectbox(key="comparison_reference").value == ids[-1]
+    for target in ("scenarios", "compare"):
+        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+    assert page.toggle(key="comparison_show_differences").value
     assert page.selectbox(key="comparison_reference").value == ids[-1]
     page.multiselect[0].set_value(ids[:-1]).run()
     assert page.selectbox(key="comparison_reference").value == ids[0]
@@ -541,8 +550,9 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     press(page, "Edit")
     assert any("cash shortfall" in warning.value for warning in page.warning)
     assert [tab.label for tab in page.tabs] == [
-        "Compensation",
+        "Overview",
         "Cash flow",
+        "Compensation",
         "Saving & equity",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()

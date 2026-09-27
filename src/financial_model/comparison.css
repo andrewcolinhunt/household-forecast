@@ -2,73 +2,44 @@
   color: inherit;
   font-family: inherit;
   max-width: 1040px;
-  --fm-track: color-mix(in srgb, currentColor 8%, transparent);
-  --fm-line: color-mix(in srgb, currentColor 20%, transparent);
+  --fm-line: color-mix(in srgb, currentColor 12%, transparent);
 }
 .fm-comparison * { box-sizing: border-box; }
 .fm-comparison h3 { font-size: 1.3rem; margin: 0 0 8px; overflow-wrap: anywhere; }
-.fm-comparison h4 { font-size: 1rem; font-weight: 600; margin: 0 0 16px; }
 .fm-comparison p { margin: 10px 0; }
 .fm-comparison .fm-note { font-size: .85rem; opacity: .8; }
-.fm-comparison .fm-outcome { padding: 24px 0; border-bottom: 1px solid var(--fm-line); }
-.fm-comparison .fm-outcome:first-child { padding-top: 8px; }
-.fm-comparison .fm-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
-.fm-comparison .fm-metrics .fm-outcome { padding: 16px 0; }
-.fm-comparison .fm-metrics h4 { margin-bottom: 6px; }
-.fm-comparison .fm-metrics .fm-note { margin: 0 0 18px; }
-.fm-comparison .fm-metrics .fm-series { gap: 12px; }
-.fm-comparison .fm-options { margin-top: 36px; }
-.fm-comparison .fm-option-card { padding: 16px; border: 1px solid var(--fm-line); border-radius: 8px; }
-.fm-comparison .fm-award + .fm-award { border-top: 1px solid var(--fm-line); margin-top: 16px; }
-.fm-comparison dl { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; margin: 0; font-size: .9rem; }
-.fm-comparison dt { opacity: .8; }
-.fm-comparison dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.fm-comparison .fm-series { display: grid; gap: 18px; }
-.fm-comparison .fm-series-label { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
-.fm-comparison .fm-series-label > span { overflow-wrap: anywhere; }
-.fm-comparison strong { font-weight: 600; font-size: 1.1rem; font-variant-numeric: tabular-nums; text-align: right; }
-.fm-comparison .fm-track { height: 8px; background: var(--fm-track); position: relative; margin-top: 6px; }
-.fm-comparison .fm-fill { position: absolute; height: 100%; }
-.fm-comparison .fm-scenario-0 { background: #439f94; }
-.fm-comparison .fm-scenario-1 { background: #9984ce; }
-.fm-comparison .fm-scenario-2 { background: #c88b35; }
-.fm-comparison .fm-scenario-3 { background: #548cd2; }
-.fm-comparison .fm-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; }
-.fm-comparison .fm-zero { position: absolute; width: 1px; height: 100%; background: currentColor; opacity: .45; }
-.fm-comparison summary { padding: 18px 0; cursor: pointer; }
+.fm-comparison .fm-section { margin-top: 32px; }
+.fm-comparison summary { padding: 16px 0; cursor: pointer; font-size: .9rem; }
+.fm-comparison .fm-definitions { margin-top: 12px; }
+.fm-comparison .fm-definitions dl { font-size: .9rem; max-width: 760px; margin: 0 0 16px; }
+.fm-comparison .fm-definitions dt { font-weight: 600; margin-top: 12px; }
+.fm-comparison .fm-definitions dd { margin: 4px 0 0; }
 .fm-comparison .fm-table-scroll { overflow-x: auto; max-width: 100%; }
-.fm-comparison .fm-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: .95rem; }
+.fm-comparison .fm-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: .9rem; }
+.fm-comparison .fm-table caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .fm-comparison .fm-table th, .fm-comparison .fm-table td { padding: 12px; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--fm-line); }
-.fm-comparison .fm-table th { text-align: left; font-weight: 500; }
-.fm-comparison .fm-table th:first-child { position: sticky; left: 0; z-index: 1; width: 200px; background: light-dark(#fff, #0e1117); }
+.fm-comparison .fm-table th { text-align: left; font-weight: 400; }
+.fm-comparison .fm-table th:first-child { position: sticky; left: 0; z-index: 1; width: 240px; background: light-dark(#fff, #0e1117); }
 .fm-comparison .fm-table th:not(:first-child), .fm-comparison .fm-table td { text-align: right; font-variant-numeric: tabular-nums; }
 .fm-comparison .fm-table td { white-space: nowrap; }
-.fm-comparison .fm-table:has(.fm-group) { font-size: .9rem; }
-.fm-comparison .fm-table:has(.fm-group) tr:not(.fm-group) th[scope="row"] { padding-left: 24px; font-weight: 400; }
-.fm-comparison .fm-table:has(.fm-group) tr:not(.fm-group) th,
-.fm-comparison .fm-table:has(.fm-group) tr:not(.fm-group) td { border-bottom-color: color-mix(in srgb, currentColor 10%, transparent); }
-.fm-comparison .fm-table:has(.fm-group) thead th { padding-bottom: 16px; font-weight: 600; }
+.fm-comparison .fm-table tr:not(.fm-group) th[scope="row"] { padding-left: 24px; }
+.fm-comparison .fm-table thead th { padding-bottom: 16px; font-weight: 600; }
 .fm-comparison .fm-group th, .fm-comparison .fm-group td {
   padding-top: 28px;
   padding-bottom: 10px;
   border-bottom: 2px solid color-mix(in srgb, currentColor 30%, transparent);
 }
 .fm-comparison .fm-group:first-child th, .fm-comparison .fm-group:first-child td { padding-top: 8px; }
-.fm-comparison .fm-group th { font-size: 1.05rem; font-weight: 700; color: inherit; }
-.fm-comparison .fm-table tbody tr:last-child { font-weight: 600; }
-.fm-comparison .fm-scale { position: relative; height: 24px; margin-top: 10px; font-size: .8rem; font-variant-numeric: tabular-nums; }
-.fm-comparison .fm-scale span { position: absolute; }
-.fm-comparison .fm-scale .fm-scale-middle { left: 50%; transform: translateX(-50%); }
-.fm-comparison .fm-scale span:last-child { right: 0; }
-.fm-comparison .fm-net { margin-top: 32px; padding: 20px; background: var(--fm-track); border-radius: 8px; }
-@media (max-width: 850px) {
-  .fm-comparison .fm-metrics { grid-template-columns: 1fr; gap: 12px; }
-}
+.fm-comparison .fm-group th { font-size: 1.05rem; font-weight: 700; }
+.fm-comparison .fm-table .fm-total th, .fm-comparison .fm-table .fm-total td { font-weight: 650; }
+.fm-comparison .fm-table .fm-total th[scope="row"] { padding-left: 12px; }
+.fm-comparison .fm-delta, .fm-comparison .fm-reference { display: block; font-size: .75rem; font-weight: 400; margin-top: 4px; opacity: .75; }
+.fm-comparison .fm-missing { font-size: .85rem; opacity: .75; white-space: normal; }
+.fm-comparison .fm-deficit { color: light-dark(#b42318, #ffb4ab); }
 @media (max-width: 520px) {
-  .fm-comparison .fm-series-label { display: grid; gap: 3px; }
-  .fm-comparison strong { font-size: 1rem; text-align: left; }
   .fm-comparison .fm-table { font-size: .85rem; }
-  .fm-comparison .fm-table th:first-child { width: 135px; }
+  .fm-comparison .fm-table th:first-child { width: 155px; }
   .fm-comparison .fm-table th, .fm-comparison .fm-table td { padding-left: 8px; padding-right: 8px; }
-  .fm-comparison .fm-net { padding: 16px; }
+  .fm-comparison .fm-table tr:not(.fm-group) th[scope="row"] { padding-left: 16px; }
+  .fm-comparison .fm-table .fm-total th[scope="row"] { padding-left: 8px; }
 }
