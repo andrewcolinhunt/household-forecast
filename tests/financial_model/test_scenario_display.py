@@ -75,6 +75,10 @@ def test_duplicate_names_use_context_then_saved_record_details(scenario) -> None
     duplicates = scenario_displays((original, copy))
     assert all(display.differences == ("Same assumptions",) for display in duplicates)
     assert len({display.label for display in duplicates}) == 2
+    assert (
+        '<details class="fm-scenario-record"><summary>Saved details</summary>'
+        in duplicates[0].html()
+    )
     assert "Saved " in duplicates[0].html()
     assert all(display.inputs.name == scenario.name for display in duplicates)
     statuses = scenario_displays(
@@ -97,24 +101,24 @@ def test_display_order_is_consistent_when_adults_are_reversed(scenario) -> None:
 
 
 @pytest.mark.parametrize(
-    ("first", "second", "expected"),
+    ("first", "second"),
     [
-        ({"employer": "Acme"}, {"employer": "Example"}, "Both working"),
-        ({"employer": "Acme"}, {"not_working": True}, "Adult A only"),
-        ({"not_working": True}, {"employer": "Example"}, "Adult B only"),
-        ({"not_working": True}, {"not_working": True}, "Neither working"),
-        ({}, {}, None),
-        ({"employer": "Acme"}, {}, None),
+        ({"employer": "Acme"}, {"employer": "Example"}),
+        ({"employer": "Acme"}, {"not_working": True}),
+        ({"not_working": True}, {"employer": "Example"}),
+        ({"not_working": True}, {"not_working": True}),
+        ({}, {}),
+        ({"employer": "Acme"}, {}),
     ],
 )
-def test_automatic_titles_follow_explicit_employment(scenario, first, second, expected):
+def test_automatic_titles_use_location_without_work_categories(scenario, first, second):
     data = scenario.model_dump(mode="json")
     data["name"] = ""
     data["adults"][0].update(first)
     data["adults"][1].update(second)
     inputs = Scenario.model_validate(data)
     display = ScenarioDisplay(inputs)
-    assert display.title == "California" + (f" · {expected}" if expected else "")
+    assert display.title == "California"
     assert display.location == "2025"
     assert display.label.count("California") == 1
     data["state"] = "WA"

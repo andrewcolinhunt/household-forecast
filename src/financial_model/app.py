@@ -334,9 +334,9 @@ def _form(dsn: str | None) -> None:
             value=data.get("name", ""),
             max_chars=80,
             key=_key("name"),
-            placeholder="Automatic title",
-            help="Leave blank for a title based on state and who is working. "
-            "Use a label such as Higher rent if useful. Labels do not need to be unique.",
+            placeholder="For example, New job or Higher rent",
+            help="Describe the decision if useful. Leave blank to show the state. "
+            "Labels do not need to be unique.",
         )
         left, right = st.columns(2)
         year = left.selectbox(

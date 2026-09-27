@@ -678,7 +678,7 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     assert original.inputs.name == ""
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     html = "\n".join(e.proto.body for e in page.get("html"))
-    assert '<h3 class="fm-scenario-name">California · Both working</h3>' in html
+    assert '<h3 class="fm-scenario-name">California</h3>' in html
     press(page, "Duplicate")
     assert widget(page, "text_input", "name_").value == ""
     widget(page, "number_input", "living_rent").set_value(4000.0)
@@ -697,7 +697,7 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     widget(page, "text_input", "name_").set_value("").run()
     press(page, "Save")
     html = "\n".join(e.proto.body for e in page.get("html"))
-    assert "Washington · Both working" in html
+    assert '<span class="fm-scenario-name">Washington</span>' in html
     press(page, "Save as new scenario")
     assert len(list_scenarios(database_url)) == 3
     assert page.session_state["document"].inputs.name == ""

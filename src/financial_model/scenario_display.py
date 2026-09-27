@@ -38,23 +38,8 @@ class ScenarioDisplay:
 
     @property
     def title(self) -> str:
-        """Use an explicit label or derive a title without guessing from pay."""
-        if self.inputs.name:
-            return self.inputs.name
-        state = STATE_NAMES[self.inputs.state]
-        if any(
-            not person.employer and not person.not_working for person in self.people
-        ):
-            return state
-        working = [person.name for person in self.people if not person.not_working]
-        employment = (
-            "Both working"
-            if len(working) == 2
-            else f"{working[0]} only"
-            if working
-            else "Neither working"
-        )
-        return f"{state} · {employment}"
+        """Use the decision label, falling back to location without a work category."""
+        return self.inputs.name or STATE_NAMES[self.inputs.state]
 
     @property
     def location(self) -> str:
@@ -94,7 +79,8 @@ class ScenarioDisplay:
             for value in self.differences
         )
         record = (
-            f'<span class="fm-scenario-record">{escape(self.record_label)}</span>'
+            '<details class="fm-scenario-record"><summary>Saved details</summary>'
+            f"<span>{escape(self.record_label)}</span></details>"
             if self.record_label
             else ""
         )
