@@ -1,7 +1,6 @@
 .fm-scenario { color: inherit; font-family: inherit; overflow-wrap: anywhere; }
 .fm-scenario-name { display: block; font-weight: 650; }
-.fm-scenario-location, .fm-scenario-employers { display: block; margin-top: 6px; font-size: .8rem; font-weight: 400; line-height: 1.5; }
-.fm-scenario-location { opacity: .8; }
+.fm-scenario-location, .fm-scenario-employers { display: block; margin-top: 2px; font-size: .8rem; font-weight: 400; line-height: 1.35; opacity: .8; }
 .fm-scenario-person { display: block; }
 .fm-scenario-status, .fm-scenario-duplicate { font-size: .75rem; font-weight: 500; }
 .fm-scenario-status { display: block; margin-top: 6px; }
@@ -34,7 +33,7 @@
 .fm-comparison .fm-table tr:not(.fm-group) th[scope="row"] { padding-left: 24px; }
 .fm-comparison .fm-table thead th {
   padding-top: 16px;
-  padding-bottom: 20px;
+  padding-bottom: 12px;
   font-size: 1.15rem;
   font-weight: 650;
   vertical-align: top;
