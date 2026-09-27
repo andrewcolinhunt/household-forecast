@@ -5,10 +5,11 @@
   --fm-line: color-mix(in srgb, currentColor 12%, transparent);
 }
 .fm-comparison * { box-sizing: border-box; }
-.fm-comparison h3 { font-size: 1.3rem; margin: 0 0 8px; overflow-wrap: anywhere; }
+.fm-comparison h3 { font-size: 1.6rem; font-weight: 650; line-height: 1.25; margin: 8px 0; overflow-wrap: anywhere; }
 .fm-comparison p { margin: 10px 0; }
 .fm-comparison .fm-note { font-size: .85rem; opacity: .8; }
-.fm-comparison .fm-section { margin-top: 32px; }
+.fm-comparison h3 + .fm-note { margin: 0 0 24px; }
+.fm-comparison .fm-section { margin-top: 40px; }
 .fm-comparison summary { padding: 16px 0; cursor: pointer; font-size: .9rem; }
 .fm-comparison .fm-definitions { margin-top: 12px; }
 .fm-comparison .fm-definitions dl { font-size: .9rem; max-width: 760px; margin: 0 0 16px; }
@@ -23,7 +24,14 @@
 .fm-comparison .fm-table th:not(:first-child), .fm-comparison .fm-table td { text-align: right; font-variant-numeric: tabular-nums; }
 .fm-comparison .fm-table td { white-space: nowrap; }
 .fm-comparison .fm-table tr:not(.fm-group) th[scope="row"] { padding-left: 24px; }
-.fm-comparison .fm-table thead th { padding-bottom: 16px; font-weight: 600; }
+.fm-comparison .fm-table thead th {
+  padding-top: 16px;
+  padding-bottom: 20px;
+  font-size: 1.15rem;
+  font-weight: 650;
+  vertical-align: bottom;
+  border-bottom: 2px solid color-mix(in srgb, currentColor 50%, transparent);
+}
 .fm-comparison .fm-group th, .fm-comparison .fm-group td {
   padding-top: 28px;
   padding-bottom: 10px;
