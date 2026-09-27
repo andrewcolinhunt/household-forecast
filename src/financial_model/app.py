@@ -497,10 +497,6 @@ def _results(document: SavedScenario) -> None:
         st.warning(
             "Saved results use older calculation rules. Select Calculate to update this draft."
         )
-    if result.taxes.rules_status == "projected_ca_parameters":
-        st.warning(
-            "2026 California income taxes use projected parameters in the pinned tax engine."
-        )
     names = (document.inputs.name,)
     _cash_shortfalls((document,), names)
     _financial_views((document,), names)
@@ -635,13 +631,6 @@ def _comparison(
             "Recalculate and save scenarios with the current rules before comparing them."
         )
         return
-    if any(
-        record.result.taxes.rules_status == "projected_ca_parameters"
-        for record in documents
-    ):
-        st.warning(
-            "2026 California income taxes use projected parameters in the pinned tax engine."
-        )
     _cash_shortfalls(documents, names)
     _financial_views(documents, names, selected)
 

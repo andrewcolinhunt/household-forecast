@@ -132,11 +132,19 @@ def _option_awards(documents: tuple[SavedScenario, ...], names: tuple[str, ...])
                     else "Not entered"
                 )
                 strike = f"${award.strike:,.6f}".rstrip("0").rstrip(".")
+                exercise_cost = _money(award.vesting_shares * award.strike)
+                share_value = (
+                    _money(award.vesting_shares * award.assumed_share_value)
+                    if award.assumed_share_value is not None
+                    else "Not estimated"
+                )
                 awards.append(
                     f'<div class="fm-award"><p>{escape(adult.name)} · {award.kind}</p>'
                     f"<dl><dt>Options vesting this year</dt><dd>{award.vesting_shares:,}</dd>"
                     f"<dt>Exercise price / share</dt><dd>{strike}</dd>"
                     f"<dt>Assumed share value</dt><dd>{price}</dd>"
+                    f"<dt>Share value if exercised</dt><dd>{share_value}</dd>"
+                    f"<dt>Cost to exercise</dt><dd>{exercise_cost}</dd>"
                     f"<dt>Value above exercise cost</dt><dd>{value}</dd></dl></div>"
                 )
         cards.append(

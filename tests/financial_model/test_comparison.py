@@ -162,8 +162,13 @@ def test_compensation_html_distinguishes_missing_and_zero_option_estimates(
         )
         awards.append(document.model_copy(update={"inputs": inputs}))
     html = compensation_html(tuple(awards))
-    assert html.count("Not estimated") == 1
+    assert html.count("Not estimated") == 2
     assert html.count("Not entered") == 1
+    assert html.count("Cost to exercise</dt><dd>$21,235") == 4
+    assert "Share value if exercised</dt><dd>Not estimated" in html
+    assert "Share value if exercised</dt><dd>$0" in html
+    assert "Share value if exercised</dt><dd>$80,000" in html
+    assert "Share value if exercised</dt><dd>$20,000" in html
     assert html.count("Value above exercise cost</dt><dd>$0") == 2
     assert "Value above exercise cost</dt><dd>$58,765" in html
     assert html.count("$2.123456") == 4
@@ -174,6 +179,8 @@ def test_compensation_html_distinguishes_missing_and_zero_option_estimates(
     assert "Options · uncertain value" in saving
     assert "Not estimated" in saving
     assert "$58,765" in saving
+    assert "Share value if exercised</dt><dd>$80,000" in saving
+    assert "Cost to exercise</dt><dd>$21,235" in saving
 
 
 @pytest.mark.parametrize("reference", range(4))
