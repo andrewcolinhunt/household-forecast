@@ -123,3 +123,21 @@ def test_delete_scenario_rejects_stale_and_missing_revisions(
     delete_scenario(database_url, updated.id, updated.revision)
     with pytest.raises(RevisionConflictError):
         delete_scenario(database_url, updated.id, updated.revision)
+
+
+def test_legacy_backup_loads_with_missing_employer_details(
+    document: SavedScenario,
+) -> None:
+    raw = document.model_dump_json()
+    assert '"employer":' not in raw
+    assert '"not_working":' not in raw
+    restored = SavedScenario.model_validate_json(raw)
+    assert restored == document
+    assert (
+        restored.inputs.digest()
+        == "aea1b736b8c76c475eca17add57b66f371030d69afc2942b70b0bb21feff615d"
+    )
+    assert all(
+        person.employer is None and not person.not_working
+        for person in restored.inputs.adults
+    )

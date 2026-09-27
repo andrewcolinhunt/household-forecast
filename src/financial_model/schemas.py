@@ -8,7 +8,14 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 Amount = Annotated[Decimal, Field(allow_inf_nan=False, max_digits=16, decimal_places=2)]
 Money = Annotated[Amount, Field(ge=0)]
@@ -82,6 +89,13 @@ class PersonInputs(ValueModel):
 
     name: Annotated[str, Field(min_length=1, max_length=80)]
     age: Annotated[int, Field(strict=True, ge=18, le=64)]
+    # Omit missing metadata so existing snapshots retain their input digests.
+    employer: Annotated[str, Field(min_length=1, max_length=80)] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    not_working: Annotated[bool, Field(strict=True)] = Field(
+        default=False, exclude_if=lambda value: not value
+    )
     cash_pay: Money = ZERO
     rsu_vesting: Money = ZERO
     employee_401k: Money = ZERO
@@ -93,6 +107,20 @@ class PersonInputs(ValueModel):
     option_award: OptionAward | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+
+    @field_validator("employer", mode="before")
+    @classmethod
+    def normalize_employer(cls, value: object) -> object:
+        """Treat empty employer text as unknown, not as an employment status."""
+        return (value.strip() or None) if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_employment_details(self) -> Self:
+        """Do not label a current employer and no current work simultaneously."""
+        if self.not_working and self.employer is not None:
+            message = "Remove the current employer when marking someone not working."
+            raise ValueError(message)
+        return self
 
     @property
     def wages(self) -> Decimal:

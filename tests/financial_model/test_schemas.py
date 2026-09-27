@@ -160,3 +160,45 @@ def test_option_award_round_trip_and_input_digest(scenario: Scenario) -> None:
     updated = Scenario.model_validate(data)
     assert updated.digest() != original_digest
     assert Scenario.model_validate_json(updated.model_dump_json()) == updated
+
+
+def test_employer_metadata_keeps_existing_input_digest(scenario: Scenario) -> None:
+    # Captured before employer fields were added, not recomputed by this test.
+    original = "aea1b736b8c76c475eca17add57b66f371030d69afc2942b70b0bb21feff615d"
+    assert scenario.digest() == original
+    data = scenario.model_dump(mode="json")
+    assert "employer" not in data["adults"][0]
+    assert "not_working" not in data["adults"][0]
+    data["adults"][0].update(employer="  ", not_working=False)
+    assert Scenario.model_validate(data).digest() == original
+    data["adults"][0]["employer"] = "  Example Co  "
+    updated = Scenario.model_validate(data)
+    assert updated.adults[0].employer == "Example Co"
+    assert updated.digest() != original
+    assert Scenario.model_validate_json(updated.model_dump_json()) == updated
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"employer": "x" * 81},
+        {"employer": 123},
+        {"not_working": 1},
+        {"not_working": True, "employer": "Example"},
+    ],
+)
+def test_employer_metadata_rejects_invalid_values(changes) -> None:
+    with pytest.raises(ValidationError):
+        PersonInputs(name="A", age=32, **changes)
+
+
+def test_not_working_is_explicit_and_does_not_clear_compensation() -> None:
+    missing = PersonInputs(name="A", age=32, cash_pay=0)
+    assert missing.employer is None
+    assert not missing.not_working
+    declared = PersonInputs(
+        name="A", age=32, cash_pay=1000, rsu_vesting=500, not_working=True
+    )
+    assert declared.cash_pay == 1000
+    assert declared.rsu_vesting == 500
+    assert declared.model_dump(mode="json")["not_working"] is True
