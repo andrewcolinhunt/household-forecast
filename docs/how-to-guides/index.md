@@ -13,10 +13,8 @@ and annual net saving from income.
 - **Unsaved changes** identifies edits that are not in the shared database.
   A separate notice identifies results that need recalculation.
 
-Leave **Custom label (optional)** blank for an automatic title such as
-“California · Both working” or “Washington · Andrew only.” The title follows the
-state and explicit employment details. If employment is unknown, it shows only
-the state; pay does not determine who is working.
+Leave **Custom label (optional)** blank to use the state as the heading.
+Employment details appear beneath it, without an extra work-status category.
 
 Enter a label such as “Higher rent” when useful. Labels need not be unique and
 stay as written when inputs change. Clear a label to return to the automatic
@@ -57,9 +55,10 @@ Selectors use compact versions of the same information.
 When titles and context match, the app adds enough differing inputs to distinguish
 the scenarios, such as rent per month or one person's saving goal. Titles stay
 stable when the comparison selection changes. Identical assumptions are marked
-**Same assumptions**. Saved records with identical details include their last
-saved date, with a short record identifier when dates also match. The database
-does not store creation dates. Draft and snapshot labels remain separate. Notes do not count as a change
+**Same assumptions**. Expand **Saved details** to see their last-saved date,
+with a short record identifier when dates also match. Selectors include those
+details to distinguish identical copies. The database does not store creation
+dates. Draft and snapshot labels remain separate. Notes do not count as a change
 to financial assumptions.
 
 **Overview** opens first. It shows monthly cash surplus or shortfall, followed by

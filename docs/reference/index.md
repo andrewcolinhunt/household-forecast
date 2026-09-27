@@ -72,10 +72,10 @@ saving, and neither is inferred from salary. Changes are included in the input
 digest and require a matching calculation snapshot when saved.
 
 `Scenario.name` defaults to an empty string and allows up to 80 characters.
-An empty or whitespace-only label uses a generated display title; the generated
-title is not stored as an input. Existing named documents retain their digests.
-Changing a label follows the same calculation/save process as other inputs.
-Scenario UUIDs identify records regardless of their labels.
+An empty or whitespace-only label uses the state as its display title; the
+display title is not stored as an input. Existing named documents retain their
+digests. Changing a label follows the same calculation/save process as other
+inputs. Scenario UUIDs identify records regardless of their labels.
 
 `financial_model.scenario_display` supplies shared titles, selector labels, and
 HTML. It compares matching headings against variable household assumptions,
