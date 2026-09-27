@@ -105,10 +105,6 @@ def _open_editor(
         st.session_state["editor_epoch"] = st.session_state.get("editor_epoch", 0) + 1
     else:
         inputs = record.inputs if record else None
-        if inputs and duplicate:
-            inputs = Scenario.model_validate(
-                inputs.model_dump() | {"name": inputs.name[:73] + " (copy)"}
-            )
         _set_editor(inputs, None if duplicate else record)
     st.switch_page(str(EDITOR_PAGE))
 
@@ -334,12 +330,13 @@ def _form(dsn: str | None) -> None:
     data = st.session_state["draft_data"]
     with st.container():
         name = st.text_input(
-            "Scenario name",
-            value=data.get("name", "New scenario"),
+            "Custom label (optional)",
+            value=data.get("name", ""),
             max_chars=80,
             key=_key("name"),
-            help="Use a short description, such as Both working or Higher rent. "
-            "State and employers appear separately.",
+            placeholder="Automatic title",
+            help="Leave blank for a title based on state and who is working. "
+            "Use a label such as Higher rent if useful. Labels do not need to be unique.",
         )
         left, right = st.columns(2)
         year = left.selectbox(
@@ -422,8 +419,6 @@ def _form(dsn: str | None) -> None:
 def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> None:
     """Keep results and their inputs together through validation and failed saves."""
     loaded = st.session_state.get("loaded_record")
-    if action == "copy" and loaded and data["name"] == loaded.inputs.name:
-        data["name"] = data["name"][:73] + " (copy)"
     try:
         inputs = _parse_inputs(data, ages)
     except (ValidationError, ValueError) as error:
@@ -513,16 +508,29 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
     }
 
 
+def _document_display(
+    document: SavedScenario, status: str | None = None
+) -> ScenarioDisplay:
+    """Distinguish the current result or deletion target from other saved records."""
+    others = tuple(
+        record
+        for record in st.session_state.get("records", ())
+        if record.id != document.id
+    )
+    return scenario_displays((*others, document), (None,) * len(others) + (status,))[-1]
+
+
 def _results(document: SavedScenario) -> None:
     """Display the last calculated or loaded document, never unsubmitted edits."""
     result = document.result
     st.subheader("Results")
-    st.html(ScenarioDisplay(document.inputs, "Last calculated inputs").html())
+    display = _document_display(document, "Last calculated inputs")
+    st.html(display.html())
     if not _current(result):
         st.warning(
             "Saved results use older calculation rules. Select Calculate to update this draft."
         )
-    displays = scenario_displays((document,))
+    displays = (display,)
     _cash_shortfalls((document,), displays)
     _financial_views((document,), displays)
     with st.container(horizontal=True):
@@ -842,7 +850,7 @@ def editor_page() -> None:
 @st.dialog("Delete scenario?", dismissible=False)
 def _confirm_delete(record: SavedScenario) -> None:
     """Require confirmation of a specific saved revision before deleting it."""
-    st.html(ScenarioDisplay(record.inputs).html())
+    st.html(_document_display(record).html())
     st.caption(
         "This removes the scenario for both of you, including its draft in this session. It cannot be undone."
     )
@@ -947,7 +955,7 @@ def scenarios_page() -> None:
     if drafts:
         with st.expander("Unsaved drafts"):
             for draft in drafts:
-                label = draft["draft_data"].get("name", "New scenario")
+                label = draft["draft_data"].get("name") or "New scenario"
                 try:
                     inputs = _parse_inputs(draft["draft_data"], draft["draft_ages"])
                     label = ScenarioDisplay(inputs, "Unsaved draft").label

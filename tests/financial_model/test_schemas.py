@@ -202,3 +202,13 @@ def test_not_working_is_explicit_and_does_not_clear_compensation() -> None:
     assert declared.cash_pay == 1000
     assert declared.rsu_vesting == 500
     assert declared.model_dump(mode="json")["not_working"] is True
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+def test_scenario_name_can_be_blank(scenario: Scenario, name: str) -> None:
+    inputs = Scenario.model_validate(scenario.model_dump() | {"name": name})
+    assert inputs.name == ""
+    assert Scenario.model_validate_json(inputs.model_dump_json()) == inputs
+    missing = scenario.model_dump()
+    del missing["name"]
+    assert Scenario.model_validate(missing).name == ""

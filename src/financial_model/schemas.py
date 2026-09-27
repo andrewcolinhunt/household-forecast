@@ -175,7 +175,7 @@ class LivingCosts(ValueModel):
 class Scenario(ValueModel):
     """Complete inputs for the supported full-year, joint-filing household."""
 
-    name: Annotated[str, Field(min_length=1, max_length=80)]
+    name: Annotated[str, Field(max_length=80)] = ""
     tax_year: Year
     state: State
     adults: tuple[PersonInputs, PersonInputs]

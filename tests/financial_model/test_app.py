@@ -169,7 +169,7 @@ def test_main_duplicate_gets_new_identity(
     records = list_scenarios(database_url)
     assert len(records) == 2
     assert any(
-        record.id != original.id and record.inputs.name.endswith(" (copy)")
+        record.id != original.id and record.inputs.name == original.inputs.name
         for record in records
     )
     assert load_scenario(database_url, original.id) == original
@@ -600,7 +600,7 @@ def test_employer_metadata_survives_navigation_save_reload_and_copy(
     assert not any("Unsaved changes" in c.value for c in second.caption)
     second.switch_page("src/financial_model/pages/scenarios.py").run()
     press(second, "Duplicate")
-    assert widget(second, "text_input", "name_").value == "Synthetic baseline (copy)"
+    assert widget(second, "text_input", "name_").value == "Synthetic baseline"
     assert widget(second, "text_input", "adult_0_employer").value == "Example & Co"
     press(second, "Save")
     assert len(list_scenarios(database_url)) == 2
@@ -660,3 +660,48 @@ def test_not_working_can_be_cleared_and_employer_reentered(scenario: Scenario) -
     assert not adult.not_working
     assert adult.employer == "New employer"
     assert page.session_state["document"].inputs.name == scenario.name
+
+
+@pytest.mark.integration
+def test_automatic_title_save_copy_compare_and_clear_label(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    data = scenario.model_dump(mode="json")
+    data["name"] = ""
+    data["adults"][0]["employer"] = "Acme"
+    data["adults"][1]["employer"] = "Example"
+    page = editor(Scenario.model_validate(data))
+    assert widget(page, "text_input", "name_").label == "Custom label (optional)"
+    press(page, "Save")
+    original = list_scenarios(database_url)[0]
+    assert original.inputs.name == ""
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    html = "\n".join(e.proto.body for e in page.get("html"))
+    assert '<h3 class="fm-scenario-name">California · Both working</h3>' in html
+    press(page, "Duplicate")
+    assert widget(page, "text_input", "name_").value == ""
+    widget(page, "number_input", "living_rent").set_value(4000.0)
+    press(page, "Save")
+    assert len(list_scenarios(database_url)) == 2
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert "Rent: $4,000/mo" in page.multiselect[0].options[0]
+    assert "Rent: $0/mo" in page.multiselect[0].options[1]
+    selected = page.multiselect[0].value
+    page.switch_page("src/financial_model/pages/editor.py").run()
+    widget(page, "text_input", "name_").set_value("Higher rent")
+    press(page, "Save")
+    widget(page, "selectbox", "state_").select("WA").run()
+    press(page, "Calculate")
+    assert page.session_state["document"].inputs.name == "Higher rent"
+    widget(page, "text_input", "name_").set_value("").run()
+    press(page, "Save")
+    html = "\n".join(e.proto.body for e in page.get("html"))
+    assert "Washington · Both working" in html
+    press(page, "Save as new scenario")
+    assert len(list_scenarios(database_url)) == 3
+    assert page.session_state["document"].inputs.name == ""
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert page.multiselect[0].value == selected
+    assert any("Same assumptions" in option for option in page.multiselect[0].options)
+    assert load_scenario(database_url, original.id) == original

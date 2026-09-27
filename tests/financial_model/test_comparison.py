@@ -356,8 +356,7 @@ def test_identical_values_show_no_change_and_escape_duplicate_names(
     assert "<img" not in html
     assert "No change" in html
     assert "+$0" not in html
-    for index in range(4):
-        assert (
-            f'{escape(name)}<span class="fm-scenario-duplicate"> ({index + 1})</span>'
-            in html
-        )
+    assert f'<span class="fm-scenario-name">{escape(name)}</span>' in html
+    assert "Same assumptions" in html
+    assert "Saved " in html
+    assert "fm-scenario-duplicate" not in html
