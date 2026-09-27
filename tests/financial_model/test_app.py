@@ -16,6 +16,7 @@ from financial_model.storage import (
     delete_scenario,
     list_scenarios,
     load_scenario,
+    update_scenario,
 )
 
 ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
@@ -198,6 +199,59 @@ def test_main_two_sessions_conflict_keeps_draft(
     assert not second.success
     press(second, "Save as new scenario")
     assert len(list_scenarios(database_url)) == 2
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("edit", [None, "employer", "invalid"])
+def test_reopening_updated_scenario_refreshes_only_unchanged_drafts(
+    scenario: Scenario,
+    database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    edit: str | None,
+) -> None:
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    saved = create_scenario(
+        database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    )
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    press(page, "Edit")
+    if edit == "employer":
+        widget(page, "text_input", "adult_0_employer").set_value("New employer").run()
+    elif edit == "invalid":
+        widget(page, "text_input", "children_").set_value("not an age").run()
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    inputs = Scenario.model_validate(scenario.model_dump() | {"name": "New label"})
+    latest = update_scenario(
+        database_url,
+        SavedScenario(
+            id=saved.id,
+            revision=saved.revision,
+            inputs=inputs,
+            result=evaluate_scenario(inputs),
+        ),
+    )
+    press(page, "Edit")
+    if edit is not None:
+        assert page.session_state["loaded_record"] == saved
+        key = "adult_0_employer" if edit == "employer" else "children_"
+        value = "New employer" if edit == "employer" else "not an age"
+        assert widget(page, "text_input", key).value == value
+        page.run()
+        assert any("newer saved version" in item.value for item in page.warning)
+        assert load_scenario(database_url, saved.id) == latest
+    else:
+        assert widget(page, "text_input", "name_").value == "New label"
+        assert page.session_state["loaded_record"] == latest
+        widget(page, "text_input", "adult_0_employer").set_value("New employer")
+        press(page, "Save")
+        assert not page.warning
+        updated = load_scenario(database_url, saved.id)
+        assert updated.inputs.name == "New label"
+        assert updated.inputs.adults[0].employer == "New employer"
+        page.switch_page("src/financial_model/pages/scenarios.py").run()
+        assert "Adult A: New employer" in "\n".join(
+            e.proto.body for e in page.get("html")
+        )
 
 
 @pytest.mark.integration

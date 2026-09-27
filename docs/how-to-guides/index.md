@@ -32,6 +32,10 @@ Edits stay in your browser session when you switch pages or open another
 scenario. Use a scenario's **Edit** button or the **Unsaved drafts** section to
 return. Save before closing the browser.
 
+Reopening a scenario loads a newer saved version when you have no unsaved edits.
+If you do have edits, the editor keeps them and shows a warning about the newer
+saved version.
+
 If another person has changed or deleted a scenario, your save cannot overwrite
 that change. Keep your version with **Save as new scenario**, or use
 **Reload saved version → Discard edits and reload** when a saved version still

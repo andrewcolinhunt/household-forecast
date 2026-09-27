@@ -99,8 +99,21 @@ def _open_editor(
     record: SavedScenario | None = None, *, duplicate: bool = False
 ) -> None:
     """Open a saved scenario's existing draft or start a distinct new draft."""
-    cached = st.session_state.get("drafts", {}).get(str(record.id)) if record else None
-    if cached and not duplicate:
+    cached = (
+        st.session_state.get("drafts", {}).get(str(record.id))
+        if record and not duplicate
+        else None
+    )
+    if cached and record and cached["loaded_record"].revision != record.revision:
+        try:
+            if (
+                _parse_inputs(cached["draft_data"], cached["draft_ages"])
+                == cached["loaded_record"].inputs
+            ):
+                cached = None
+        except ValueError:
+            pass  # Invalid edits must survive updates to the saved scenario too.
+    if cached:
         st.session_state.update(cached)
         st.session_state["editor_epoch"] = st.session_state.get("editor_epoch", 0) + 1
     else:
@@ -808,7 +821,7 @@ def editor_page() -> None:
     st.title(
         "Edit scenario" if st.session_state.get("loaded_record") else "New scenario"
     )
-    status = st.empty()
+    status = st.container()
     inputs, preview = st.columns([2, 1], gap="large")
     with inputs:
         _form(_database_url())
@@ -834,7 +847,13 @@ def editor_page() -> None:
                     _set_editor(latest.inputs, latest)
                     st.rerun()
     unsaved, stale = _draft_status()
-    status.caption("Unsaved changes" if unsaved else "Saved")
+    with status:
+        st.caption("Unsaved changes" if unsaved else "Saved")
+        if loaded and latest and loaded.revision != latest.revision:
+            st.warning(
+                "This scenario has a newer saved version. Save your edits as a new "
+                "scenario, or reload the saved version."
+            )
     with preview:
         document = st.session_state.get("document")
         if document:
