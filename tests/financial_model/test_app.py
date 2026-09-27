@@ -84,8 +84,9 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
         "Saving & equity",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
-    assert "Synthetic baseline (1)" in rendered
-    assert "Synthetic baseline (2)" in rendered
+    assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
+    assert '<span class="fm-scenario-status">Last calculated draft</span>' in rendered
+    assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
     assert "+$20,000</span>" in rendered
     assert "+$1,667</span>" in rendered
     assert "Cash surplus / shortfall" in rendered
@@ -473,7 +474,8 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
     page.toggle(key="comparison_show_differences").set_value(True).run()
     page.selectbox(key="comparison_reference").select(ids[-1]).run()
     rendered = "\n".join(element.proto.body for element in page.get("html"))
-    assert f'Option {count - 1}<span class="fm-reference">Reference</span>' in rendered
+    assert f'<span class="fm-scenario-name">Option {count - 1}</span>' in rendered
+    assert '<span class="fm-reference">Reference</span>' in rendered
     page.toggle(key="comparison_show_differences").set_value(False).run()
     assert not page.selectbox
     assert 'class="fm-delta"' not in "\n".join(e.proto.body for e in page.get("html"))
@@ -557,3 +559,104 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
     assert any("cash shortfall" in warning.value for warning in page.warning)
+
+
+@pytest.mark.integration
+def test_employer_metadata_survives_navigation_save_reload_and_copy(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financial_model.storage import import_backup
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    baseline = evaluate_scenario(scenario)
+    page = editor(scenario)
+    widget(page, "text_input", "adult_0_employer").set_value("  Example & Co  ").run()
+    widget(page, "checkbox", "adult_1_not_working").check().run()
+    assert widget(page, "text_input", "adult_1_employer").disabled
+    for target in ("scenarios", "editor"):
+        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+    assert (
+        widget(page, "text_input", "adult_0_employer").value.strip() == "Example & Co"
+    )
+    assert widget(page, "checkbox", "adult_1_not_working").value
+    press(page, "Save")
+    saved = list_scenarios(database_url)[0]
+    assert saved.inputs.adults[0].employer == "Example & Co"
+    assert saved.inputs.adults[1].not_working
+    assert saved.inputs.adults[1].employer is None
+    ignored = {"input_digest", "calculated_at"}
+    assert saved.result.model_dump(exclude=ignored) == baseline.model_dump(
+        exclude=ignored
+    )
+    assert import_backup(saved.model_dump_json().encode()) == saved.inputs
+    second = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    rendered = "\n".join(e.proto.body for e in second.get("html"))
+    assert "Adult A: Example &amp; Co" in rendered
+    assert "Adult B: Not working" in rendered
+    assert '<h3 class="fm-scenario-name">Synthetic baseline</h3>' in rendered
+    press(second, "Edit")
+    assert widget(second, "text_input", "adult_0_employer").value == "Example & Co"
+    assert widget(second, "checkbox", "adult_1_not_working").value
+    assert not any("Unsaved changes" in c.value for c in second.caption)
+    second.switch_page("src/financial_model/pages/scenarios.py").run()
+    press(second, "Duplicate")
+    assert widget(second, "text_input", "name_").value == "Synthetic baseline (copy)"
+    assert widget(second, "text_input", "adult_0_employer").value == "Example & Co"
+    press(second, "Save")
+    assert len(list_scenarios(database_url)) == 2
+    assert load_scenario(database_url, saved.id) == saved
+
+
+def test_employer_changes_refresh_labels_without_changing_selection_or_reference(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = []
+    for employer in ("Acme", "Example"):
+        data = scenario.model_dump(mode="json")
+        data["adults"][0]["employer"] = employer
+        inputs = Scenario.model_validate(data)
+        records.append(SavedScenario(inputs=inputs, result=evaluate_scenario(inputs)))
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: tuple(records))
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    ids = [str(record.id) for record in records]
+    assert page.multiselect[0].value == ids
+    assert "Acme" in page.multiselect[0].options[0]
+    assert "Example" in page.multiselect[0].options[1]
+    page.toggle(key="comparison_show_differences").set_value(True).run()
+    page.selectbox(key="comparison_reference").select(ids[1]).run()
+    data = records[1].inputs.model_dump(mode="json")
+    data["adults"][0]["employer"] = "New employer"
+    changed = Scenario.model_validate(data)
+    records[1] = records[1].model_copy(
+        update={"inputs": changed, "result": evaluate_scenario(changed)}
+    )
+    page.run()
+    assert not page.exception
+    assert page.multiselect[0].value == ids
+    assert page.selectbox(key="comparison_reference").value == ids[1]
+    assert "New employer" in page.multiselect[0].options[1]
+    rendered = "\n".join(e.proto.body for e in page.get("html"))
+    assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
+    assert "Adult A: New employer" in rendered
+    assert 'class="fm-scenario-duplicate"' not in rendered
+
+
+def test_not_working_can_be_cleared_and_employer_reentered(scenario: Scenario) -> None:
+    data = scenario.model_dump(mode="json")
+    data["adults"][0]["employer"] = "Initial employer"
+    page = editor(Scenario.model_validate(data))
+    widget(page, "checkbox", "adult_0_not_working").check().run()
+    press(page, "Calculate")
+    adult = page.session_state["document"].inputs.adults[0]
+    assert adult.not_working
+    assert adult.employer is None
+    assert adult.cash_pay == 100000
+    widget(page, "checkbox", "adult_0_not_working").uncheck().run()
+    widget(page, "text_input", "adult_0_employer").set_value("New employer").run()
+    press(page, "Calculate")
+    adult = page.session_state["document"].inputs.adults[0]
+    assert not adult.not_working
+    assert adult.employer == "New employer"
+    assert page.session_state["document"].inputs.name == scenario.name

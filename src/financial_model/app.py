@@ -17,9 +17,13 @@ from financial_model.comparison import (
     compensation_html,
     overview_html,
     saving_html,
-    scenario_names,
 )
 from financial_model.model import evaluate_scenario
+from financial_model.scenario_display import (
+    STATE_NAMES,
+    ScenarioDisplay,
+    scenario_displays,
+)
 from financial_model.schemas import (
     MODEL_REVISION,
     SavedScenario,
@@ -137,6 +141,21 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
     name = st.text_input(
         "Name", value=data.get("name", f"Adult {index + 1}"), key=_key(f"{prefix}_name")
     )
+    not_working = st.checkbox(
+        "Not working in this scenario",
+        value=data.get("not_working", False),
+        key=_key(f"{prefix}_not_working"),
+        help="Does not change compensation amounts. Set those separately below.",
+    )
+    employer = st.text_input(
+        "Employer",
+        value=data.get("employer") or "",
+        max_chars=80,
+        disabled=not_working,
+        placeholder="Employer name",
+        key=_key(f"{prefix}_employer"),
+        help="Use a short name for scenario headings. Leave blank if unknown.",
+    )
     age = st.number_input(
         "Age at year end",
         min_value=18,
@@ -187,6 +206,8 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
     )
     return {
         "name": name,
+        "employer": None if not_working else employer.strip() or None,
+        "not_working": not_working,
         "age": age,
         **amounts,
         **rates,
@@ -313,7 +334,12 @@ def _form(dsn: str | None) -> None:
     data = st.session_state["draft_data"]
     with st.container():
         name = st.text_input(
-            "Scenario name", value=data.get("name", "New scenario"), key=_key("name")
+            "Scenario name",
+            value=data.get("name", "New scenario"),
+            max_chars=80,
+            key=_key("name"),
+            help="Use a short description, such as Both working or Higher rent. "
+            "State and employers appear separately.",
         )
         left, right = st.columns(2)
         year = left.selectbox(
@@ -327,6 +353,7 @@ def _form(dsn: str | None) -> None:
             ["WA", "CA"],
             index=["WA", "CA"].index(data.get("state", "WA")),
             key=_key("state"),
+            format_func=STATE_NAMES.__getitem__,
         )
         ages = st.text_input(
             "Qualifying children's ages",
@@ -490,16 +517,14 @@ def _results(document: SavedScenario) -> None:
     """Display the last calculated or loaded document, never unsubmitted edits."""
     result = document.result
     st.subheader("Results")
-    st.caption(
-        f"{document.inputs.name} · {result.state} · {result.tax_year} · Last calculated inputs"
-    )
+    st.html(ScenarioDisplay(document.inputs, "Last calculated inputs").html())
     if not _current(result):
         st.warning(
             "Saved results use older calculation rules. Select Calculate to update this draft."
         )
-    names = (document.inputs.name,)
-    _cash_shortfalls((document,), names)
-    _financial_views((document,), names)
+    displays = scenario_displays((document,))
+    _cash_shortfalls((document,), displays)
+    _financial_views((document,), displays)
     with st.container(horizontal=True):
         if st.button("Compare results", disabled=not _current(result)):
             st.session_state["pending_comparison"] = next(
@@ -570,18 +595,17 @@ def compare_page() -> None:
         choices["draft"] = document
     if snapshot := st.session_state.get("session_snapshot"):
         choices["snapshot"] = snapshot
-    names = dict(zip(choices, scenario_names(tuple(choices.values())), strict=True))
-    names = {
-        key: name
-        + (
-            " (last calculated draft)"
-            if key == "draft"
-            else " (kept snapshot)"
-            if key == "snapshot"
-            else ""
+    status_labels = {"draft": "Last calculated draft", "snapshot": "Kept snapshot"}
+    displays = dict(
+        zip(
+            choices,
+            scenario_displays(
+                tuple(choices.values()),
+                tuple(status_labels.get(key) for key in choices),
+            ),
+            strict=True,
         )
-        for key, name in names.items()
-    }
+    )
     selected = [
         key
         for key in st.session_state.get("comparison_selection", list(choices)[:2])
@@ -592,7 +616,7 @@ def compare_page() -> None:
         if len(selected) < 4:
             selected.append(pending)
         else:
-            st.info(f"Remove one scenario to include {names[pending]}.")
+            st.info(f"Remove one scenario to include {displays[pending].label}.")
     st.session_state["comparison_selection"] = selected
     selected = st.multiselect(
         "Scenarios",
@@ -600,7 +624,7 @@ def compare_page() -> None:
         key="comparison_selection",
         max_selections=4,
         placeholder="Choose two to four scenarios",
-        format_func=names.__getitem__,
+        format_func=lambda key: displays[key].label,
         help="Choose up to four. Removing a name here only removes it from this comparison.",
     )
     if len(selected) < 2:
@@ -613,12 +637,14 @@ def compare_page() -> None:
     _comparison(
         tuple(choices[key] for key in selected),
         selected,
-        tuple(names[key] for key in selected),
+        tuple(displays[key] for key in selected),
     )
 
 
 def _comparison(
-    documents: tuple[SavedScenario, ...], selected: list[str], names: tuple[str, ...]
+    documents: tuple[SavedScenario, ...],
+    selected: list[str],
+    displays: tuple[ScenarioDisplay, ...],
 ) -> None:
     """Render the approved views only for comparable calculation snapshots."""
     if len({record.inputs.tax_year for record in documents}) != 1:
@@ -631,30 +657,29 @@ def _comparison(
             "Recalculate and save scenarios with the current rules before comparing them."
         )
         return
-    _cash_shortfalls(documents, names)
-    _financial_views(documents, names, selected)
+    _cash_shortfalls(documents, displays)
+    _financial_views(documents, displays, selected)
 
 
 def _cash_shortfalls(
-    documents: tuple[SavedScenario, ...], names: tuple[str, ...]
+    documents: tuple[SavedScenario, ...], displays: tuple[ScenarioDisplay, ...]
 ) -> None:
     """Keep unfunded cash needs visible even when retained equity is substantial."""
-    for document, name in zip(documents, names, strict=True):
+    for document, display in zip(documents, displays, strict=True):
         if document.result.annual_remaining_cash < 0:
             st.warning(
-                f"{name}: ${-document.result.monthly_remaining_cash:,.0f}/month cash shortfall. "
+                f"{display.label}: ${-document.result.monthly_remaining_cash:,.0f}/month cash shortfall. "
                 "Planned saving is not reduced and no extra shares are sold automatically."
             )
 
 
 def _financial_views(
     documents: tuple[SavedScenario, ...],
-    names: tuple[str, ...],
+    displays: tuple[ScenarioDisplay, ...],
     selected: list[str] | None = None,
 ) -> None:
     """Use the same definitions for an individual result and all comparisons."""
-    st.html(Path(__file__).with_name("comparison.css"))
-    reference = _comparison_reference(selected, names) if selected else None
+    reference = _comparison_reference(selected, displays) if selected else None
     tabs = st.tabs(["Overview", "Cash flow", "Compensation", "Saving & equity"])
     for tab, render in zip(
         tabs,
@@ -662,10 +687,12 @@ def _financial_views(
         strict=True,
     ):
         with tab:
-            st.html(render(documents, names, reference))
+            st.html(render(documents, displays, reference))
 
 
-def _comparison_reference(selected: list[str], names: tuple[str, ...]) -> int | None:
+def _comparison_reference(
+    selected: list[str], displays: tuple[ScenarioDisplay, ...]
+) -> int | None:
     """Keep the reference choice when differences are hidden or pages change."""
     if st.session_state.get("comparison_reference") not in selected:
         st.session_state["comparison_reference"] = selected[0]
@@ -678,7 +705,9 @@ def _comparison_reference(selected: list[str], names: tuple[str, ...]) -> int | 
     )
     if not enabled:
         return None
-    reference_names = dict(zip(selected, names, strict=True))
+    reference_names = dict(
+        zip(selected, (display.label for display in displays), strict=True)
+    )
     reference = selector.selectbox(
         "Reference scenario",
         selected,
@@ -813,7 +842,7 @@ def editor_page() -> None:
 @st.dialog("Delete scenario?", dismissible=False)
 def _confirm_delete(record: SavedScenario) -> None:
     """Require confirmation of a specific saved revision before deleting it."""
-    st.write(record.inputs.name)
+    st.html(ScenarioDisplay(record.inputs).html())
     st.caption(
         "This removes the scenario for both of you, including its draft in this session. It cannot be undone."
     )
@@ -863,12 +892,11 @@ def _forget_scenario(record: SavedScenario) -> None:
         st.session_state.pop("comparison_reference", None)
 
 
-def _scenario_card(record: SavedScenario) -> None:
+def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
     """Show a saved scenario's outcomes and its edit, copy, and delete actions."""
     with st.container(border=True):
         name, cash, assets = st.columns([2, 1, 1], vertical_alignment="center")
-        name.subheader(record.inputs.name)
-        name.caption(f"{record.inputs.state} · {record.inputs.tax_year}")
+        name.html(f'<div class="fm-scenario-card">{display.html(heading=True)}</div>')
         remaining = record.result.monthly_remaining_cash
         cash.metric(
             "Monthly cash shortfall" if remaining < 0 else "Monthly cash surplus",
@@ -909,8 +937,8 @@ def scenarios_page() -> None:
     records = st.session_state["records"]
     if not records:
         st.info("No saved scenarios yet. Create one to get started.")
-    for record in records:
-        _scenario_card(record)
+    for record, display in zip(records, scenario_displays(records), strict=True):
+        _scenario_card(record, display)
     drafts = [
         draft
         for draft in st.session_state.get("drafts", {}).values()
@@ -920,6 +948,11 @@ def scenarios_page() -> None:
         with st.expander("Unsaved drafts"):
             for draft in drafts:
                 label = draft["draft_data"].get("name", "New scenario")
+                try:
+                    inputs = _parse_inputs(draft["draft_data"], draft["draft_ages"])
+                    label = ScenarioDisplay(inputs, "Unsaved draft").label
+                except ValueError:
+                    pass  # An incomplete draft still needs an entry point.
                 if st.button(label, key=f"resume_{draft['draft_id']}"):
                     st.session_state.update(draft)
                     st.session_state["editor_epoch"] = (
@@ -977,4 +1010,5 @@ def main() -> None:
     ):
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
+    st.html(Path(__file__).with_name("comparison.css"))
     page.run()

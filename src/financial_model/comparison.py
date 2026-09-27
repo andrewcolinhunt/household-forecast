@@ -9,6 +9,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from html import escape
 from typing import Literal
 
+from financial_model.scenario_display import ScenarioDisplay, scenario_displays
 from financial_model.schemas import PersonInputs, SavedScenario
 
 NumberFormat = Literal["money", "number", "price"]
@@ -38,15 +39,6 @@ def _number(value: Decimal, format: NumberFormat = "money") -> str:
     return f"{sign}{'' if format == 'number' else '$'}{amount}"
 
 
-def scenario_names(documents: tuple[SavedScenario, ...]) -> tuple[str, ...]:
-    """Distinguish repeated names using their positions in the comparison."""
-    names = tuple(document.inputs.name for document in documents)
-    return tuple(
-        f"{name} ({index + 1})" if names.count(name) > 1 else name
-        for index, name in enumerate(names)
-    )
-
-
 def _cell(row: _Row, index: int, reference: int | None) -> str:
     """Add neutral differences only for pairs of known numeric amounts."""
     value = row.values[index]
@@ -72,7 +64,7 @@ def _cell(row: _Row, index: int, reference: int | None) -> str:
 
 
 def _table(
-    names: tuple[str, ...],
+    displays: tuple[ScenarioDisplay, ...],
     groups: dict[str, list[_Row]],
     reference: int | None,
     caption: str,
@@ -83,24 +75,26 @@ def _table(
         if group:
             rows.append(
                 f'<tr class="fm-group"><th scope="row">{escape(group)}</th>'
-                f'<td colspan="{len(names)}"></td></tr>'
+                f'<td colspan="{len(displays)}"></td></tr>'
             )
         for row in values:
             kind = ' class="fm-total"' if row.total else ""
             rows.append(
                 f'<tr{kind}><th scope="row">{escape(row.label)}</th>'
-                + "".join(_cell(row, index, reference) for index in range(len(names)))
+                + "".join(
+                    _cell(row, index, reference) for index in range(len(displays))
+                )
                 + "</tr>"
             )
     headings = "".join(
-        f'<th scope="col">{escape(name)}'
+        f'<th scope="col">{display.html()}'
         + ('<span class="fm-reference">Reference</span>' if index == reference else "")
         + "</th>"
-        for index, name in enumerate(names)
+        for index, display in enumerate(displays)
     )
     return (
         f'<div class="fm-table-scroll" tabindex="0" role="region" aria-label="{escape(caption)}">'
-        f'<table class="fm-table" style="min-width:{240 + 160 * len(names)}px">'
+        f'<table class="fm-table" style="min-width:{240 + 160 * len(displays)}px">'
         f"<caption>{escape(caption)}</caption>"
         f'<thead><tr><th scope="col">Amount</th>{headings}</tr></thead>'
         f"<tbody>{''.join(rows)}</tbody></table></div>"
@@ -118,7 +112,7 @@ def _definitions(items: dict[str, str]) -> str:
 
 def overview_html(
     documents: tuple[SavedScenario, ...],
-    names: tuple[str, ...] | None = None,
+    displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
 ) -> str:
     """Summarize monthly cash and annual saving without combining their units."""
@@ -158,7 +152,7 @@ def overview_html(
         '<div class="fm-comparison"><h3>Overview</h3>'
         '<p class="fm-note">Cash remaining each month and amounts added to assets each year.</p>'
         + _table(
-            names or scenario_names(documents),
+            displays or scenario_displays(documents),
             groups,
             reference_index,
             "Monthly cash and annual saving",
@@ -249,11 +243,11 @@ def _option_rows(people: list[PersonInputs | None]) -> list[_Row]:
 
 def compensation_html(
     documents: tuple[SavedScenario, ...],
-    names: tuple[str, ...] | None = None,
+    displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
 ) -> str:
     """Separate annual cash, RSUs, retirement, and uncertain option awards."""
-    names = names or scenario_names(documents)
+    displays = displays or scenario_displays(documents)
     results = [document.result for document in documents]
     groups = {
         "Cash": [_Row("Salary + bonus", [r.gross_cash for r in results])],
@@ -264,7 +258,7 @@ def compensation_html(
     }
     people = _people(documents)
     by_person = _table(
-        names,
+        displays,
         {name: _person_rows(adults) for name, adults in people},
         reference_index,
         "Annual compensation by person",
@@ -278,7 +272,7 @@ def compensation_html(
         '<section class="fm-section"><h3>Options</h3>'
         '<p class="fm-note">Annual vesting at the assumed share value, before tax. A sale may not be possible.</p>'
         + _table(
-            names,
+            displays,
             awards,
             reference_index,
             "Annual option vesting and exercise estimates",
@@ -291,7 +285,7 @@ def compensation_html(
     return (
         '<div class="fm-comparison"><h3>Annual compensation</h3>'
         '<p class="fm-note">Before taxes and your own retirement contributions.</p>'
-        + _table(names, groups, reference_index, "Annual household compensation")
+        + _table(displays, groups, reference_index, "Annual household compensation")
         + f'<details class="fm-breakdown"><summary>By person</summary>{by_person}</details>'
         + options
         + _definitions(
@@ -308,11 +302,11 @@ def compensation_html(
 
 def saving_html(
     documents: tuple[SavedScenario, ...],
-    names: tuple[str, ...] | None = None,
+    displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
 ) -> str:
     """Reconcile annual saving, keeping option purchases and gains distinct."""
-    names = names or scenario_names(documents)
+    displays = displays or scenario_displays(documents)
     results = [document.result for document in documents]
     groups = {
         "Cash": [
@@ -353,7 +347,7 @@ def saving_html(
             '<section class="fm-section"><h3>Exercised ISOs</h3>'
             '<p class="fm-note">Cash moved into shares this year. Exercise gains are excluded from net saving above.</p>'
             + _table(
-                names,
+                displays,
                 {
                     "": [
                         _Row("Cash paid to exercise", [r.option_cost for r in results]),
@@ -375,7 +369,7 @@ def saving_html(
     return (
         '<div class="fm-comparison"><h3>Annual saving &amp; equity</h3>'
         '<p class="fm-note">Additions this year. Existing balances and investment growth are excluded.</p>'
-        + _table(names, groups, reference_index, "Annual saving reconciliation")
+        + _table(displays, groups, reference_index, "Annual saving reconciliation")
         + option_detail
         + _definitions(
             {
@@ -412,7 +406,7 @@ def _monthly_groups(document: SavedScenario) -> dict[str, dict[str, Decimal]]:
 
 def cash_flow_html(
     documents: tuple[SavedScenario, ...],
-    names: tuple[str, ...] | None = None,
+    displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
 ) -> str:
     """Show grouped monthly cash reconciliation in one column per scenario."""
@@ -435,7 +429,7 @@ def cash_flow_html(
         '<div class="fm-comparison"><h3>Average monthly cash flow</h3>'
         '<p class="fm-note">Annual amounts ÷ 12. Minus signs show cash going out.</p>'
         + _table(
-            names or scenario_names(documents),
+            displays or scenario_displays(documents),
             groups,
             reference_index,
             "Average monthly cash flow",

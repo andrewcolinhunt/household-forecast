@@ -260,9 +260,13 @@ def test_differences_keep_row_units_reference_and_column_order(
     ):
         html = render(documents, reference_index=reference)
         assert (
-            f'{documents[reference].inputs.name}<span class="fm-reference">Reference</span>'
+            f'<span class="fm-scenario-name">{documents[reference].inputs.name}</span>'
             in html
         )
+        headings = re.findall(r'<th scope="col">(.*?)</th>', html)
+        assert '<span class="fm-reference">Reference</span>' in headings[reference + 1]
+        assert sum('class="fm-reference"' in heading for heading in headings[:5]) == 1
+        assert "California · 2025" in html
         values = cells(html, label)
         assert values[reference] == _number(amounts[reference])
         for index, amount in enumerate(amounts):
@@ -353,4 +357,7 @@ def test_identical_values_show_no_change_and_escape_duplicate_names(
     assert "No change" in html
     assert "+$0" not in html
     for index in range(4):
-        assert f"{escape(name)} ({index + 1})" in html
+        assert (
+            f'{escape(name)}<span class="fm-scenario-duplicate"> ({index + 1})</span>'
+            in html
+        )
