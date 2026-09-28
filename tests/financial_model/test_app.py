@@ -55,6 +55,15 @@ def widget(page: AppTest, kind: str, prefix: str):
     )
 
 
+def select_comparison(page: AppTest, keys: list[str]) -> None:
+    """Choose columns through the checklist in the requested order."""
+    for key in list(page.session_state["comparison_selection"]):
+        page.checkbox(key=f"compare_check_{key}").uncheck().run()
+    for key in keys:
+        page.checkbox(key=f"compare_check_{key}").check().run()
+    assert not page.exception
+
+
 @pytest.fixture(autouse=True)
 def local_preview(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_database_url", lambda: None)
@@ -77,7 +86,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     widget(page, "number_input", "adult_0_cash_pay").set_value(120000.0)
     press(page, "Calculate")
     page.switch_page("src/financial_model/pages/compare.py").run()
-    page.multiselect(key="comparison_selection").set_value(["snapshot", "draft"]).run()
+    select_comparison(page, ["snapshot", "draft"])
     assert not page.exception
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
@@ -127,7 +136,7 @@ def test_main_comparison_rejects_mismatched_snapshots(
         widget(page, "selectbox", "year_").select(2026)
         press(page, "Calculate")
     page.switch_page("src/financial_model/pages/compare.py").run()
-    page.multiselect(key="comparison_selection").set_value(["snapshot", "draft"]).run()
+    select_comparison(page, ["snapshot", "draft"])
     assert not page.exception
     assert not page.tabs
     assert page.info
@@ -388,9 +397,7 @@ def test_compare_saved_scenarios_without_opening_editor(
     )
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     page.switch_page("src/financial_model/pages/compare.py").run()
-    page.multiselect(key="comparison_selection").set_value(
-        [str(first.id), str(second.id)]
-    ).run()
+    select_comparison(page, [str(first.id), str(second.id)])
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
         "Cash overview",
@@ -400,14 +407,14 @@ def test_compare_saved_scenarios_without_opening_editor(
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert page.multiselect(key="comparison_selection").value == [
+    assert page.session_state["comparison_selection"] == [
         str(first.id),
         str(second.id),
     ]
     delete_scenario(database_url, second.id, second.revision)
     page.run()
     assert not page.exception
-    assert page.multiselect(key="comparison_selection").value == [str(first.id)]
+    assert page.session_state["comparison_selection"] == [str(first.id)]
     assert not page.tabs
 
 
@@ -510,7 +517,7 @@ def test_deleted_scenario_cannot_be_saved_back_by_another_session(
     assert list_scenarios(database_url)[0].inputs.adults[0].cash_pay == 140000
 
 
-@pytest.mark.parametrize("count", [3, 4])
+@pytest.mark.parametrize("count", [2, 3, 4])
 def test_compare_multiple_scenarios_retains_selection(
     scenario: Scenario,
     monkeypatch: pytest.MonkeyPatch,
@@ -532,9 +539,10 @@ def test_compare_multiple_scenarios_retains_selection(
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     page.switch_page("src/financial_model/pages/compare.py").run()
     ids = [str(record.id) for record in records[:count]]
-    page.multiselect(key="comparison_selection").set_value(ids).run()
+    select_comparison(page, ids)
     assert not page.exception
-    assert page.multiselect[0].proto.max_selections == 4
+    assert not page.multiselect
+    assert page.checkbox[-1].disabled == (count == 4)
     assert [tab.label for tab in page.tabs] == [
         "Cash overview",
         "Equity overview",
@@ -547,14 +555,75 @@ def test_compare_multiple_scenarios_retains_selection(
     assert f'<span class="fm-scenario-name">Option {count - 1}</span>' in rendered
     assert 'class="fm-reference"' not in rendered
     assert 'class="fm-delta"' not in rendered
+    checklist_order = [checkbox.key for checkbox in page.checkbox]
+    assert page.button(key=f"compare_move_{ids[0]}_-1").disabled
+    assert page.button(key=f"compare_move_{ids[-1]}_1").disabled
+    page.button(key=f"compare_move_{ids[-1]}_-1").click().run()
+    ids[-2], ids[-1] = ids[-1], ids[-2]
+    assert page.session_state["comparison_selection"] == ids
+    for index, key in enumerate(ids, 1):
+        assert f"Column {index}" in page.checkbox(key=f"compare_check_{key}").label
+    tables = [e.proto.body for e in page.get("html") if "<table" in e.proto.body]
+    names = {str(record.id): record.inputs.name for record in records}
+    assert len(tables) == 4
+    for table in tables:
+        positions = [table.index(f">{names[key]}</span>") for key in ids]
+        assert positions == sorted(positions)
+    page.button(key=f"compare_move_{ids[0]}_1").click().run()
+    ids[0], ids[1] = ids[1], ids[0]
+    assert page.session_state["comparison_selection"] == ids
+    assert [checkbox.key for checkbox in page.checkbox] == checklist_order
     for target in ("scenarios", "compare"):
         page.switch_page(f"src/financial_model/pages/{target}.py").run()
-    assert page.multiselect[0].value == ids
+    assert page.session_state["comparison_selection"] == ids
     assert not page.toggle
     assert not page.selectbox
-    page.multiselect[0].set_value(ids[:-1]).run()
-    assert page.multiselect[0].value == ids[:-1]
+    page.checkbox(key=f"compare_check_{ids[-1]}").uncheck().run()
+    assert page.session_state["comparison_selection"] == ids[:-1]
+    assert all(not checkbox.disabled for checkbox in page.checkbox)
+    page.checkbox(key=f"compare_check_{ids[-1]}").check().run()
+    page.checkbox(key=f"compare_check_{ids[0]}").uncheck().run()
+    page.checkbox(key=f"compare_check_{ids[0]}").check().run()
+    assert page.session_state["comparison_selection"] == ids[1:] + ids[:1]
+    assert [checkbox.key for checkbox in page.checkbox] == checklist_order
+    select_comparison(page, [])
+    assert not page.tabs
+    assert any("Select at least two" in info.value for info in page.info)
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert page.session_state["comparison_selection"] == []
+    assert all(not checkbox.value for checkbox in page.checkbox)
     assert len(records) == 5
+
+
+def test_compare_pending_scenario_respects_order_and_limit(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    documents = [
+        SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+        for _ in range(5)
+    ]
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: tuple(documents))
+    page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    ids = [str(document.id) for document in documents]
+    page.session_state["comparison_selection"] = ids[:4][::-1]
+    page.session_state["pending_comparison"] = ids[4]
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert not page.exception
+    assert page.session_state["comparison_selection"] == ids[:4][::-1]
+    assert page.checkbox(key=f"compare_check_{ids[4]}").disabled
+    assert any("Remove one scenario" in info.value for info in page.info)
+    page.checkbox(key=f"compare_check_{ids[1]}").uncheck().run()
+    page.session_state["pending_comparison"] = ids[4]
+    page.run()
+    assert page.session_state["comparison_selection"] == [
+        ids[3],
+        ids[2],
+        ids[0],
+        ids[4],
+    ]
+    assert page.checkbox(key=f"compare_check_{ids[4]}").value
 
 
 def test_compare_results_adds_draft_to_selection(scenario: Scenario) -> None:
@@ -565,7 +634,7 @@ def test_compare_results_adds_draft_to_selection(scenario: Scenario) -> None:
     press(page, "Calculate")
     press(page, "Compare results")
     assert page.title[0].value == "Compare"
-    assert page.multiselect[0].value == ["draft", "snapshot"]
+    assert page.session_state["comparison_selection"] == ["draft", "snapshot"]
     assert page.tabs
 
 
@@ -700,9 +769,9 @@ def test_employer_changes_refresh_labels_without_changing_selection(
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     page.switch_page("src/financial_model/pages/compare.py").run()
     ids = [str(record.id) for record in records]
-    assert page.multiselect[0].value == ids
-    assert "Acme" in page.multiselect[0].options[0]
-    assert "Example" in page.multiselect[0].options[1]
+    assert page.session_state["comparison_selection"] == ids
+    assert "Acme" in page.checkbox[0].label
+    assert "Example" in page.checkbox[1].label
     data = records[1].inputs.model_dump(mode="json")
     data["adults"][0]["employer"] = "New employer"
     changed = Scenario.model_validate(data)
@@ -711,8 +780,8 @@ def test_employer_changes_refresh_labels_without_changing_selection(
     )
     page.run()
     assert not page.exception
-    assert page.multiselect[0].value == ids
-    assert "New employer" in page.multiselect[0].options[1]
+    assert page.session_state["comparison_selection"] == ids
+    assert "New employer" in page.checkbox[1].label
     rendered = "\n".join(e.proto.body for e in page.get("html"))
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
     assert "Adult A: New employer" in rendered
@@ -761,9 +830,9 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     press(page, "Save")
     assert len(list_scenarios(database_url)) == 2
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert "Rent: $4,000/mo" in page.multiselect[0].options[0]
-    assert "Rent: $0/mo" in page.multiselect[0].options[1]
-    selected = page.multiselect[0].value
+    assert "Rent: $4,000/mo" in page.checkbox[0].label
+    assert "Rent: $0/mo" in page.checkbox[1].label
+    selected = page.session_state["comparison_selection"]
     page.switch_page("src/financial_model/pages/editor.py").run()
     widget(page, "text_input", "name_").set_value("Higher rent")
     press(page, "Save")
@@ -778,8 +847,8 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     assert len(list_scenarios(database_url)) == 3
     assert page.session_state["document"].inputs.name == ""
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert page.multiselect[0].value == selected
-    assert any("Same assumptions" in option for option in page.multiselect[0].options)
+    assert page.session_state["comparison_selection"] == selected
+    assert any("Same assumptions" in checkbox.label for checkbox in page.checkbox)
     assert load_scenario(database_url, original.id) == original
 
 

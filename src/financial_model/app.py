@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -888,15 +889,7 @@ def compare_page() -> None:
         else:
             st.info(f"Remove one scenario to include {displays[pending].label}.")
     st.session_state["comparison_selection"] = selected
-    selected = st.multiselect(
-        "Scenarios",
-        list(choices),
-        key="comparison_selection",
-        max_selections=4,
-        placeholder="Choose two to four scenarios",
-        format_func=lambda key: displays[key].label,
-        help="Choose up to four. Removing a name here only removes it from this comparison.",
-    )
+    _comparison_checklist(displays, selected)
     if len(selected) < 2:
         st.info(
             "Select at least two scenarios."
@@ -904,10 +897,88 @@ def compare_page() -> None:
             else "Create or duplicate a scenario to compare two sets of results."
         )
         return
+    _comparison_order(displays, selected)
     _comparison(
         tuple(choices[key] for key in selected),
         tuple(displays[key] for key in selected),
     )
+
+
+def _toggle_comparison(key: str) -> None:
+    """Append newly checked scenarios while retaining the other column positions."""
+    selected = list(st.session_state["comparison_selection"])
+    if st.session_state[f"compare_check_{key}"]:
+        if key not in selected and len(selected) < 4:
+            selected.append(key)
+    elif key in selected:
+        selected.remove(key)
+    st.session_state["comparison_selection"] = selected
+
+
+def _comparison_checklist(
+    displays: dict[str, ScenarioDisplay], selected: list[str]
+) -> None:
+    """Keep every choice visible and in place as column selection changes."""
+    st.subheader("Scenarios")
+    st.caption(
+        "Choose two to four. Check scenarios in the order you want their columns. "
+        "Unchecking only removes a scenario from this comparison."
+    )
+    with st.container(key="comparison_checklist", gap="small"):
+        for key, display in displays.items():
+            title, context = (
+                re.sub(r"([\\`*_{}\[\]()<>#+.!|~-])", r"\\\1", text)
+                for text in (display.title, display.label[len(display.title) + 3 :])
+            )
+            position = f" · Column {selected.index(key) + 1}" if key in selected else ""
+            widget_key = f"compare_check_{key}"
+            st.session_state[widget_key] = key in selected
+            st.checkbox(
+                f"**{title}**{position}  \n{context}",
+                key=widget_key,
+                disabled=len(selected) == 4 and key not in selected,
+                on_change=_toggle_comparison,
+                args=(key,),
+                width="stretch",
+            )
+    if len(selected) == 4:
+        st.caption("Four selected. Uncheck a scenario to choose another.")
+
+
+def _move_comparison(key: str, direction: int) -> None:
+    """Move one column without changing which scenarios are checked."""
+    selected = list(st.session_state["comparison_selection"])
+    index = selected.index(key)
+    destination = index + direction
+    if 0 <= destination < len(selected):
+        selected[index], selected[destination] = selected[destination], selected[index]
+        st.session_state["comparison_selection"] = selected
+
+
+def _comparison_order(
+    displays: dict[str, ScenarioDisplay], selected: list[str]
+) -> None:
+    """Put column movement controls in the same order as the results below."""
+    st.subheader("Column order")
+    for index, column in enumerate(st.columns(len(selected))):
+        key = selected[index]
+        with column:
+            st.caption(f"Column {index + 1}")
+            st.text(displays[key].title)
+            with st.container(horizontal=True):
+                for direction, label, icon in (
+                    (-1, "Move left", ":material/arrow_back:"),
+                    (1, "Move right", ":material/arrow_forward:"),
+                ):
+                    st.button(
+                        label,
+                        icon=icon,
+                        key=f"compare_move_{key}_{direction}",
+                        help=f"{label}: {displays[key].label}",
+                        disabled=not 0 <= index + direction < len(selected),
+                        on_click=_move_comparison,
+                        args=(key, direction),
+                    )
 
 
 def _comparison(
