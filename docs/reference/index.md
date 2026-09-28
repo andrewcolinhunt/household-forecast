@@ -15,6 +15,8 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 | `Scenario` | Optional custom label (`name`), year, state, exactly two adults, children, costs, allocation plan, notes, confirmed household facts |
 | `TaxResult` | Federal/state income tax, employee payroll components, included AMT detail, coverage and engine versions |
 | `ScenarioResult` | Annual asset sources, goal allocations and funding gap, tax result, input digest and calculation provenance |
+| `HouseholdPerson` | Shared name and age defaults, without employment or compensation |
+| `Household` | Family defaults, reference year, qualifying children, filing status, and revision |
 | `Goal` | Shared UUID, editable name, revision |
 | `GoalAllocation` | Goal snapshot, fixed annual cash or `None` for remainder, RSU rate |
 | `AllocationPlan` | Goal rows and retirement/option destinations |
@@ -115,3 +117,9 @@ catalogue. Renames and deletions check revisions; referenced goals cannot be del
 Snapshots retain their original names, while views prefer current catalogue names.
 `resolve_goal_conflicts` applies reviewed import choices and remaps destinations
 by UUID; equal names alone never merge identities.
+
+`load_household` and `save_household` manage the singleton household defaults.
+Revision zero means not yet saved; writes increment the revision and reject stale
+updates. `Household.scenario_defaults()` copies family facts into a new input buffer.
+It does not copy a calculation, confirmation, employment, or allocation plan. Existing
+scenario documents remain independent of later household-default changes.

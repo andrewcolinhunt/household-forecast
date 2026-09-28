@@ -1,5 +1,17 @@
 # Using and Hosting the App
 
+## Household and goals
+
+**Household** holds names and ages for a specified year end, qualifying children's
+ages, and the supported filing status. Save these defaults once. New scenarios copy
+them; existing scenarios, duplicates, imports, and open drafts keep their own facts.
+Changing defaults does not update a saved financial calculation.
+
+**Goals** manages shared purposes. Add, rename, or delete unused goals here. Renaming
+a goal changes its displayed name across the app, without changing allocations or
+financial results. Saved scenario backups retain the names used when saved. A goal
+referenced by a saved scenario or an open draft cannot be deleted from this page.
+
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its title,
@@ -8,8 +20,11 @@ and the monthly funding gap.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
-- Choose **Edit** to open a scenario. **Calculate** updates its preview without
-  saving. **Save** calculates and saves the current inputs and matching results.
+- Choose **Edit** to open a scenario. **Assumptions** contains the year, state,
+  family facts, employment, compensation, and expenses. **Allocations** assigns
+  that scenario's annual assets to goals. **Results** shows its calculated views.
+- **Calculate** opens Results without saving. **Save** calculates and saves the
+  current inputs and matching results, then opens Results.
 - **Unsaved changes** identifies edits that are not in the shared database.
   A separate notice identifies results that need recalculation.
 
@@ -52,9 +67,10 @@ In the editor's **Allocations** section:
    goals. These amounts are calculated from compensation, not entered again.
 4. Choose **Calculate**, review the annual allocations and funding gap, then save.
 
-**Add goal** creates a purpose or adds an existing shared goal to this scenario.
-**Edit goals** renames a goal for the household. Reassign its allocations before
-removing it from a scenario; a goal referenced by saved scenarios cannot be deleted.
+**Add goal to scenario** includes an existing shared goal with zero allocations.
+Use **Manage household goals** to create or rename goals on the Goals page.
+**Remove** removes an unused allocation row only from this scenario. Reassign its
+cash, RSUs, and contribution destinations first, then save the scenario.
 
 Retirement, House, and Available to spend are editable names, not special goal
 types. Available to spend is still held cash; actual spending belongs in living
@@ -160,7 +176,7 @@ An open draft in another session can only be saved as a new scenario.
 
 ## Back up and recover
 
-In the editor's **Backups** section, download the last calculated scenario as
+In the editor's **Results → Backups** section, download the last calculated scenario as
 JSON. To restore it, upload the file under **Backups** in Scenarios or the editor and choose
 **Load backup as new draft**, then calculate and save. Imports are limited to
 1 MB and the supported schema. Keep these files private: they contain household
@@ -205,7 +221,7 @@ JSON backups are also available in the app.
 
 Create a dedicated database, then apply `scripts/schema.sql` using its SQL
 console or a PostgreSQL client. The app never creates or migrates tables on
-startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `scenarios`, `goals`, and `scenario_goals`,
+startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `scenarios`, `goals`, `scenario_goals`, and `household`,
 plus schema usage and database connection rights. Use a separate owner for
 schema changes.
 
