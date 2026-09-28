@@ -14,14 +14,17 @@ import streamlit as st
 from pydantic import ValidationError
 from streamlit.delta_generator import DeltaGenerator
 
+from financial_model.allocations import fund_cash_goals
 from financial_model.comparison import (
     Period,
     _number,
     cash_flow_html,
     cash_surplus,
     equity_html,
+    goal_breakdown_html,
     period_divisor,
     remaining_cash,
+    tax_html,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.scenario_display import (
@@ -222,7 +225,7 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
     for field, label, default in [
         (
             "employer_retirement_rate",
-            "Employer retirement contributions (% of salary and bonus)",
+            "Employer 401(k) contributions (% of salary and bonus)",
             "0",
         ),
     ]:
@@ -395,7 +398,7 @@ def _allocation_inputs(
     st.subheader("Savings goals")
     data = raw or default_allocation_plan().model_dump(mode="json")
     catalogue = {str(g.id): g for g in st.session_state.get("goals", ())}
-    rows = data["rows"]
+    rows = sorted(data["rows"], key=lambda row: row["cash_amount"] is None)
     names = {
         r["goal"]["id"]: catalogue.get(
             r["goal"]["id"], Goal.model_validate(r["goal"])
@@ -418,23 +421,30 @@ def _allocation_inputs(
             )
         )
     ids = list(names)
-    remainder_id = next(r["goal"]["id"] for r in rows if r["cash_amount"] is None)
-    remainder = st.selectbox(
-        "Remaining cash designated for",
-        ids,
-        index=ids.index(remainder_id),
-        format_func=names.__getitem__,
-        key=_key("allocation_remainder"),
+    remainder = next(r["goal"]["id"] for r in rows if r["cash_amount"] is None)
+    names[remainder] = "Spending"
+    st.caption(
+        "Cash goals are funded from top to bottom. Leftover cash is available for spending."
     )
     period_key = unit.lower()
     updated = []
     remove_id = None
+    move_id = None
+    fixed_ids = [r["goal"]["id"] for r in rows if r["cash_amount"] is not None]
     remove_controls = []
     for row in rows:
         goal_id = row["goal"]["id"]
         goal = catalogue.get(goal_id, Goal.model_validate(row["goal"]))
         label, cash, shares, remove = st.columns([2, 1, 1, 1])
-        label.markdown(f"**{goal.name}**")
+        if goal_id == remainder:
+            label.markdown("**Spending**")
+        else:
+            priority = fixed_ids.index(goal_id)
+            label.markdown(f"**{priority + 1}. {goal.name}**")
+            if label.button(
+                "Move up", key=_key(f"priority_up_{goal_id}"), disabled=priority == 0
+            ):
+                move_id = goal_id
         original = Decimal(str(row["cash_amount"] or 0))
         # Changing the unit recreates the widget from exact annual draft values.
         value = cash.number_input(
@@ -446,7 +456,7 @@ def _allocation_inputs(
             key=_key(f"allocation_cash_{goal_id}_{period_key}"),
         )
         if goal_id == remainder:
-            cash.caption("Remaining cash; not a savings deduction")
+            cash.caption("Leftover cash after funding goals")
         rate = shares.number_input(
             "Retained RSU shares (%)",
             min_value=0.0,
@@ -535,6 +545,11 @@ def _allocation_inputs(
     if remove_id:
         updated = [row for row in updated if row["goal"]["id"] != remove_id]
         st.session_state["allocation_structure_changed"] = True
+    updated.sort(key=lambda row: row["cash_amount"] is None)
+    if move_id:
+        index = next(i for i, row in enumerate(updated) if row["goal"]["id"] == move_id)
+        updated[index - 1], updated[index] = updated[index], updated[index - 1]
+        st.session_state["allocation_structure_changed"] = True
     updated_plan = {
         "rows": updated,
         "retirement_goal_id": retirement,
@@ -550,9 +565,11 @@ def _allocation_inputs(
                 "Using last calculated income, taxes, expenses, and option exercises."
             )
             st.metric(
-                f"Remaining cash / {period_label}",
-                _number((result.result.cash_added - plan.fixed_cash) / factor),
-                help="After planned additional savings. A negative amount is a funding shortfall.",
+                f"Spending per {period_label}",
+                _number(
+                    fund_cash_goals(plan, result.result.cash_added).remaining / factor
+                ),
+                help="Cash left after funding goals in priority order, or an expense deficit.",
             )
     return updated_plan
 
@@ -739,7 +756,7 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
         "Taxes funded from vested shares": result.rsu_tax_funding,
         "Income and payroll taxes paid from cash": result.cash_funded_tax,
         "Employee 401(k) contributions": result.employee_401k,
-        "Employer retirement contributions": result.employer_retirement,
+        "Employer 401(k) contributions": result.employer_retirement,
         "Living expenses": result.living_cost,
         "Cash surplus / deficit": cash_surplus(result),
         "Option exercise cost": result.option_cost,
@@ -928,21 +945,20 @@ def _financial_views(
         )
         + " Investment growth and retirement projections are not included."
     )
-    tabs = st.tabs(["Cash overview", "Equity overview"])
-    for tab, render in zip(
-        tabs,
-        (cash_flow_html, equity_html),
-        strict=True,
-    ):
+    goals = st.session_state.get("goals", ())
+    views = {
+        "Cash overview": cash_flow_html(
+            documents, displays, goals=goals, period=period
+        ),
+        "Equity overview": equity_html(documents, displays, goals=goals, period=period),
+        "Tax breakdown": tax_html(documents, displays, period=period),
+        "Goal breakdown": goal_breakdown_html(
+            documents, displays, goals=goals, period=period
+        ),
+    }
+    for tab, html in zip(st.tabs(list(views)), views.values(), strict=True):
         with tab:
-            st.html(
-                render(
-                    documents,
-                    displays,
-                    goals=st.session_state.get("goals", ()),
-                    period=period,
-                )
-            )
+            st.html(html)
     return period
 
 
@@ -968,7 +984,7 @@ def _backups(document: SavedScenario | None) -> None:
                 destinations = None
                 if legacy:
                     ready = st.checkbox(
-                        "Assign old saving, contributions, RSUs and option shares to Retirement; cash remainder to Available to spend"
+                        "Assign old saving, contributions, RSUs and option shares to Retirement; leftover cash to Spending"
                     )
                     destinations = default_allocation_plan()
                 inputs = import_backup(
@@ -1169,9 +1185,9 @@ def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
             help="After taxes, employee 401(k) contributions, and living expenses. Before additional savings and option exercises.",
         )
         balance.metric(
-            "Remaining cash / year",
+            "Spending per year",
             _number(remaining_cash(record)),
-            help="After planned additional savings and option exercises. A negative amount is a funding shortfall.",
+            help="Cash left after funding goals in priority order, or an expense deficit.",
         )
         if gap:
             st.caption(

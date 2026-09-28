@@ -11,12 +11,13 @@ Changing defaults does not update a saved financial calculation.
 a goal changes its displayed name across the app, without changing allocations or
 financial results. Saved scenario backups retain the names used when saved. A goal
 referenced by a saved scenario or an open draft cannot be deleted from this page.
+Spending is the automatic cash remainder, separate from editable goals.
 
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its title,
 location, tax year, each person's employer, annual cash surplus or deficit,
-and remaining cash after planned savings and investments.
+and cash available for spending after funding goals.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
@@ -60,26 +61,26 @@ exists. **Refresh** updates the library without replacing your drafts.
 
 In the editor's **Savings goals** section:
 
-1. Choose monthly or annual entry. Enter planned additional savings and choose
-   a destination for remaining cash. The app stores exact annual amounts.
+1. Choose monthly or annual entry and enter planned cash amounts. Use **Move up**
+   to set the funding order. The app stores exact annual amounts and that order.
 2. Designate retained RSU shares for goals, totaling 100% when RSUs are present.
 3. Assign existing 401(k)/employer contributions and exercised option shares to
    goals. These amounts are calculated from compensation, not entered again.
-4. Choose **Calculate**, review Cash overview and Equity overview, then save.
+4. Choose **Calculate**, review the results tabs, then save.
 
 **Add goal to scenario** includes an existing shared goal with zero allocations.
 Use **Manage household goals** to create or rename goals on the Goals page.
 **Remove** removes an unused allocation row only from this scenario. Reassign its
 cash, RSUs, and contribution destinations first, then save the scenario.
 
-Retirement, House, and Available to spend are editable names, not special goal
-types. **Available to spend** identifies the default destination for remaining
-cash. Cash overview displays this residual as a positive balance, without deducting
-it again as savings. Actual spending belongs in living expenses. Designating
-shares for a goal does not sell them, and designating cash does not invest it.
+Cash goals are funded from top to bottom after taxes, employee 401(k)
+contributions, living expenses, and option exercise costs. **Spending**
+always comes last and receives leftover cash. Its destination is not editable.
+Actual spending still belongs in living expenses.
 
-If fixed cash allocations exceed available cash, the remainder is zero and the
-plan shows a funding shortfall. Such scenarios can still be saved and compared.
+If there is not enough cash, later goals are partly funded or unfunded. Their
+planned amounts stay unchanged. Retained shares and 401(k) contributions keep
+their assigned goals; they are not sold or withdrawn to cover cash shortfalls.
 
 ## Compare scenarios
 
@@ -88,7 +89,7 @@ Remove a selection with its × button; this does not delete the saved scenario.
 Selections stay in place when you switch pages. All selected scenarios must use
 the same tax year and current calculation rules.
 
-Choose **Monthly** or **Annual** once for both views. Money amounts
+Choose **Monthly** or **Annual** once for all four views. Money amounts
 and vesting counts use that period; per-share prices and tax
 rates stay unchanged. Monthly values are averages of the modeled year, not a
 paycheck or vesting schedule. The period stays selected when you switch pages.
@@ -112,24 +113,17 @@ to financial assumptions.
 
 **Cash overview** shows salary and bonus, taxes paid from cash, employee 401(k)
 contributions, and living expenses. **Cash surplus / deficit** is the balance
-before additional savings and option exercises. Planned savings by goal and
-option exercise costs are deducted next. **Remaining cash / funding shortfall**
-is positive when cash remains and negative when the plan needs funding.
-The cash destination is shown under **Remaining cash and funding shortfalls**;
-it is not another deduction.
+before option exercises and goal allocations. **Goal allocations** lists every
+goal, including zero amounts. Funded cash is positive; any shortfall appears
+beneath it as a red negative amount.
+**Spending** is the final row: positive cash is available to spend;
+a negative amount means existing expenses and commitments exceed income.
 
-That detail also separates a **cash-flow deficit** (income cannot cover taxes,
-employee contributions, and living expenses) from a **savings and investment
-shortfall** (additional funding needed for planned savings and option purchases).
-No borrowing, reserve withdrawal, or extra share sale is assumed. The model does
-not assign funding priorities or claim that a specific goal absorbs a shortfall.
-
-Below the cash table, **Retirement savings** breaks down the goal receiving
-retirement contributions: employee 401(k), employer contributions, additional
-savings, retained RSU shares, and any option shares at exercise cost. This is a
-breakdown of existing sources, not another cash deduction. The total is planned
-when funding is insufficient. It includes remaining cash if that goal is its
-designated destination.
+**Goal breakdown** shows each goal's cash priority, planned cash, funded cash,
+and shortfall, followed by employee and employer 401(k) contributions, retained
+RSUs, and exercised shares at cost. **Total funded** combines those sources.
+These are annual additions, not account balances or retirement projections.
+Retirement is listed alongside the other goals, and Spending is last.
 
 Health insurance and other deductions not entered separately belong in the
 living-expense budget once. Expense inputs do not reduce taxable wages.
@@ -137,11 +131,12 @@ living-expense budget once. Expense inputs do not reduce taxable wages.
 **Effective tax rate** includes federal/state income taxes and employee payroll
 taxes, divided by salary, bonus, and vested RSUs. It includes taxes funded from
 shares and any modeled ISO exercise tax. It excludes employer contributions and
-option values from the denominator. Zero wages show **N/A**. Expand **Tax
-breakdown** to reconcile total taxes to the portion paid from cash.
+option values from the denominator. Zero wages show **N/A**. Open the **Tax
+breakdown** tab to reconcile total taxes to the portion paid from cash.
 
 **Equity overview** follows RSU value at vesting through taxes funded from
-vested shares to shares retained and their savings goals. **Stock options** shows
+vested shares to shares retained. Its **Goal allocations** section uses the same
+goal names and order as Cash overview, including zero amounts. **Stock options** shows
 vesting counts, per-share prices, share value if exercised, exercise cost, and
 estimated intrinsic value. These award estimates do not enter cash flow or
 funded savings. An unknown estimate stays unknown; a dash means no matching
@@ -149,7 +144,7 @@ person or award. Modeled **Option exercises** appear separately, with shares
 acquired, exercise cost, exercise-date value, and savings goal. Their cost also
 appears in Cash overview once.
 
-The editor uses the same two views. This is a one-year budget, not a retirement
+The editor uses the same four views. This is a one-year budget, not a retirement
 projection. Existing asset balances, investment growth, and future retirement
 needs are not included.
 

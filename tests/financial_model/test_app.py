@@ -84,14 +84,16 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert [tab.label for tab in page.tabs] == [
         "Cash overview",
         "Equity overview",
+        "Tax breakdown",
+        "Goal breakdown",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
     assert '<span class="fm-scenario-status">Last calculated draft</span>' in rendered
     assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
-    assert "$10,000</span>" in rendered
+    assert "$18,333</span>" in rendered
     assert 'class="fm-delta"' not in rendered
-    assert "Planned savings and investments" in rendered
+    assert "Goal allocations" in rendered
     assert "Net additions to assets" not in rendered
     assert "Total allocated to goals" not in rendered
     assert "Effective tax rate" in rendered
@@ -100,7 +102,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     calculated = page.session_state["document"]
     page.radio(key="display_period").set_value("Annual").run()
     rendered = "\n".join(element.proto.body for element in page.get("html"))
-    assert "$120,000</span>" in rendered
+    assert "$220,000</span>" in rendered
     assert "+$1,667</span>" not in rendered
     assert page.session_state["document"] == calculated
     page.switch_page("src/financial_model/pages/household.py").run()
@@ -393,6 +395,8 @@ def test_compare_saved_scenarios_without_opening_editor(
     assert [tab.label for tab in page.tabs] == [
         "Cash overview",
         "Equity overview",
+        "Tax breakdown",
+        "Goal breakdown",
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()
@@ -534,6 +538,8 @@ def test_compare_multiple_scenarios_retains_selection(
     assert [tab.label for tab in page.tabs] == [
         "Cash overview",
         "Equity overview",
+        "Tax breakdown",
+        "Goal breakdown",
     ]
     assert not page.toggle
     assert not page.selectbox
@@ -610,13 +616,13 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
         page.metric[0].value
         == f"\N{MINUS SIGN}${abs(app.cash_surplus(shortfall.result)):,.0f}"
     )
-    assert page.metric[1].label == "Remaining cash / year"
+    assert page.metric[1].label == "Spending per year"
     assert page.metric[1].value == app._number(app.remaining_cash(shortfall))
     assert any("Funding shortfall" in caption.value for caption in page.caption)
     press(page, "Edit")
     assert not page.warning
     rendered = "\n".join(e.proto.body for e in page.get("html"))
-    assert "Remaining cash / funding shortfall" in rendered
+    assert "Spending" in rendered
     assert 'class="fm-deficit"' in rendered
     assert [tab.label for tab in page.tabs] == [
         "Assumptions",
@@ -624,11 +630,13 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
         "Results",
         "Cash overview",
         "Equity overview",
+        "Tax breakdown",
+        "Goal breakdown",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
     assert not page.warning
     rendered = "\n".join(e.proto.body for e in page.get("html"))
-    assert "Remaining cash / funding shortfall" in rendered
+    assert "Spending" in rendered
     assert 'class="fm-deficit"' in rendered
 
 
@@ -824,7 +832,12 @@ def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
     widget(page, "number_input", f"allocation_cash_{house}").set_value(500).run()
     press(page, "Save")
     (saved,) = list_scenarios(database_url)
-    assert saved.inputs.allocation_plan.rows[-1].cash_amount == 6000
+    assert (
+        next(
+            r for r in saved.inputs.allocation_plan.rows if str(r.goal.id) == house
+        ).cash_amount
+        == 6000
+    )
     page.switch_page("src/financial_model/pages/goals.py").run()
     widget(page, "text_input", f"goal_name_{house}").set_value("Home deposit")
     next(b for b in page.button if b.key == f"rename_goal_{house}").click().run()
@@ -833,16 +846,29 @@ def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
     assert list_scenarios(database_url) == (saved,)
     page.switch_page("src/financial_model/pages/editor.py").run()
     assert (
-        page.session_state["draft_data"]["allocation_plan"]["rows"][-1]["goal"]["name"]
+        next(
+            r
+            for r in page.session_state["draft_data"]["allocation_plan"]["rows"]
+            if r["goal"]["id"] == house
+        )["goal"]["name"]
         == "Home deposit"
     )
     press(page, "Save")
     (updated,) = list_scenarios(database_url)
-    assert updated.inputs.allocation_plan.rows[-1].cash_amount == 6000
+    assert (
+        next(
+            r for r in updated.inputs.allocation_plan.rows if str(r.goal.id) == house
+        ).cash_amount
+        == 6000
+    )
     fresh = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     press(fresh, "Edit")
     assert (
-        fresh.session_state["draft_data"]["allocation_plan"]["rows"][-1]["goal"]["name"]
+        next(
+            r
+            for r in fresh.session_state["draft_data"]["allocation_plan"]["rows"]
+            if r["goal"]["id"] == house
+        )["goal"]["name"]
         == "Home deposit"
     )
 
@@ -932,3 +958,84 @@ def test_household_draft_survives_page_changes_and_reports_invalid_ages():
     assert widget(page, "number_input", "household_age_0").value == 32
     press(page, "Save household")
     assert page.error
+
+
+def test_goal_priority_edit_preserves_amounts_and_survives_navigation(scenario):
+    from decimal import Decimal
+
+    from financial_model.allocations import fund_cash_goals
+    from financial_model.schemas import Goal, GoalAllocation
+    from financial_model.storage import import_backup
+
+    base = scenario.allocation_plan
+    travel = Goal(name="Travel")
+    rows = (
+        base.rows[0].model_copy(update={"cash_amount": Decimal(120000)}),
+        GoalAllocation(goal=travel, cash_amount=120000),
+        base.rows[1],
+    )
+    inputs = scenario.model_copy(
+        update={"allocation_plan": base.model_copy(update={"rows": rows})}
+    )
+    page = editor(inputs)
+    assert not any(
+        select.label == "Remaining cash designated for" for select in page.selectbox
+    )
+    widget(page, "number_input", f"allocation_cash_{travel.id}").set_value(11000).run()
+    widget(page, "button", f"priority_up_{travel.id}").click().run()
+    updated = page.session_state["draft_data"]["allocation_plan"]["rows"]
+    assert updated[0]["goal"]["id"] == str(travel.id)
+    assert Decimal(updated[0]["cash_amount"]) == 132000
+    assert updated[-1]["cash_amount"] is None
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    page.switch_page("src/financial_model/pages/editor.py").run()
+    press(page, "Calculate")
+    document = page.session_state["document"]
+    assert document.inputs.allocation_plan.rows[0].goal.id == travel.id
+    funding = fund_cash_goals(
+        document.inputs.allocation_plan, document.result.cash_added
+    )
+    assert funding.rows[0].funded == 132000
+    assert funding.rows[1].shortfall > 0
+    restored = import_backup(document.model_dump_json().encode())
+    assert restored.allocation_plan == document.inputs.allocation_plan
+
+
+@pytest.mark.integration
+def test_cash_priority_saves_and_loads_in_another_session(
+    scenario, database_url, monkeypatch
+):
+    from decimal import Decimal
+
+    from financial_model.allocations import fund_cash_goals
+    from financial_model.schemas import Goal, GoalAllocation
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    base = scenario.allocation_plan
+    travel = Goal(name="Travel")
+    rows = (
+        base.rows[0].model_copy(update={"cash_amount": Decimal(120000)}),
+        GoalAllocation(goal=travel, cash_amount=120000),
+        base.rows[1],
+    )
+    inputs = scenario.model_copy(
+        update={"allocation_plan": base.model_copy(update={"rows": rows})}
+    )
+    page = editor(inputs)
+    widget(page, "button", f"priority_up_{travel.id}").click().run()
+    press(page, "Save")
+    (saved,) = list_scenarios(database_url)
+    assert saved.inputs.allocation_plan.rows[0].goal.id == travel.id
+    funding = fund_cash_goals(saved.inputs.allocation_plan, saved.result.cash_added)
+    assert funding.rows[0].funded == 120000
+    assert funding.rows[1].shortfall > 0
+    fresh = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    press(fresh, "Edit")
+    assert widget(fresh, "button", f"priority_up_{travel.id}").disabled
+    assert not widget(fresh, "button", f"priority_up_{base.rows[0].goal.id}").disabled
+    fresh.switch_page("src/financial_model/pages/goals.py").run()
+    assert not any(
+        (item.key or "").startswith(f"goal_name_{base.rows[1].goal.id}")
+        for item in fresh.text_input
+    )
+    assert any(header.value == "Spending" for header in fresh.subheader)

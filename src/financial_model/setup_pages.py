@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 import psycopg
 import streamlit as st
@@ -154,7 +155,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     """Manage shared goal definitions without changing scenario allocations."""
     st.title("Goals")
     st.caption(
-        "Shared savings goals and cash destinations. Set amounts in each scenario's Savings goals tab."
+        "Shared savings goals. Set amounts and funding priority in each scenario's Savings goals tab."
     )
     with st.form("new_goal", clear_on_submit=True):
         name = st.text_input("New goal name", max_chars=80)
@@ -170,8 +171,25 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
                 st.rerun()
             except (ValueError, psycopg.Error) as error:
                 _setup_error(error)
+    spending_ids = {
+        row.goal.id
+        for record in records
+        for row in record.inputs.allocation_plan.rows
+        if row.cash_amount is None
+    }
+    spending_ids.update(
+        UUID(row["goal"]["id"])
+        for draft in st.session_state.get("drafts", {}).values()
+        for row in draft["draft_data"].get("allocation_plan", {}).get("rows", ())
+        if row["cash_amount"] is None
+    )
     for goal in st.session_state.get("goals", ()):
-        _goal_row(dsn, goal, records)
+        if goal.id not in spending_ids:
+            _goal_row(dsn, goal, records)
+    st.subheader("Spending")
+    st.caption(
+        "Leftover cash after funding goals. A negative amount is an expense deficit."
+    )
 
 
 def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -> None:

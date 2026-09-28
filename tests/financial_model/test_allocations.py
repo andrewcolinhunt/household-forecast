@@ -124,3 +124,77 @@ def test_scenario_requires_complete_rsu_assignment(scenario):
     raw["allocation_plan"]["rows"][0]["rsu_rate"] = "0.5"
     with pytest.raises(ValidationError, match="100%"):
         Scenario.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    ("cash", "funded", "remaining", "shortfalls"),
+    [
+        ("200", ("100", "80"), "20", ("0", "0")),
+        ("130", ("100", "30"), "0", ("0", "50")),
+        ("70", ("70", "0"), "0", ("30", "80")),
+        ("0", ("0", "0"), "0", ("100", "80")),
+        ("-30", ("0", "0"), "-30", ("100", "80")),
+        ("100.01", ("100", "0.01"), "0", ("0", "79.99")),
+    ],
+)
+def test_cash_goals_fund_in_order_and_conserve_cash(
+    cash, funded, remaining, shortfalls
+):
+    from financial_model.allocations import fund_cash_goals
+
+    base = plan_with_cash("100")
+    travel = GoalAllocation(goal=Goal(name="Travel"), cash_amount=80)
+    plan = base.model_copy(update={"rows": (base.rows[0], base.rows[1], travel)})
+    snapshot = plan.model_dump()
+    funding = fund_cash_goals(plan, Decimal(cash))
+    assert [r.funded for r in funding.rows] == list(map(Decimal, funded))
+    assert [r.shortfall for r in funding.rows] == list(map(Decimal, shortfalls))
+    assert funding.remaining == Decimal(remaining)
+    assert sum(r.funded for r in funding.rows) + funding.remaining == Decimal(cash)
+    planned = allocate_sources(
+        plan,
+        cash=Decimal(cash),
+        retirement=Decimal(10),
+        rsus=Decimal(20),
+        option_cost=Decimal(5),
+    )
+    assert (
+        sum(r.shortfall for r in funding.rows) + max(-funding.remaining, 0)
+        == planned.funding_gap
+    )
+    assert plan.model_dump() == snapshot
+
+
+def test_cash_priority_changes_funding_without_changing_other_assets():
+    from financial_model.allocations import fund_cash_goals
+
+    base = plan_with_cash("100")
+    travel = GoalAllocation(goal=Goal(name="Travel"), cash_amount=80)
+    plan = base.model_copy(update={"rows": (base.rows[0], travel, base.rows[1])})
+    reversed_plan = plan.model_copy(
+        update={"rows": (travel, base.rows[0], base.rows[1])}
+    )
+    original = fund_cash_goals(plan, Decimal(130))
+    reordered = fund_cash_goals(reversed_plan, Decimal(130))
+    assert [(r.goal_id, r.funded) for r in original.rows] == [
+        (base.rows[0].goal.id, 100),
+        (travel.goal.id, 30),
+    ]
+    assert [(r.goal_id, r.funded) for r in reordered.rows] == [
+        (travel.goal.id, 80),
+        (base.rows[0].goal.id, 50),
+    ]
+    assert original.remaining == reordered.remaining == 0
+    results = [
+        allocate_sources(
+            p,
+            cash=Decimal(130),
+            retirement=Decimal(10),
+            rsus=Decimal(20),
+            option_cost=Decimal(5),
+        )
+        for p in (plan, reversed_plan)
+    ]
+    assert {r.goal_id: r for r in results[0].rows} == {
+        r.goal_id: r for r in results[1].rows
+    }

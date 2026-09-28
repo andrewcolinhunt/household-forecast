@@ -230,6 +230,11 @@ class AllocationPlan(ValueModel):
         return self
 
     @property
+    def spending_goal_id(self) -> UUID:
+        """Identify the stored remainder row used for automatic spending cash."""
+        return next(row.goal.id for row in self.rows if row.cash_amount is None)
+
+    @property
     def fixed_cash(self) -> Decimal:
         """Annual cash requested before allocating the remainder."""
         return sum((row.cash_amount or ZERO for row in self.rows), ZERO)
@@ -266,6 +271,26 @@ class GoalAddition(ValueModel):
     def total(self) -> Decimal:
         """All planned additions, before the household funding gap."""
         return self.cash + self.retirement + self.rsus + self.option_cost
+
+
+class GoalCashFunding(ValueModel):
+    """Cash requested and available for one goal in the funding order."""
+
+    goal_id: UUID
+    planned: Money
+    funded: Money
+
+    @property
+    def shortfall(self) -> Decimal:
+        """Cash requested but unavailable after higher-priority goals."""
+        return self.planned - self.funded
+
+
+class CashFunding(ValueModel):
+    """Funded fixed cash goals and the signed balance left after funding them."""
+
+    rows: tuple[GoalCashFunding, ...]
+    remaining: Amount
 
 
 class AllocationResult(ValueModel):

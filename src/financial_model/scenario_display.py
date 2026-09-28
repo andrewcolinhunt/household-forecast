@@ -132,7 +132,7 @@ def _assumptions(inputs: Scenario) -> dict[str, str]:
         ):
             values[label] = f"${_number(getattr(person, field))}/yr"
         for field, label in (
-            ("employer_retirement_rate", "Employer retirement contributions"),
+            ("employer_retirement_rate", "Employer 401(k) contributions"),
         ):
             values[label] = f"{_number(100 * getattr(person, field))}%"
         values.update(
@@ -168,6 +168,10 @@ def _assumptions(inputs: Scenario) -> dict[str, str]:
             else f"${_number(row.cash_amount)}/yr"
         )
         facts[f"{name} · Retained RSU shares"] = f"{_number(row.rsu_rate * 100)}%"
+    for priority, row in enumerate(
+        (row for row in inputs.allocation_plan.rows if row.cash_amount is not None), 1
+    ):
+        facts[f"{row.goal.name} · Cash funding priority"] = str(priority)
     names = {row.goal.id: row.goal.name for row in inputs.allocation_plan.rows}
     facts["Retirement savings goal"] = names[inputs.allocation_plan.retirement_goal_id]
     facts["Option shares savings goal"] = names[inputs.allocation_plan.option_goal_id]

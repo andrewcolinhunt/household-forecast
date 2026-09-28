@@ -19,9 +19,11 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 | `Household` | Family defaults, reference year, qualifying children, filing status, and revision |
 | `Goal` | Shared UUID, editable name, revision |
 | `GoalAllocation` | Goal snapshot, fixed annual cash or `None` for remainder, RSU rate |
-| `AllocationPlan` | Goal rows and retirement/option destinations |
+| `AllocationPlan` | Goal rows in cash funding priority order and retirement/option destinations |
 | `GoalAddition` | One goal's cash, retirement, retained RSUs and option purchase cost |
 | `AllocationResult` | Planned goal additions and cash funding gap |
+| `GoalCashFunding` | Goal ID, planned cash, funded cash, and derived shortfall |
+| `CashFunding` | Funded fixed goals in priority order and signed remaining cash |
 | `SavedScenario` | Schema version, UUID, revision, update timestamp, inputs and matching result |
 
 ## Calculate a scenario
@@ -74,26 +76,30 @@ differences. Goals require exactly one cash remainder and complete RSU
 percentages when RSUs are present. Result validation checks source conservation
 and verifies allocations against the stored plan.
 
-Cash overview and Equity overview render the same saved annual snapshot.
-`cash_surplus(result)` adds option exercise cost back to `cash_added`, giving
-cash after taxes, employee 401(k), and living expenses, before new investments.
-`remaining_cash(document)` subtracts fixed planned cash savings from `cash_added`.
-A positive balance is remaining cash; a negative balance equals the funding gap
-with its sign reversed. The remainder goal is not deducted from that balance.
+Cash overview, Equity overview, Tax breakdown, and Goal breakdown render the
+same saved annual snapshot. `cash_surplus(result)` adds option exercise cost back
+to `cash_added`, giving cash after taxes, employee 401(k), and living expenses.
 
-The cash-flow deficit is `max(-cash_surplus, 0)`. The savings and investment
-shortfall is `funding_gap - cash_flow_deficit`. Together they equal the total
-funding gap. There is no per-goal funding priority or assertion of actual funded
-contributions. The retirement summary selects the goal by `retirement_goal_id`,
-not its name, and splits employee and employer contributions without creating
-new sources. It includes any cash remainder assigned to that goal.
+`fund_cash_goals(plan, cash)` allocates available cash to fixed goals in stored row
+order. Each receives the lesser of its requested cash and the positive cash still
+available. The `cash_amount=None` row receives the remainder and is displayed as
+Spending. The editor keeps that row last and does not expose a
+remainder-destination selector. `remaining_cash(document)` returns the balance
+after funding fixed goals; it can be negative only when cash is negative before
+those goals are funded.
 
-Equity overview reconciles gross RSU value, taxes funded from shares, and
-retained shares designated for goals. Informational option awards remain
-separate from actual ISO exercises. Exercised shares are shown at exercise-date
-FMV in the equity view, and at exercise cost in the retirement summary; no option
-spread is included in planned savings. Display changes do not require database
-migration or change saved financial assumptions.
+Funded cash plus the signed remainder equals `cash_added`. Unfunded goal cash plus
+an expense/commitment deficit equals `allocations.funding_gap`. The saved
+`AllocationResult` preserves requested amounts; `CashFunding` derives funded
+amounts without changing the snapshot, taxes, or net additions. Existing saved
+row order supplies initial priority, so no database migration is required.
+
+All household goals appear in the views, including unused goals with zero amounts.
+Names align by ID. Goal breakdown separates planned/funded cash from employee and
+employer 401(k) contributions, retained RSUs, and exercised shares at cost. It uses
+`retirement_goal_id` for contributions and `option_goal_id` for exercised shares.
+Unexercised options and exercise gains do not enter goal funding. Retained shares
+and retirement contributions are never used to cover cash shortfalls.
 
 Effective tax rate uses gross wages before 401(k) deductions, excludes employer
 contributions and option values from its denominator, and may be negative when

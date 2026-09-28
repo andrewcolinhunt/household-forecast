@@ -10,6 +10,7 @@ from html import escape
 from typing import Literal
 from uuid import UUID
 
+from financial_model.allocations import fund_cash_goals
 from financial_model.scenario_display import ScenarioDisplay, scenario_displays
 from financial_model.schemas import (
     ZERO,
@@ -21,6 +22,11 @@ from financial_model.schemas import (
 
 NumberFormat = Literal["money", "number", "price", "percent"]
 Period = Literal["Monthly", "Annual"]
+EFFECTIVE_TAX_RATE_DEFINITION = (
+    "Federal and state income taxes plus employee payroll taxes divided by salary, "
+    "bonus, and vested RSUs. Includes taxes funded from vested shares. "
+    "Income tax includes any modeled AMT."
+)
 
 
 def period_divisor(period: Period) -> Decimal:
@@ -37,6 +43,7 @@ class _Row:
     format: NumberFormat = "money"
     total: bool = False
     deficit: bool = False
+    shortfalls: Sequence[Decimal] | None = None
 
 
 def _number(value: Decimal, format: NumberFormat = "money") -> str:
@@ -71,7 +78,11 @@ def _cell(row: _Row, index: int, period: Period) -> str:
     if row.format in ("money", "number"):
         value /= period_divisor(period)
     kind = ' class="fm-deficit"' if row.deficit and value < 0 else ""
-    return f"<td><span{kind}>{_number(value, row.format)}</span></td>"
+    shortfall = ""
+    if row.shortfalls and row.shortfalls[index]:
+        amount = row.shortfalls[index] / period_divisor(period)
+        shortfall = f'<small class="fm-goal-shortfall" aria-label="Cash shortfall">{_number(-amount)}</small>'
+    return f"<td><span{kind}>{_number(value, row.format)}</span>{shortfall}</td>"
 
 
 def _table(
@@ -116,37 +127,55 @@ def _definitions(items: dict[str, str], title: str = "Definitions") -> str:
 
 def _goal_names(
     documents: tuple[SavedScenario, ...], goals: tuple[Goal, ...]
-) -> dict[UUID, str]:
-    """Align purposes by stable identity, using current names when available."""
+) -> dict[UUID | None, str]:
+    """Align goals by ID and the automatic spending balance by its role."""
     snapshots = {
         row.goal.id: row.goal.name
         for doc in documents
         for row in doc.inputs.allocation_plan.rows
+        if row.cash_amount is not None
     }
+    spending = {d.inputs.allocation_plan.spending_goal_id for d in documents}
     current = {g.id: g.name for g in goals}
     names = {key: current.get(key, name) for key, name in snapshots.items()}
-    counts = Counter(names.values())
-    return {
+    names.update(
+        {
+            key: name
+            for key, name in current.items()
+            if key not in names and key not in spending
+        }
+    )
+    counts = Counter([*names.values(), "Spending"])
+    labels: dict[UUID | None, str] = {
         key: f"{name} · {str(key)[:6]}" if counts[name] > 1 else name
         for key, name in names.items()
     }
+    labels[None] = "Spending"
+    return labels
 
 
 def _goal_values(
-    documents: tuple[SavedScenario, ...], goal_id: UUID, field: str
+    documents: tuple[SavedScenario, ...], goal_id: UUID | None, field: str
 ) -> list[Decimal]:
-    """Use zero for a goal absent from a scenario, retaining selected column order."""
-    return [
-        next(
-            (
-                getattr(row, field)
-                for row in doc.result.allocations.rows
-                if row.goal_id == goal_id
-            ),
-            ZERO,
+    """Use zero for absent goals; combine remainder rows in the spending column."""
+    values = []
+    for doc in documents:
+        spending_id = doc.inputs.allocation_plan.spending_goal_id
+        if goal_id == spending_id:
+            values.append(ZERO)
+            continue
+        source_id = spending_id if goal_id is None else goal_id
+        values.append(
+            next(
+                (
+                    getattr(row, field)
+                    for row in doc.result.allocations.rows
+                    if row.goal_id == source_id
+                ),
+                ZERO,
+            )
         )
-        for doc in documents
-    ]
+    return values
 
 
 def cash_surplus(result: ScenarioResult) -> Decimal:
@@ -155,8 +184,10 @@ def cash_surplus(result: ScenarioResult) -> Decimal:
 
 
 def remaining_cash(document: SavedScenario) -> Decimal:
-    """Signed cash balance after planned savings and option exercise costs."""
-    return document.result.cash_added - document.inputs.allocation_plan.fixed_cash
+    """Cash left after funding goals in order, or a deficit before goal funding."""
+    return fund_cash_goals(
+        document.inputs.allocation_plan, document.result.cash_added
+    ).remaining
 
 
 def _cash_groups(
@@ -164,26 +195,24 @@ def _cash_groups(
 ) -> dict[str, list[_Row]]:
     """Show cash deductions once, without subtracting the residual cash itself."""
     results = [d.result for d in documents]
+    funding = [
+        fund_cash_goals(d.inputs.allocation_plan, d.result.cash_added)
+        for d in documents
+    ]
     savings = []
     for key, name in _goal_names(documents, goals).items():
-        amounts = [
-            next(
-                (
-                    row.cash_amount or ZERO
-                    for row in d.inputs.allocation_plan.rows
-                    if row.goal.id == key
-                ),
-                ZERO,
-            )
-            for d in documents
+        if key is None:
+            continue
+        funded = [
+            next((row.funded for row in f.rows if row.goal_id == key), ZERO)
+            for f in funding
         ]
-        if any(amounts):
-            savings.append(_Row(name, [-v for v in amounts]))
-    if any(r.option_cost for r in results):
-        savings.append(_Row("Option exercise cost", [-r.option_cost for r in results]))
-    if not savings:
-        savings.append(_Row("Additional savings", [ZERO for _ in documents]))
-    return {
+        shortfalls = [
+            next((row.shortfall for row in f.rows if row.goal_id == key), ZERO)
+            for f in funding
+        ]
+        savings.append(_Row(name, funded, shortfalls=shortfalls))
+    groups = {
         "Cash income": [_Row("Salary and bonus", [r.gross_cash for r in results])],
         "Taxes": [
             _Row(
@@ -219,57 +248,21 @@ def _cash_groups(
                 deficit=True,
             ),
         ],
-        "Planned savings and investments": [
-            *savings,
-            _Row(
-                "Remaining cash / funding shortfall",
-                [remaining_cash(d) for d in documents],
-                total=True,
-                deficit=True,
-            ),
-        ],
     }
-
-
-def _retirement_rows(
-    documents: tuple[SavedScenario, ...], goals: tuple[Goal, ...]
-) -> list[_Row]:
-    """Break down the goal receiving retirement contributions without merging liquidity."""
-    names = _goal_names(documents, goals)
-    additions = [
-        next(
-            row
-            for row in d.result.allocations.rows
-            if row.goal_id == d.inputs.allocation_plan.retirement_goal_id
-        )
-        for d in documents
+    if any(r.option_cost for r in results):
+        groups["Option exercises"] = [
+            _Row("Option exercise cost", [-r.option_cost for r in results])
+        ]
+    groups["Goal allocations"] = [
+        *savings,
+        _Row(
+            "Spending",
+            [f.remaining for f in funding],
+            total=True,
+            deficit=True,
+        ),
     ]
-    return [
-        _Row(
-            "Savings goal",
-            [names[d.inputs.allocation_plan.retirement_goal_id] for d in documents],
-        ),
-        _Row(
-            "Employee 401(k) contributions", [d.result.employee_401k for d in documents]
-        ),
-        _Row(
-            "Employer retirement contributions",
-            [d.result.employer_retirement for d in documents],
-        ),
-        _Row("Additional savings", [a.cash for a in additions]),
-        _Row("Shares retained from RSUs", [a.rsus for a in additions]),
-        *(
-            [
-                _Row(
-                    "Shares from option exercises (at cost)",
-                    [a.option_cost for a in additions],
-                )
-            ]
-            if any(a.option_cost for a in additions)
-            else []
-        ),
-        _Row("Planned retirement savings", [a.total for a in additions], total=True),
-    ]
+    return groups
 
 
 def cash_flow_html(
@@ -281,12 +274,43 @@ def cash_flow_html(
 ) -> str:
     """Reconcile cash income to expenses, planned saving, and the remaining balance."""
     displays = displays or scenario_displays(documents)
+    return (
+        '<div class="fm-comparison"><h3>Cash overview</h3>'
+        '<p class="fm-note">Income, expenses, goal allocations, and cash available to spend.</p>'
+        + _table(
+            displays,
+            _cash_groups(documents, goals),
+            "Cash overview",
+            period,
+        )
+        + _definitions(
+            {
+                "Cash surplus / deficit": "Salary and bonus less cash-funded taxes, employee 401(k) contributions, and living expenses. Before additional savings or option exercise costs.",
+                "Goal allocations": "Positive amounts show funded cash. Red negative amounts beneath a goal show its cash shortfall.",
+                "Spending": "Cash left after option exercise costs and funded goal allocations. Positive amounts are available to spend; negative amounts mean income cannot cover existing expenses and commitments. Unfunded goal amounts are shown beside each goal.",
+                "Living expenses": "Rent, childcare, and other expenses. Include insurance and other unitemized payroll deductions once. These budget entries do not reduce taxable wages.",
+                "Effective tax rate": EFFECTIVE_TAX_RATE_DEFINITION,
+            }
+        )
+        + "</div>"
+    )
+
+
+def tax_html(
+    documents: tuple[SavedScenario, ...],
+    displays: tuple[ScenarioDisplay, ...] | None = None,
+    *,
+    period: Period = "Annual",
+) -> str:
+    """Reconcile estimated taxes to taxes funded from shares and cash."""
+    displays = displays or scenario_displays(documents)
     results = [d.result for d in documents]
     tax_rows = [
         _Row("Federal income tax", [r.taxes.federal_income_tax for r in results]),
         _Row("State income tax", [r.taxes.state_income_tax for r in results]),
         _Row("Employee payroll taxes", [r.taxes.employee_payroll_tax for r in results]),
         _Row("Total estimated taxes", [r.taxes.total for r in results], total=True),
+        _Row("Effective tax rate", [r.effective_tax_rate for r in results], "percent"),
         _Row("Taxes funded from vested shares", [-r.rsu_tax_funding for r in results]),
         _Row(
             "Income and payroll taxes paid from cash",
@@ -294,78 +318,140 @@ def cash_flow_html(
             total=True,
         ),
     ]
-    names = _goal_names(documents, goals)
-    destinations = [
-        next(
-            names[row.goal.id]
-            for row in d.inputs.allocation_plan.rows
-            if row.cash_amount is None
-        )
+    return (
+        '<div class="fm-comparison"><h3>Tax breakdown</h3>'
+        '<p class="fm-note">Income and payroll taxes, funded from vested shares and cash.</p>'
+        + _table(displays, {"": tax_rows}, "Estimated taxes", period)
+        + _definitions({"Effective tax rate": EFFECTIVE_TAX_RATE_DEFINITION})
+        + "</div>"
+    )
+
+
+def goal_breakdown_html(
+    documents: tuple[SavedScenario, ...],
+    displays: tuple[ScenarioDisplay, ...] | None = None,
+    *,
+    goals: tuple[Goal, ...] = (),
+    period: Period = "Annual",
+) -> str:
+    """Show each goal's funded sources, requested cash, and unmet cash funding."""
+    displays = displays or scenario_displays(documents)
+    funding = [
+        fund_cash_goals(d.inputs.allocation_plan, d.result.cash_added)
         for d in documents
     ]
+    groups = {}
+    for key, name in _goal_names(documents, goals).items():
+        plans = [
+            next(
+                (
+                    r
+                    for r in d.inputs.allocation_plan.rows
+                    if (
+                        r.cash_amount is None
+                        if key is None
+                        else r.goal.id == key and r.cash_amount is not None
+                    )
+                ),
+                None,
+            )
+            for d in documents
+        ]
+        cash = [next((r for r in f.rows if r.goal_id == key), None) for f in funding]
+        spending = [p is not None and p.cash_amount is None for p in plans]
+        funded = [
+            r.funded if r else max(f.remaining, ZERO) if residual else ZERO
+            for r, f, residual in zip(cash, funding, spending, strict=True)
+        ]
+        employee = [
+            d.result.employee_401k
+            if plan is not None
+            and plan.goal.id == d.inputs.allocation_plan.retirement_goal_id
+            else ZERO
+            for d, plan in zip(documents, plans, strict=True)
+        ]
+        employer = [
+            d.result.employer_retirement
+            if plan is not None
+            and plan.goal.id == d.inputs.allocation_plan.retirement_goal_id
+            else ZERO
+            for d, plan in zip(documents, plans, strict=True)
+        ]
+        rsus = _goal_values(documents, key, "rsus")
+        options = _goal_values(documents, key, "option_cost")
+        rows = []
+        if not all(spending):
+            priorities = [
+                next((str(i) for i, r in enumerate(f.rows, 1) if r.goal_id == key), "—")
+                for f in funding
+            ]
+            rows.extend(
+                [
+                    _Row("Cash funding priority", priorities),
+                    _Row(
+                        "Planned cash allocation",
+                        [r.planned if r else ZERO for r in cash],
+                    ),
+                    _Row(
+                        "Cash shortfall",
+                        [-r.shortfall if r else ZERO for r in cash],
+                        deficit=True,
+                    ),
+                ]
+            )
+        rows.extend(
+            [
+                _Row("Cash allocated", funded),
+                _Row("Employee 401(k) contributions", employee),
+                _Row("Employer 401(k) contributions", employer),
+                _Row("Shares retained from RSUs", rsus),
+            ]
+        )
+        if any(options):
+            rows.append(_Row("Shares from option exercises (at cost)", options))
+        rows.append(
+            _Row(
+                "Total funded",
+                [
+                    sum(values, ZERO)
+                    for values in zip(
+                        funded, employee, employer, rsus, options, strict=True
+                    )
+                ],
+                total=True,
+            )
+        )
+        if all(spending):
+            rows = [
+                _Row(
+                    "Cash balance",
+                    [f.remaining for f in funding],
+                    total=True,
+                    deficit=True,
+                ),
+                *[
+                    row
+                    for row in rows
+                    if row.label
+                    in (
+                        "Employee 401(k) contributions",
+                        "Employer 401(k) contributions",
+                        "Shares retained from RSUs",
+                        "Shares from option exercises (at cost)",
+                    )
+                    and any(row.values)
+                ],
+            ]
+        groups[name] = rows
     return (
-        '<div class="fm-comparison"><h3>Cash overview</h3>'
-        '<p class="fm-note">Income, expenses, planned savings, and remaining cash.</p>'
-        + _table(
-            displays,
-            _cash_groups(documents, goals),
-            "Cash overview",
-            period,
-        )
-        + '<details class="fm-breakdown"><summary>Income by person</summary>'
-        + _table(
-            displays,
-            {
-                name: [
-                    _Row("Salary and bonus", [p.cash_pay if p else "—" for p in adults])
-                ]
-                for name, adults in _people(documents)
-            },
-            "Cash income by person",
-            period,
-        )
-        + '</details><details class="fm-breakdown"><summary>Tax breakdown</summary>'
-        + _table(displays, {"": tax_rows}, "Estimated taxes", period)
-        + '</details><details class="fm-breakdown"><summary>Remaining cash and funding shortfalls</summary>'
-        + _table(
-            displays,
-            {
-                "": [
-                    _Row("Remaining cash designated for", destinations),
-                    _Row(
-                        "Cash-flow deficit",
-                        [-max(-cash_surplus(r), ZERO) for r in results],
-                        deficit=True,
-                    ),
-                    _Row(
-                        "Savings and investment shortfall",
-                        [
-                            -(r.allocations.funding_gap - max(-cash_surplus(r), ZERO))
-                            for r in results
-                        ],
-                        deficit=True,
-                    ),
-                ]
-            },
-            "Cash funding details",
-            period,
-        )
-        + '</details><section class="fm-section"><h3>Retirement savings</h3>'
-        '<p class="fm-note">Includes contributions above and retained shares. Planned amounts may exceed available funding.</p>'
-        + _table(
-            displays,
-            {"": _retirement_rows(documents, goals)},
-            "Retirement savings",
-            period,
-        )
-        + "</section>"
+        '<div class="fm-comparison"><h3>Goal breakdown</h3>'
+        '<p class="fm-note">Cash is funded in priority order. Contributions and retained shares keep their designated goals.</p>'
+        + _table(displays, groups, "Goal funding by source", period)
         + _definitions(
             {
-                "Cash surplus / deficit": "Salary and bonus less cash-funded taxes, employee 401(k) contributions, and living expenses. Before additional savings or option exercise costs.",
-                "Remaining cash / funding shortfall": "Cash surplus less planned additional savings and option exercise costs. A positive amount remains as cash; a negative amount requires funding. The model assumes no borrowing, reserve withdrawal, or extra share sale. No funding priority among goals is assumed.",
-                "Living expenses": "Rent, childcare, and other expenses. Include insurance and other unitemized payroll deductions once. These budget entries do not reduce taxable wages.",
-                "Retirement savings": "Contributions and retained assets designated for the goal receiving retirement contributions. This is a breakdown, not another cash deduction. It includes remaining cash only when that goal is its designated destination. Option shares are shown at exercise cost, excluding gains.",
-                "Effective tax rate": "Federal and state income taxes plus employee payroll taxes divided by salary, bonus, and vested RSUs. Includes taxes funded from vested shares. Income tax includes any modeled AMT.",
+                "Cash funding priority": "Fixed cash goals are funded from top to bottom in each scenario's Savings goals editor. An unfunded goal does not reduce the cash available to later goals below zero. Remaining cash is available for spending.",
+                "Total funded": "Funded cash plus assigned employee and employer 401(k) contributions, retained RSUs, and exercised shares at cost. These are allocations from this year's income, not account balances. Retained shares and 401(k) assets are not spendable cash. Unexercised options are excluded.",
+                "Cash shortfall": "Planned cash less funded cash. A deficit from expenses or option exercises is shown separately in Spending; the model does not borrow or sell additional shares to cover it.",
             }
         )
         + "</div>"
@@ -444,9 +530,7 @@ def equity_html(
     results = [d.result for d in documents]
     names = _goal_names(documents, goals)
     rsu_goals = [
-        _Row(name, values)
-        for key, name in names.items()
-        if any(values := _goal_values(documents, key, "rsus"))
+        _Row(name, _goal_values(documents, key, "rsus")) for key, name in names.items()
     ]
     groups = {
         "RSU income": [_Row("RSU value at vesting", [r.gross_rsus for r in results])],
@@ -463,8 +547,7 @@ def equity_html(
             )
         ],
     }
-    if rsu_goals:
-        groups["Savings goals"] = rsu_goals
+    groups["Goal allocations"] = rsu_goals
     people = _people(documents)
     awards = {
         name: _option_rows(adults)
@@ -475,22 +558,7 @@ def equity_html(
         '<div class="fm-comparison"><h3>Equity overview</h3>'
         '<p class="fm-note">RSU vesting, taxes funded from shares, and shares retained by savings goal.</p>'
         + _table(displays, groups, "RSUs", period)
-        + '<details class="fm-breakdown"><summary>RSU income by person</summary>'
-        + _table(
-            displays,
-            {
-                name: [
-                    _Row(
-                        "RSU value at vesting",
-                        [p.rsu_vesting if p else "—" for p in adults],
-                    )
-                ]
-                for name, adults in people
-            },
-            "RSU income by person",
-            period,
-        )
-        + '</details><section class="fm-section"><h3>Stock options</h3>'
+        + '<section class="fm-section"><h3>Stock options</h3>'
         '<p class="fm-note">Vesting during the selected year. These estimates do not change cash flow. Enter ISO exercises separately.</p>'
         + (
             _table(
@@ -527,7 +595,12 @@ def equity_html(
                         _Row(
                             "Savings goal",
                             [
-                                names[d.inputs.allocation_plan.option_goal_id]
+                                names[
+                                    None
+                                    if d.inputs.allocation_plan.option_goal_id
+                                    == d.inputs.allocation_plan.spending_goal_id
+                                    else d.inputs.allocation_plan.option_goal_id
+                                ]
                                 for d in documents
                             ],
                         ),

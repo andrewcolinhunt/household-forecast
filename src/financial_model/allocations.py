@@ -8,8 +8,33 @@ from financial_model.schemas import (
     ZERO,
     AllocationPlan,
     AllocationResult,
+    CashFunding,
     GoalAddition,
+    GoalCashFunding,
 )
+
+
+def fund_cash_goals(plan: AllocationPlan, cash: Decimal) -> CashFunding:
+    """Fund fixed cash goals in row order; leave noncash allocations unchanged.
+
+    Args:
+        plan: Goal amounts in descending funding priority.
+        cash: Cash after taxes, expenses, 401(k), and option exercise costs.
+
+    Returns:
+        Requested and funded cash by goal, plus remaining cash or an expense deficit.
+    """
+    remaining = cash
+    rows = []
+    for row in plan.rows:
+        if row.cash_amount is None:
+            continue
+        funded = min(row.cash_amount, max(remaining, ZERO))
+        rows.append(
+            GoalCashFunding(goal_id=row.goal.id, planned=row.cash_amount, funded=funded)
+        )
+        remaining -= funded
+    return CashFunding(rows=tuple(rows), remaining=remaining)
 
 
 def allocate_sources(

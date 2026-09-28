@@ -19,14 +19,18 @@ funding gap = max(fixed cash allocations − cash available, 0)
 net additions = planned goal additions − funding gap
 ```
 
-One goal receives the cash remainder. Retained RSUs are split by percentages;
-retirement contributions and exercised shares each have a goal destination.
-RSU splits conserve every cent, assigning rounding pennies by largest fractional
-remainder and then stable goal ID. Assignments do not change taxes or net additions.
+Fixed cash goals are funded in priority order. Each receives as much of its
+planned amount as the remaining positive cash permits. The app preserves the
+plan and shows any unfunded amount beside the goal. **Spending**
+receives leftover cash and is always last. A negative balance there means that
+income cannot cover expenses and commitments before goal funding.
 
-Unfunded plans remain visible. The model does not silently cut allocations,
-withdraw existing assets, sell extra shares, or borrow. A goal named Available to
-spend still holds cash; spending belongs in expenses.
+Retained RSUs are split by percentages; retirement contributions and exercised
+shares each have a goal destination. RSU splits conserve every cent, assigning
+rounding pennies by largest fractional remainder and then stable goal ID.
+Changing cash priority does not move those assets, change taxes, or change net
+additions. The model does not sell extra shares, withdraw existing assets, or
+borrow to cover a shortfall. Cash available for spending is not assumed spent.
 
 ## Access and value certainty
 

@@ -13,12 +13,14 @@ from financial_model.comparison import (
     cash_flow_html,
     cash_surplus,
     equity_html,
+    goal_breakdown_html,
     remaining_cash,
+    tax_html,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import OptionAward, SavedScenario, Scenario
 
-RENDERERS = (cash_flow_html, equity_html)
+RENDERERS = (cash_flow_html, equity_html, tax_html, goal_breakdown_html)
 
 
 def cells(html: str, label: str) -> list[str]:
@@ -26,7 +28,7 @@ def cells(html: str, label: str) -> list[str]:
     row = re.search(rf'<th scope="row">{re.escape(escape(label))}</th>(.*?)</tr>', html)
     assert row is not None, label
     return [
-        unescape(re.sub(r"<[^>]+>", " ", value)).strip()
+        " ".join(unescape(re.sub(r"<[^>]+>", " ", value)).split())
         for value in re.findall(r"<td>(.*?)</td>", row[1])
     ]
 
@@ -92,7 +94,7 @@ def test_cash_flow_reconciles_without_deducting_remaining_cash(
             ("Total living expenses", -r.living_cost),
             ("Cash surplus / deficit", surplus),
             ("Option exercise cost", -r.option_cost),
-            ("Remaining cash / funding shortfall", balance),
+            ("Spending", balance),
         ):
             assert cells(html, label)[index] == _number(value / divisor)
     assert remaining_cash(documents[0]) > 0
@@ -101,11 +103,11 @@ def test_cash_flow_reconciles_without_deducting_remaining_cash(
     assert (
         main.index("Living expenses")
         < main.index("Cash surplus / deficit")
-        < main.index("Planned savings and investments")
         < main.index("Option exercise cost")
+        < main.index("Goal allocations")
     )
     assert "Option exercise cost</th>" not in cash_flow_html(documents[:1])
-    assert "Employer retirement contributions</th>" not in main
+    assert "Employer 401(k) contributions</th>" not in main
     assert "Shares retained from RSUs</th>" not in main
 
 
@@ -130,6 +132,38 @@ def test_rsu_income_taxes_shares_and_goals_reconcile(documents, period, divisor)
     assert "Net additions to assets" not in html
 
 
+@pytest.mark.parametrize(("period", "divisor"), [("Annual", 1), ("Monthly", 12)])
+def test_tax_breakdown_reconciles_taxes_and_funding(documents, period, divisor):
+    html = tax_html(documents, period=period)
+    for index, document in enumerate(documents):
+        r = document.result
+        for label, value in (
+            ("Federal income tax", r.taxes.federal_income_tax),
+            ("State income tax", r.taxes.state_income_tax),
+            ("Employee payroll taxes", r.taxes.employee_payroll_tax),
+            ("Total estimated taxes", r.taxes.total),
+            ("Taxes funded from vested shares", -r.rsu_tax_funding),
+            ("Income and payroll taxes paid from cash", r.cash_funded_tax),
+        ):
+            assert cells(html, label)[index] == _number(value / divisor)
+        assert (
+            r.taxes.federal_income_tax
+            + r.taxes.state_income_tax
+            + r.taxes.employee_payroll_tax
+            == r.taxes.total
+        )
+        assert r.taxes.total - r.rsu_tax_funding == r.cash_funded_tax
+        assert cells(html, "Effective tax rate")[index] == _number(
+            r.effective_tax_rate, "percent"
+        )
+    cash = cash_flow_html(documents, period=period)
+    equity = equity_html(documents, period=period)
+    assert "<summary>Tax breakdown</summary>" not in cash
+    assert "<summary>Income by person</summary>" not in cash
+    assert "<summary>Remaining cash and funding shortfalls</summary>" not in cash
+    assert "<summary>RSU income by person</summary>" not in equity
+
+
 @pytest.mark.parametrize(
     ("rent", "saving", "option_cost"),
     [(20000, 0, 0), (20000, 1000, 0), (0, 200000, 0), (0, 0, 200000)],
@@ -148,12 +182,12 @@ def test_cash_deficit_and_savings_shortfall_have_distinct_causes(
     html = cash_flow_html((d,))
     deficit = max(-cash_surplus(d.result), Decimal(0))
     investment_shortfall = d.result.allocations.funding_gap - deficit
-    assert cells(html, "Cash-flow deficit") == [_number(-deficit)]
-    assert cells(html, "Savings and investment shortfall") == [
-        _number(-investment_shortfall)
-    ]
-    assert remaining_cash(d) == -d.result.allocations.funding_gap
-    assert 'class="fm-deficit"' in html
+    assert cells(html, "Cash surplus / deficit") == [_number(cash_surplus(d.result))]
+    assert cells(html, "Spending") == [_number(min(d.result.cash_added, Decimal(0)))]
+    assert remaining_cash(d) == min(d.result.cash_added, Decimal(0))
+    if saving:
+        assert 'aria-label="Cash shortfall"' in html
+    assert 'class="fm-deficit"' in html or 'class="fm-goal-shortfall"' in html
     if rent:
         assert deficit > 0
     else:
@@ -239,7 +273,7 @@ def test_option_tables_preserve_counts_and_per_share_units(documents) -> None:
 
 
 def test_people_align_by_name_when_adult_order_changes(documents) -> None:
-    first = documents[1]
+    first = with_award(documents[1], 8)
     reversed_people = first.model_copy(
         update={
             "inputs": first.inputs.model_copy(
@@ -247,23 +281,27 @@ def test_people_align_by_name_when_adult_order_changes(documents) -> None:
             )
         }
     )
-    html = cash_flow_html((first, reversed_people))
-    detail = html.split("<summary>Income by person</summary>")[1]
-    assert cells(detail, "Salary and bonus") == ["$120,000", "$120,000"]
-    assert detail.index("Adult A") < detail.index("Adult B")
+    html = equity_html((first, reversed_people))
+    assert cells(html, "Options vesting") == ["10,000", "10,000"]
+    assert cells(html, "Share value if exercised") == ["$80,000", "$80,000"]
     duplicate = first.model_copy(
         update={
             "inputs": first.inputs.model_copy(
                 update={
                     "adults": tuple(
-                        a.model_copy(update={"name": "Sam"})
+                        a.model_copy(
+                            update={
+                                "name": "Sam",
+                                "option_award": first.inputs.adults[0].option_award,
+                            }
+                        )
                         for a in first.inputs.adults
                     )
                 }
             )
         }
     )
-    html = cash_flow_html((duplicate, duplicate))
+    html = equity_html((duplicate, duplicate))
     assert "Sam (1)" in html
     assert "Sam (2)" in html
 
@@ -367,8 +405,9 @@ def test_shared_goal_names_align_by_id_and_missing_goals_use_zero(documents):
     inputs = Scenario.model_validate(data)
     second = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
     html = cash_flow_html((first, second), goals=(renamed, other))
-    assert cells(html, "Travel") == ["$0", "\N{MINUS SIGN}$1,200"]
-    assert cells(html, "Savings goal") == ["Future", "Future"]
+    assert cells(html, "Travel") == ["$0", "$1,200"]
+    retirement = goal_breakdown_html((first, second), goals=(renamed, other))
+    assert '<th scope="row">Future</th>' in retirement
     assert "Retirement</th>" not in html
     assert first.inputs.allocation_plan.rows[0].goal.name == "Retirement"
 
@@ -377,18 +416,18 @@ def test_shared_goal_names_align_by_id_and_missing_goals_use_zero(documents):
 def test_retirement_breakdown_reuses_sources_without_double_deductions(
     documents, period, divisor
 ):
-    html = cash_flow_html(documents, period=period)
-    detail = html.split("<h3>Retirement savings</h3>")[1]
+    detail = goal_breakdown_html(documents, period=period)
+    assert "<h3>Retirement savings</h3>" not in cash_flow_html(documents, period=period)
     for i, d in enumerate(documents):
         r = d.result
         goal = r.allocations.rows[0]
         for label, value in (
             ("Employee 401(k) contributions", r.employee_401k),
-            ("Employer retirement contributions", r.employer_retirement),
-            ("Additional savings", goal.cash),
+            ("Employer 401(k) contributions", r.employer_retirement),
+            ("Cash allocated", goal.cash),
             ("Shares retained from RSUs", goal.rsus),
             ("Shares from option exercises (at cost)", goal.option_cost),
-            ("Planned retirement savings", goal.total),
+            ("Total funded", goal.total),
         ):
             assert cells(detail, label)[i] == _number(value / divisor)
         assert (
@@ -401,7 +440,7 @@ def test_retirement_breakdown_reuses_sources_without_double_deductions(
         )
 
 
-def test_remainder_designated_for_retirement_stays_visible_without_cash_deduction(
+def test_remainder_is_spending_regardless_of_its_saved_name(
     documents,
 ):
     data = documents[1].inputs.model_dump(mode="json")
@@ -410,12 +449,10 @@ def test_remainder_designated_for_retirement_stays_visible_without_cash_deductio
     inputs = Scenario.model_validate(data)
     d = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
     html = cash_flow_html((d,))
-    assert cells(html, "Remaining cash / funding shortfall") == [
-        _number(d.result.cash_added)
-    ]
-    detail = html.split("<h3>Retirement savings</h3>")[1]
-    assert cells(detail, "Additional savings") == [_number(d.result.cash_added)]
-    assert cells(html, "Remaining cash designated for") == ["Retirement"]
+    assert cells(html, "Spending") == [_number(d.result.cash_added)]
+    detail = goal_breakdown_html((d,))
+    spending = detail.split('<tr class="fm-group"><th scope="row">Spending</th>')[1]
+    assert cells(spending, "Cash balance") == [_number(d.result.cash_added)]
 
 
 def test_monthly_options_scale_vesting_values_but_not_per_share_prices(documents):
@@ -431,3 +468,85 @@ def test_monthly_options_scale_vesting_values_but_not_per_share_prices(documents
     assert cells(html, "Exercise cost")[0] == "$2,123"
     assert cells(html, "Estimated intrinsic value")[0] == "$5,877"
     assert "Annual amounts" not in html
+
+
+@pytest.mark.parametrize(("period", "divisor"), [("Annual", 1), ("Monthly", 12)])
+def test_goal_views_show_cash_priority_shortfalls_and_unused_goals(
+    scenario, period, divisor
+):
+    from financial_model.schemas import Goal, GoalAllocation
+
+    travel = Goal(name="Travel")
+    unused = Goal(name="Emergency fund")
+    base = scenario.allocation_plan
+    plan = base.model_copy(
+        update={
+            "rows": (
+                base.rows[0].model_copy(update={"cash_amount": Decimal(120000)}),
+                GoalAllocation(goal=travel, cash_amount=120000),
+                base.rows[1],
+            )
+        }
+    )
+    inputs = scenario.model_copy(update={"allocation_plan": plan})
+    document = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
+    second_cash = document.result.cash_added - 120000
+    assert 0 < second_cash < 120000
+    goals = (unused,)
+    cash = cash_flow_html((document,), goals=goals, period=period)
+    assert cells(cash, "Retirement") == [_number(Decimal(120000) / divisor)]
+    assert cells(cash, "Travel") == [
+        f"{_number(second_cash / divisor)} {_number(-(120000 - second_cash) / divisor)}"
+    ]
+    assert cells(cash, "Emergency fund") == ["$0"]
+    assert cells(cash, "Spending") == ["$0"]
+    for render in (cash_flow_html, equity_html, goal_breakdown_html):
+        html = render((document,), goals=goals, period=period)
+        table = html.split("</table>")[0]
+        assert (
+            table.index(">Retirement</th>")
+            < table.index(">Travel</th>")
+            < table.index(">Emergency fund</th>")
+            < table.index(">Spending</th>")
+        )
+        if render != goal_breakdown_html:
+            assert ">Goal allocations</th>" in table
+    detail = goal_breakdown_html((document,), goals=goals, period=period)
+    travel_group = detail.split('<tr class="fm-group"><th scope="row">Travel</th>')[1]
+    assert cells(travel_group, "Cash funding priority") == ["2"]
+    assert cells(travel_group, "Cash allocated") == [_number(second_cash / divisor)]
+    assert cells(travel_group, "Cash shortfall") == [
+        _number(-(120000 - second_cash) / divisor)
+    ]
+    assert cells(travel_group, "Total funded") == [_number(second_cash / divisor)]
+
+
+def test_spending_aligns_by_role_when_imported_goal_ids_differ(documents):
+    from financial_model.schemas import Goal
+
+    first = documents[1]
+    data = first.inputs.model_dump(mode="json")
+    data["name"] = "Imported spending goal"
+    data["allocation_plan"]["rows"][0]["rsu_rate"] = "0.5"
+    data["allocation_plan"]["rows"][1]["rsu_rate"] = "0.5"
+    data["allocation_plan"]["rows"][1]["goal"] = Goal(
+        name="Old remainder name"
+    ).model_dump(mode="json")
+    second_inputs = Scenario.model_validate(data)
+    second = SavedScenario(
+        inputs=second_inputs, result=evaluate_scenario(second_inputs)
+    )
+    for render in (cash_flow_html, equity_html, goal_breakdown_html):
+        html = render((first, second))
+        assert html.count(">Spending</th>") == 1
+        assert "Old remainder name" not in html
+    assert cells(equity_html((first, second)), "Spending") == [
+        "$0",
+        _number(second.result.retained_rsus / 2),
+    ]
+    detail = goal_breakdown_html((first, second)).split(
+        '<tr class="fm-group"><th scope="row">Spending</th>'
+    )[1]
+    assert cells(detail, "Cash balance") == [
+        _number(remaining_cash(d)) for d in (first, second)
+    ]
