@@ -12,6 +12,7 @@ from uuid import uuid4
 import psycopg
 import streamlit as st
 from pydantic import ValidationError
+from streamlit.delta_generator import DeltaGenerator
 
 from financial_model.allocations import allocate_sources
 from financial_model.comparison import (
@@ -39,15 +40,13 @@ from financial_model.schemas import (
 )
 from financial_model.storage import (
     RevisionConflictError,
-    create_goal,
     create_scenario,
-    delete_goal,
     delete_scenario,
     import_backup,
     list_goals,
     list_scenarios,
+    load_household,
     resolve_goal_conflicts,
-    update_goal,
     update_scenario,
 )
 from financial_model.taxes import CORE_VERSION, CORRECTION_VERSION, ENGINE_VERSION
@@ -56,6 +55,8 @@ PAGE_DIR = Path(__file__).with_name("pages")
 SCENARIOS_PAGE = PAGE_DIR / "scenarios.py"
 EDITOR_PAGE = PAGE_DIR / "editor.py"
 COMPARE_PAGE = PAGE_DIR / "compare.py"
+HOUSEHOLD_PAGE = PAGE_DIR / "household.py"
+GOALS_PAGE = PAGE_DIR / "goals.py"
 DRAFT_FIELDS = ("draft_data", "draft_ages", "loaded_record", "document", "draft_id")
 
 
@@ -89,14 +90,30 @@ def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
 def _set_editor(inputs: Scenario | None, record: SavedScenario | None = None) -> None:
     """Replace the active editing buffer with validated inputs or a blank draft."""
     st.session_state["editor_epoch"] = st.session_state.get("editor_epoch", 0) + 1
-    st.session_state["draft_data"] = inputs.model_dump(mode="json") if inputs else {}
-    st.session_state["draft_ages"] = (
-        ", ".join(str(child.age) for child in inputs.dependents) if inputs else ""
+    data = inputs.model_dump(mode="json") if inputs else _household_defaults()
+    st.session_state["draft_data"] = data
+    st.session_state["draft_ages"] = ", ".join(
+        str(child["age"]) for child in data.get("dependents", ())
     )
     st.session_state["loaded_record"] = record
     st.session_state["document"] = record
     st.session_state["draft_id"] = record.id if record else uuid4()
     _remember_draft()
+
+
+def _household_defaults() -> dict[str, Any]:
+    """Copy shared family facts only when starting a new scenario."""
+    dsn = _database_url()
+    try:
+        household = (
+            load_household(dsn) if dsn else st.session_state.get("local_household")
+        )
+    except (psycopg.Error, ValueError):
+        st.warning(
+            "Household defaults could not be loaded. Enter the family details for this draft."
+        )
+        return {}
+    return household.scenario_defaults() if household else {}
 
 
 def _remember_draft() -> None:
@@ -395,10 +412,12 @@ def _allocation_inputs(
     )
     period_key = unit.lower()
     updated = []
+    remove_id = None
+    remove_controls = []
     for row in rows:
         goal_id = row["goal"]["id"]
         goal = catalogue.get(goal_id, Goal.model_validate(row["goal"]))
-        label, cash, shares = st.columns([2, 1, 1])
+        label, cash, shares, remove = st.columns([2, 1, 1, 1])
         label.markdown(f"**{goal.name}**")
         original = Decimal(str(row["cash_amount"] or 0))
         # Changing the unit recreates the widget from exact annual draft values.
@@ -420,6 +439,7 @@ def _allocation_inputs(
             format="%.2f",
             key=_key(f"allocation_rsu_{goal_id}"),
         )
+        remove_controls.append((remove, goal_id, value, rate))
         updated.append(
             {
                 "goal": goal.model_dump(mode="json"),
@@ -456,11 +476,48 @@ def _allocation_inputs(
             format_func=names.__getitem__,
             key=_key("allocation_options"),
         )
-    with st.container(horizontal=True):
-        if st.button("Add goal"):
-            st.session_state["goal_dialog"] = "add"
-        if st.button("Edit goals"):
-            st.session_state["goal_dialog"] = "edit"
+    for remove, goal_id, value, rate in remove_controls:
+        removable = (
+            goal_id != remainder
+            and not value
+            and not rate
+            and goal_id not in (retirement, options)
+        )
+        if remove.button(
+            "Remove",
+            key=_key(f"remove_allocation_{goal_id}"),
+            disabled=not removable,
+            help="Reassign this goal's amounts and destinations before removing it from this scenario.",
+        ):
+            remove_id = goal_id
+    present = set(ids)
+    unused = {
+        str(goal.id): goal
+        for goal in st.session_state.get("goals", ())
+        if str(goal.id) not in present
+    }
+    if unused:
+        selected = st.selectbox(
+            "Goal to add",
+            list(unused),
+            format_func=lambda key: unused[key].name,
+            key=_key("allocation_add"),
+        )
+        if st.button("Add goal to scenario"):
+            updated.append(
+                {
+                    "goal": unused[selected].model_dump(mode="json"),
+                    "cash_amount": "0",
+                    "rsu_rate": "0",
+                }
+            )
+            st.session_state["allocation_structure_changed"] = True
+    st.page_link(
+        str(GOALS_PAGE), label="Manage household goals", icon=":material/arrow_forward:"
+    )
+    if remove_id:
+        updated = [row for row in updated if row["goal"]["id"] != remove_id]
+        st.session_state["allocation_structure_changed"] = True
     updated_plan = {
         "rows": updated,
         "retirement_goal_id": retirement,
@@ -483,7 +540,11 @@ def _allocation_inputs(
             st.table(
                 [
                     {
-                        "Goal": names[str(row.goal_id)],
+                        "Goal": next(
+                            r["goal"]["name"]
+                            for r in updated
+                            if r["goal"]["id"] == str(row.goal_id)
+                        ),
                         "Planned / year": _number(row.total),
                     }
                     for row in allocation.rows
@@ -494,136 +555,12 @@ def _allocation_inputs(
     return updated_plan
 
 
-def _close_goal_dialog() -> None:
-    """Clear the dialog request after submitting or dismissing it."""
-    st.session_state.pop("goal_dialog", None)
-
-
-@st.dialog("Add goal", on_dismiss=_close_goal_dialog)
-def _add_goal_dialog() -> None:
-    """Add a shared or new goal to the current plan without allocating twice."""
-    plan = st.session_state["draft_data"].get(
-        "allocation_plan", default_allocation_plan().model_dump(mode="json")
-    )
-    present = {r["goal"]["id"] for r in plan["rows"]}
-    unused = [g for g in st.session_state.get("goals", ()) if str(g.id) not in present]
-    choices = {"new": "New goal", **{str(g.id): g.name for g in unused}}
-    selected = st.selectbox("Goal", list(choices), format_func=choices.__getitem__)
-    name = st.text_input("Goal name", max_chars=80) if selected == "new" else ""
-    if st.button("Add", type="primary"):
-        try:
-            goal = (
-                Goal(name=name)
-                if selected == "new"
-                else next(g for g in unused if str(g.id) == selected)
-            )
-            dsn = _database_url()
-            if dsn and selected == "new":
-                goal = create_goal(dsn, goal)
-            elif selected == "new":
-                st.session_state["goals"] = (*st.session_state.get("goals", ()), goal)
-            plan["rows"].append(
-                {
-                    "goal": goal.model_dump(mode="json"),
-                    "cash_amount": "0",
-                    "rsu_rate": "0",
-                }
-            )
-            st.session_state["draft_data"]["allocation_plan"] = plan
-            st.session_state["editor_epoch"] += 1
-            _remember_draft()
-            _close_goal_dialog()
-            st.rerun()
-        except (ValueError, RevisionConflictError, psycopg.Error) as error:
-            st.error(
-                str(error)
-                if isinstance(error, (ValueError, RevisionConflictError))
-                else "Could not save the goal. Try again."
-            )
-
-
-@st.dialog("Edit goals", on_dismiss=_close_goal_dialog)
-def _edit_goals_dialog() -> None:
-    """Rename shared purposes or remove unused rows without losing allocations."""
-    plan = st.session_state["draft_data"]["allocation_plan"]
-    goals = {str(g.id): g for g in st.session_state.get("goals", ())}
-    goals = {
-        **{r["goal"]["id"]: Goal.model_validate(r["goal"]) for r in plan["rows"]},
-        **goals,
-    }
-    selected = st.selectbox(
-        "Goal to edit", list(goals), format_func=lambda key: goals[key].name
-    )
-    goal = goals[selected]
-    name = st.text_input(
-        "Name", value=goal.name, max_chars=80, key=f"goal_name_{selected}"
-    )
-    rename, remove, delete = st.columns(3)
-    action = (
-        "rename"
-        if rename.button("Rename")
-        else "remove"
-        if remove.button("Remove from scenario")
-        else "delete"
-        if delete.button("Delete unused goal")
-        else None
-    )
-    if not action:
-        return
-    try:
-        dsn = _database_url()
-        if action == "rename":
-            changed = Goal.model_validate(goal.model_dump() | {"name": name})
-            if dsn:
-                if selected in {str(g.id) for g in st.session_state.get("goals", ())}:
-                    changed = update_goal(dsn, changed)
-                else:
-                    changed = create_goal(dsn, changed)
-            st.session_state["goals"] = (
-                *(g for g in st.session_state.get("goals", ()) if g.id != goal.id),
-                changed,
-            )
-            for row in plan["rows"]:
-                if row["goal"]["id"] == selected:
-                    row["goal"] = changed.model_dump(mode="json")
-        elif action == "remove":
-            row = next((r for r in plan["rows"] if r["goal"]["id"] == selected), None)
-            if row and (
-                row["cash_amount"] is None
-                or Decimal(str(row["cash_amount"]))
-                or Decimal(str(row["rsu_rate"]))
-                or selected in (plan["retirement_goal_id"], plan["option_goal_id"])
-            ):
-                msg = (
-                    "Reassign this goal's amounts and destinations before removing it."
-                )
-                raise ValueError(msg)
-            plan["rows"] = [r for r in plan["rows"] if r["goal"]["id"] != selected]
-        else:
-            if any(r["goal"]["id"] == selected for r in plan["rows"]):
-                msg = "Remove this goal from the current scenario first."
-                raise ValueError(msg)
-            if dsn:
-                delete_goal(dsn, goal)
-            st.session_state["goals"] = tuple(
-                g for g in st.session_state.get("goals", ()) if g.id != goal.id
-            )
-        st.session_state["editor_epoch"] += 1
-        _remember_draft()
-        _close_goal_dialog()
-        st.rerun()
-    except (ValueError, RevisionConflictError, psycopg.Error) as error:
-        st.error(
-            str(error)
-            if isinstance(error, (ValueError, RevisionConflictError))
-            else "Could not update the goal. Try again."
-        )
-
-
-def _form(dsn: str | None) -> None:
+def _form(
+    dsn: str | None, assumptions: DeltaGenerator, allocations: DeltaGenerator
+) -> None:
     """Retain edits on each rerun; calculate and save only on explicit actions."""
     data = st.session_state["draft_data"]
-    with st.container():
+    with assumptions:
         name = st.text_input(
             "Custom label (optional)",
             value=data.get("name", ""),
@@ -661,7 +598,6 @@ def _form(dsn: str | None) -> None:
                 existing = data.get("adults", [{}, {}])[index]
                 adults.append(_adult_inputs(index, existing, state))
         living = _living_inputs(data.get("living_costs", {}), state)
-        allocation_plan = _allocation_inputs(data.get("allocation_plan"), adults)
         notes = st.text_area(
             "Scenario notes",
             value=data.get("notes", ""),
@@ -673,6 +609,9 @@ def _form(dsn: str | None) -> None:
             value=data.get("assumptions_confirmed", False),
             key=_key("confirmed"),
         )
+        _assumptions()
+    with allocations:
+        allocation_plan = _allocation_inputs(data.get("allocation_plan"), adults)
     data = {
         "name": name,
         "tax_year": year,
@@ -686,6 +625,10 @@ def _form(dsn: str | None) -> None:
     st.session_state["draft_data"] = data
     st.session_state["draft_ages"] = ages
     _remember_draft()
+    if st.session_state.pop("allocation_structure_changed", False):
+        st.session_state["editor_epoch"] += 1
+        st.session_state["editor_target"] = "Allocations"
+        st.rerun()
     loaded = st.session_state.get("loaded_record")
     missing = loaded is not None and all(
         record.id != loaded.id for record in st.session_state["records"]
@@ -731,8 +674,11 @@ def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> No
     )
     st.session_state["document"] = document
     _remember_draft()
+    st.session_state["editor_target"] = "Results"
     if action != "calculate" and dsn:
         _save(dsn, document, new=action == "copy" or loaded is None)
+    elif action == "calculate":
+        st.rerun()
 
 
 def _input_error(error: ValueError) -> None:
@@ -1143,19 +1089,30 @@ def editor_page() -> None:
         "Edit scenario" if st.session_state.get("loaded_record") else "New scenario"
     )
     status = st.container()
-    inputs, preview = st.columns([2, 1], gap="large")
-    with inputs:
-        _form(_database_url())
-        _assumptions()
-        loaded = st.session_state.get("loaded_record")
-        latest = next(
-            (
-                record
-                for record in st.session_state["records"]
-                if loaded and record.id == loaded.id
-            ),
-            None,
-        )
+    section_key = _key("editor_section")
+    if target := st.session_state.pop("editor_target", None):
+        st.session_state[section_key] = target
+    assumptions, allocations, results = st.tabs(
+        ["Assumptions", "Allocations", "Results"], key=section_key, on_change="rerun"
+    )
+    _form(_database_url(), assumptions, allocations)
+    loaded = st.session_state.get("loaded_record")
+    latest = next(
+        (
+            record
+            for record in st.session_state["records"]
+            if loaded and record.id == loaded.id
+        ),
+        None,
+    )
+    unsaved, stale = _draft_status()
+    with status:
+        st.caption("Unsaved changes" if unsaved else "Saved")
+        if loaded and latest and loaded.revision != latest.revision:
+            st.warning(
+                "This scenario has a newer saved version. Save your edits as a new scenario, or reload the saved version."
+            )
+    with assumptions:
         if latest:
             with st.expander("Reload saved version"):
                 st.caption(
@@ -1167,28 +1124,15 @@ def editor_page() -> None:
                 ):
                     _set_editor(latest.inputs, latest)
                     st.rerun()
-    unsaved, stale = _draft_status()
-    with status:
-        st.caption("Unsaved changes" if unsaved else "Saved")
-        if loaded and latest and loaded.revision != latest.revision:
-            st.warning(
-                "This scenario has a newer saved version. Save your edits as a new "
-                "scenario, or reload the saved version."
-            )
-    with preview:
+    with results:
         document = st.session_state.get("document")
         if document:
             if stale:
                 st.info("Inputs changed. Calculate to update these results.")
             _results(document)
         else:
-            st.subheader("Results")
-            st.caption("Calculate to see income, taxes, and savings.")
+            st.caption("Calculate to see results.")
         _backups(document)
-    if st.session_state.get("goal_dialog") == "add":
-        _add_goal_dialog()
-    elif st.session_state.get("goal_dialog") == "edit":
-        _edit_goals_dialog()
 
 
 @st.dialog("Delete scenario?", dismissible=False)
@@ -1330,6 +1274,8 @@ def main() -> None:
     )
     page = st.navigation(
         [
+            st.Page(str(HOUSEHOLD_PAGE), title="Household", url_path="household"),
+            st.Page(str(GOALS_PAGE), title="Goals", url_path="goals"),
             st.Page(str(SCENARIOS_PAGE), title="Scenarios", default=True),
             st.Page(str(COMPARE_PAGE), title="Compare", url_path="compare"),
             st.Page(

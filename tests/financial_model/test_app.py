@@ -39,15 +39,20 @@ def press(page: AppTest, label: str) -> AppTest:
     next(button for button in page.button if button.label == label).click().run()
     assert not page.exception
     # AppTest does not retain the destination of an in-app st.switch_page call.
-    target = {"Scenarios": "scenarios", "Compare": "compare"}.get(
-        page.title[0].value, "editor"
-    )
+    target = {
+        "Scenarios": "scenarios",
+        "Compare": "compare",
+        "Household": "household",
+        "Goals": "goals",
+    }.get(page.title[0].value, "editor")
     page.switch_page(f"src/financial_model/pages/{target}.py")
     return page
 
 
 def widget(page: AppTest, kind: str, prefix: str):
-    return next(item for item in getattr(page, kind) if item.key.startswith(prefix))
+    return next(
+        item for item in getattr(page, kind) if (item.key or "").startswith(prefix)
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -620,6 +625,9 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     press(page, "Edit")
     assert any("funding gap" in warning.value for warning in page.warning)
     assert [tab.label for tab in page.tabs] == [
+        "Assumptions",
+        "Allocations",
+        "Results",
         "Overview",
         "Cash flow",
         "Compensation",
@@ -808,33 +816,127 @@ def test_allocation_units_preserve_cents_and_edits_across_navigation(scenario):
 
 @pytest.mark.integration
 def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
+    from financial_model.storage import list_goals
+
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     page = editor(scenario)
+    widget(page, "number_input", "adult_0_cash_pay").set_value(120000).run()
+    page.switch_page("src/financial_model/pages/goals.py").run()
+    next(w for w in page.text_input if w.label == "New goal name").set_value("House")
     press(page, "Add goal")
-    next(w for w in page.text_input if w.label == "Goal name").set_value("House")
-    press(page, "Add")
-    plan = page.session_state["draft_data"]["allocation_plan"]
-    house = plan["rows"][-1]["goal"]["id"]
+    house = str(list_goals(database_url)[0].id)
+    page.switch_page("src/financial_model/pages/editor.py").run()
+    assert widget(page, "number_input", "adult_0_cash_pay").value == 120000
+    assert not any(b.label == "Edit goals" for b in page.button)
+    press(page, "Add goal to scenario")
     widget(page, "number_input", f"allocation_cash_{house}").set_value(500).run()
     press(page, "Save")
     (saved,) = list_scenarios(database_url)
     assert saved.inputs.allocation_plan.rows[-1].cash_amount == 6000
-    press(page, "Edit goals")
-    next(w for w in page.selectbox if w.label == "Goal to edit").select(house).run()
-    widget(page, "text_input", "goal_name_").set_value("Home deposit")
-    press(page, "Rename")
-    assert not page.error, [e.value for e in page.error]
+    page.switch_page("src/financial_model/pages/goals.py").run()
+    widget(page, "text_input", f"goal_name_{house}").set_value("Home deposit")
+    next(b for b in page.button if b.key == f"rename_goal_{house}").click().run()
+    assert not page.error
+    # Goal names change globally; the saved snapshot and financial facts do not.
+    assert list_scenarios(database_url) == (saved,)
+    page.switch_page("src/financial_model/pages/editor.py").run()
     assert (
         page.session_state["draft_data"]["allocation_plan"]["rows"][-1]["goal"]["name"]
         == "Home deposit"
     )
     press(page, "Save")
-    (saved,) = list_scenarios(database_url)
-    assert saved.inputs.allocation_plan.rows[-1].goal.name == "Home deposit"
-    assert saved.inputs.allocation_plan.rows[-1].cash_amount == 6000
+    (updated,) = list_scenarios(database_url)
+    assert updated.inputs.allocation_plan.rows[-1].cash_amount == 6000
     fresh = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     press(fresh, "Edit")
     assert (
         fresh.session_state["draft_data"]["allocation_plan"]["rows"][-1]["goal"]["name"]
         == "Home deposit"
     )
+
+
+@pytest.mark.integration
+def test_household_defaults_apply_only_to_new_scenarios(
+    database_url, monkeypatch, scenario
+):
+    from financial_model.schemas import Household
+    from financial_model.storage import load_household, save_household
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    original = create_scenario(
+        database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    )
+    profile = save_household(
+        database_url,
+        Household(
+            tax_year=2026,
+            adults=({"name": "Alex", "age": 32}, {"name": "Sam", "age": 37}),
+        ),
+    )
+    page = editor()
+    assert widget(page, "text_input", "adult_0_name").value == "Alex"
+    widget(page, "number_input", "adult_0_cash_pay").set_value(123456).run()
+    page.switch_page("src/financial_model/pages/household.py").run()
+    widget(page, "text_input", "household_name_0").set_value("Alexandra").run()
+    press(page, "Save household")
+    assert load_household(database_url).revision == profile.revision + 1
+    assert load_scenario(database_url, original.id) == original
+    page.switch_page("src/financial_model/pages/editor.py").run()
+    assert widget(page, "text_input", "adult_0_name").value == "Alex"
+    assert widget(page, "number_input", "adult_0_cash_pay").value == 123456
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    press(page, "New scenario")
+    assert widget(page, "text_input", "adult_0_name").value == "Alexandra"
+    assert widget(page, "selectbox", "year_").value == 2026
+
+
+def test_editor_sections_keep_drafts_and_switch_to_results(scenario):
+    page = editor(scenario)
+    assert [t.label for t in page.tabs] == ["Assumptions", "Allocations", "Results"]
+    widget(page, "number_input", "adult_0_cash_pay").set_value(123456).run()
+    # Tracking the section must not reset inputs in the other tab.
+    page.session_state[f"editor_section_{page.session_state['editor_epoch']}"] = (
+        "Allocations"
+    )
+    page.run()
+    widget(page, "number_input", "allocation_cash_").set_value(500).run()
+    press(page, "Calculate")
+    assert page.session_state["document"].inputs.adults[0].cash_pay == 123456
+    assert page.session_state["document"].inputs.allocation_plan.fixed_cash == 6000
+    assert (
+        page.session_state[f"editor_section_{page.session_state['editor_epoch']}"]
+        == "Results"
+    )
+
+
+@pytest.mark.integration
+def test_removing_allocation_does_not_delete_shared_goal(
+    database_url, monkeypatch, scenario
+):
+    from financial_model.schemas import Goal
+    from financial_model.storage import create_goal, list_goals
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    goal = create_goal(database_url, Goal(name="Travel"))
+    page = editor(scenario)
+    press(page, "Add goal to scenario")
+    assert len(page.session_state["draft_data"]["allocation_plan"]["rows"]) == 3
+    widget(page, "number_input", f"allocation_cash_{goal.id}").set_value(50).run()
+    assert widget(page, "button", f"remove_allocation_{goal.id}").disabled
+    widget(page, "number_input", f"allocation_cash_{goal.id}").set_value(0).run()
+    widget(page, "button", f"remove_allocation_{goal.id}").click().run()
+    assert len(page.session_state["draft_data"]["allocation_plan"]["rows"]) == 2
+    assert list_goals(database_url) == (goal,)
+
+
+def test_household_draft_survives_page_changes_and_reports_invalid_ages():
+    page = editor()
+    page.switch_page("src/financial_model/pages/household.py").run()
+    widget(page, "text_input", "household_name_0").set_value("Alex").run()
+    widget(page, "number_input", "household_age_0").set_value(32).run()
+    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    page.switch_page("src/financial_model/pages/household.py").run()
+    assert widget(page, "text_input", "household_name_0").value == "Alex"
+    assert widget(page, "number_input", "household_age_0").value == 32
+    press(page, "Save household")
+    assert page.error
