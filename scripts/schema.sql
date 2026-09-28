@@ -30,3 +30,15 @@ CREATE TABLE IF NOT EXISTS household (
     CHECK (document ->> 'schema_version' = '1'),
     CHECK ((document ->> 'revision')::integer = revision)
 );
+
+
+CREATE TABLE IF NOT EXISTS wealth_snapshots (
+    id UUID PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    document JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CHECK (document ? 'id' AND document ->> 'id' = id::text),
+    CHECK (document ? 'revision' AND (document ->> 'revision')::integer = revision),
+    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1'),
+    CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'wealth_snapshot')
+);
