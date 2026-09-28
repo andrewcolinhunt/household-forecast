@@ -82,7 +82,7 @@ inventory. NSO exercises, dispositions, and option-pricing models are excluded.
 
 ## Net saving from income
 
-The headline annual measure is:
+The model's net-saving identity is:
 
 ```text
 net saved from income = cash pay + vested RSUs + employer retirement
@@ -96,7 +96,7 @@ additional saving, or option shares does not itself increase this total.
 
 ISO exercise spread can come from options earned in earlier years. It is
 excluded from net saving; exercise-related taxes remain an expense. Acquired
-shares and their cash cost appear separately in **Goal allocations**. The
+shares appear in **Equity compensation**; their cash cost appears in **Cash flow**. The
 reconciliation adds back the exercise cost to cash remaining because that cash
 was moved into shares rather than spent on living costs.
 

@@ -67,19 +67,33 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 See [calculation assumptions](../concepts/index.md) for formulas and coverage.
 
 The shared Monthly / Annual display setting applies to all result tables and
-cash-shortfall warnings. Monthly views divide annual money flows and vesting
+funding-shortfall warnings. Monthly views divide annual money flows and vesting
 counts by 12. Per-share prices and tax rates are unchanged. Display conversion
 does not modify stored inputs or results. Rounding can cause small visible
 differences. Goals require exactly one cash remainder and complete RSU
 percentages when RSUs are present. Result validation checks source conservation
 and verifies allocations against the stored plan.
 
-Overview reconciles cash pay through deductions, expenses, and cash allocations.
-Goal allocations reconciles all asset types separately. Its employee and employer
-contribution rows split the existing `GoalAddition.retirement` total using the
-scenario's contribution destination; they do not create new sources. Display
-labels use **Total allocated to goals**, **Cash shortfall**, and **Net additions
-to assets** for `planned_total`, `funding_gap`, and `net_total`, respectively.
+Cash flow and Equity compensation render the same saved annual snapshot.
+`cash_surplus(result)` adds option exercise cost back to `cash_added`, giving
+cash after taxes, employee 401(k), and living expenses, before new investments.
+`remaining_cash(document)` subtracts fixed planned cash savings from `cash_added`.
+A positive balance is remaining cash; a negative balance equals the funding gap
+with its sign reversed. The remainder goal is not deducted from that balance.
+
+The cash-flow deficit is `max(-cash_surplus, 0)`. The savings and investment
+shortfall is `funding_gap - cash_flow_deficit`. Together they equal the total
+funding gap. There is no per-goal funding priority or assertion of actual funded
+contributions. The retirement summary selects the goal by `retirement_goal_id`,
+not its name, and splits employee and employer contributions without creating
+new sources. It includes any cash remainder assigned to that goal.
+
+Equity compensation reconciles gross RSU value, taxes funded from shares, and
+retained shares designated for goals. Informational option awards remain
+separate from actual ISO exercises. Exercised shares are shown at exercise-date
+FMV in the equity view, and at exercise cost in the retirement summary; no option
+spread is included in planned savings. Display changes do not require database
+migration or change saved financial assumptions.
 
 Effective tax rate uses gross wages before 401(k) deductions, excludes employer
 contributions and option values from its denominator, and may be negative when

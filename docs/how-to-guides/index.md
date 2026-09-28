@@ -15,14 +15,14 @@ referenced by a saved scenario or an open draft cannot be deleted from this page
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its title,
-location, tax year, each person's employer, net additions per year,
-and the annual cash shortfall.
+location, tax year, each person's employer, annual cash surplus or deficit,
+and remaining cash after planned savings and investments.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
 - Choose **Edit** to open a scenario. **Assumptions** contains the year, state,
-  family facts, employment, compensation, and expenses. **Allocations** assigns
-  that scenario's annual assets to goals. **Results** shows its calculated views.
+  family facts, employment, compensation, and expenses. **Savings goals** sets
+  additional savings and the intended use of retained shares and contributions. **Results** shows its calculated views.
 - **Calculate** opens Results without saving. **Save** calculates and saves the
   current inputs and matching results, then opens Results.
 - **Unsaved changes** identifies edits that are not in the shared database.
@@ -56,16 +56,16 @@ that change. Keep your version with **Save as new scenario**, or use
 **Reload saved version → Discard edits and reload** when a saved version still
 exists. **Refresh** updates the library without replacing your drafts.
 
-## Allocate assets to goals
+## Set savings goals
 
-In the editor's **Allocations** section:
+In the editor's **Savings goals** section:
 
-1. Choose monthly or annual cash entry. Enter fixed amounts and choose one goal
-   for the cash remainder. The app stores exact annual amounts.
-2. Divide retained RSUs across goals, totaling 100% when RSUs are present.
+1. Choose monthly or annual entry. Enter planned additional savings and choose
+   a destination for remaining cash. The app stores exact annual amounts.
+2. Designate retained RSU shares for goals, totaling 100% when RSUs are present.
 3. Assign existing 401(k)/employer contributions and exercised option shares to
    goals. These amounts are calculated from compensation, not entered again.
-4. Choose **Calculate**, review the allocations and cash shortfall, then save.
+4. Choose **Calculate**, review Cash flow and Equity compensation, then save.
 
 **Add goal to scenario** includes an existing shared goal with zero allocations.
 Use **Manage household goals** to create or rename goals on the Goals page.
@@ -73,11 +73,13 @@ Use **Manage household goals** to create or rename goals on the Goals page.
 cash, RSUs, and contribution destinations first, then save the scenario.
 
 Retirement, House, and Available to spend are editable names, not special goal
-types. Available to spend is still held cash; actual spending belongs in living
-costs. Assigning shares does not sell them, and assigning cash does not invest it.
+types. **Available to spend** identifies the default destination for remaining
+cash. Cash flow displays this residual as a positive balance, without deducting
+it again as savings. Actual spending belongs in living expenses. Designating
+shares for a goal does not sell them, and designating cash does not invest it.
 
 If fixed cash allocations exceed available cash, the remainder is zero and the
-plan shows a cash shortfall. Such scenarios can still be saved and compared.
+plan shows a funding shortfall. Such scenarios can still be saved and compared.
 
 ## Compare scenarios
 
@@ -86,14 +88,14 @@ Remove a selection with its × button; this does not delete the saved scenario.
 Selections stay in place when you switch pages. All selected scenarios must use
 the same tax year and current calculation rules.
 
-Choose **Monthly** or **Annual** once for all three views. Money amounts,
+Choose **Monthly** or **Annual** once for both views. Money amounts,
 vesting counts, and their differences use that period; per-share prices and tax
 rates stay unchanged. Monthly values are averages of the modeled year, not a
 paycheck or vesting schedule. The period stays selected when you switch pages.
 
 Each view uses a table with the same scenario columns and order. On a narrow
 screen, scroll horizontally while row labels stay visible. Expand
-**How these numbers are calculated** or **Definitions** for formulas and inputs.
+**Definitions** for formulas and inputs.
 
 Column headings and cards show the title above year and employer details. State
 appears in the details when a custom label replaces the automatic title.
@@ -108,42 +110,46 @@ details to distinguish identical copies. The database does not store creation
 dates. Draft and snapshot labels remain separate. Notes do not count as a change
 to financial assumptions.
 
-**Overview** is the cash-flow view. It starts with gross salary and bonus,
-subtracts taxes paid from cash and employee 401(k) contributions, then living
-costs and any ISO share purchases. It shows cash available before goals, each
-cash allocation, and the resulting cash shortfall. Minus signs show outflows.
-If cash is already negative before goals, expenses and deductions exceed cash
-pay even without additional goal saving. Zero shortfall means all cash has a
-purpose; it does not mean there is no spending money.
+**Cash flow** shows salary and bonus, taxes paid from cash, employee 401(k)
+contributions, and living expenses. **Cash surplus / deficit** is the balance
+before additional savings and option exercises. Planned savings by goal and
+option exercise costs are deducted next. **Remaining cash / funding shortfall**
+is positive when cash remains and negative when the plan needs funding.
+The cash destination is shown under **Remaining cash and funding shortfalls**;
+it is not another deduction.
+
+That detail also separates a **cash-flow deficit** (income cannot cover taxes,
+employee contributions, and living expenses) from a **savings and investment
+shortfall** (additional funding needed for planned savings and option purchases).
+No borrowing, reserve withdrawal, or extra share sale is assumed. The model does
+not assign funding priorities or claim that a specific goal absorbs a shortfall.
+
+Below the cash table, **Retirement savings** breaks down the goal receiving
+retirement contributions: employee 401(k), employer contributions, additional
+savings, retained RSU shares, and any option shares at exercise cost. This is a
+breakdown of existing sources, not another cash deduction. The total is planned
+when funding is insufficient. It includes remaining cash if that goal is its
+designated destination.
 
 Health insurance and other deductions not entered separately belong in the
-living-cost budget once. The subtotal after taxes and 401(k) is before those
-budgeted deductions. Expense inputs do not reduce taxable wages.
+living-expense budget once. Expense inputs do not reduce taxable wages.
 
 **Effective tax rate** includes federal/state income taxes and employee payroll
-taxes, divided by gross salary, bonus, and vested RSUs. It includes RSU-funded
-taxes and any modeled ISO exercise tax. It excludes employer contributions and
-option values from the denominator. Zero wages show **N/A**.
+taxes, divided by salary, bonus, and vested RSUs. It includes taxes funded from
+shares and any modeled ISO exercise tax. It excludes employer contributions and
+option values from the denominator. Zero wages show **N/A**. Expand **Tax
+breakdown** to reconcile total taxes to the portion paid from cash.
 
-**Compensation** separates salary and bonus, RSUs vesting before tax, and
-employer retirement contributions. Expand **By person** to see each adult's
-amounts. The separate options table shows vesting counts, per-share
-prices, share value if exercised, cost to exercise, and value above cost.
-An unknown estimate stays unknown; a dash means no matching person or award.
+**Equity compensation** follows RSU value at vesting through taxes funded from
+vested shares to shares retained and their savings goals. **Stock options** shows
+vesting counts, per-share prices, share value if exercised, exercise cost, and
+estimated intrinsic value. These award estimates do not enter cash flow or
+funded savings. An unknown estimate stays unknown; a dash means no matching
+person or award. Modeled **Option exercises** appear separately, with shares
+acquired, exercise cost, exercise-date value, and savings goal. Their cost also
+appears in Cash flow once.
 
-**Goal allocations** separates each goal's cash, your 401(k), employer
-contributions, retained RSUs, and option shares at purchase cost. Retirement is
-a purpose that can include several accounts and asset types. A single scenario
-shows asset columns; comparisons show scenario columns with an expandable
-**funding breakdown** for each goal. Exercise spread is shown separately and
-excluded from goal funding.
-
-**Total allocated to goals** sums those sources once. **Net additions to assets**
-subtracts the cash shortfall. These amounts include restricted assets and are
-not take-home cash. A shortfall means the allocations are planned, not fully
-funded; no withdrawal, borrowing, or additional share sale is assumed.
-
-The editor uses the same three views. This is a one-year budget, not a retirement
+The editor uses the same two views. This is a one-year budget, not a retirement
 projection. Existing asset balances, investment growth, and future retirement
 needs are not included.
 
@@ -171,8 +177,10 @@ In each adult's **Stock option award** section, select **Include an option
 award**. Enter ISO or NSO, the number vesting this year, and exercise price per
 share. Enter an assumed share value if known; leave it blank otherwise.
 
-The **Compensation** view shows option awards separately and estimates the value
-above exercise cost before tax.
+The **Equity compensation** view shows option awards separately. **Estimated
+intrinsic value** is the number vesting multiplied by the positive difference
+between assumed share value and exercise price. It excludes taxes and time value;
+it is not sale proceeds.
 This describes this year's vesting, not the full multiyear grant or all vested
 options. It does not change cash, taxes, or saving totals, and a share-value
 estimate does not imply that the shares can be sold.
