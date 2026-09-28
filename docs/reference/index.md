@@ -13,7 +13,7 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 | `ISOExercise` | Qualifying shares exercised and held, strike price, exercise-date fair market value |
 | `DependentInputs` | Qualifying child's year-end age |
 | `LivingCosts` | Monthly rent/childcare/other; annual eligible care expense; CA renter eligibility |
-| `Scenario` | Optional custom label (`name`), year, state, exactly two adults, children, costs, allocation plan, notes, confirmed household facts |
+| `Scenario` | Optional custom label (`name`), year, state, exactly two adults, children, costs, allocation plan, RSU tax funding choice, notes, confirmed household facts |
 | `TaxResult` | Federal/state income tax, employee payroll components, included AMT detail, coverage and engine versions |
 | `ScenarioResult` | Annual asset sources, goal allocations and funding gap, tax result, input digest and calculation provenance |
 | `HouseholdPerson` | Shared name and age defaults, without employment or compensation |
@@ -97,7 +97,7 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 | `allocations.planned_total` | All requested goal additions, including unfunded cash |
 | `allocations.funding_gap` | Fixed cash allocations minus cash available, floored at zero |
 | `allocations.net_total` | Planned total less funding gap |
-| `rsu_tax_funding` | Incremental tax paid from vested RSUs |
+| `rsu_tax_funding` | Incremental tax paid from vested RSUs when `rsu_taxes_from_shares` is true; zero otherwise |
 | `retained_rsus` | Gross vested RSUs less their tax funding |
 | `option_value` | Purchased shares at exercise-date FMV, shown separately from goal funding |
 | `net_saved_from_income` | Cash pay + RSUs + employer retirement − taxes − living costs; equals allocation net total |

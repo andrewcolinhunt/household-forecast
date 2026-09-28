@@ -69,6 +69,65 @@ def local_preview(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_database_url", lambda: None)
 
 
+@pytest.mark.integration
+def test_rsu_tax_toggle_preserves_drafts_saves_and_comparison(
+    scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financial_model.storage import import_backup
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    data = scenario.model_dump(mode="json")
+    data["adults"][0]["rsu_vesting"] = 30000
+    page = editor(Scenario.model_validate(data))
+    assert widget(page, "toggle", "rsu_taxes_from_shares").value
+    press(page, "Save")
+    original = list_scenarios(database_url)[0]
+    assert original.result.rsu_tax_funding > 0
+    widget(page, "toggle", "rsu_taxes_from_shares").set_value(False).run()
+    for target in ("household", "editor"):
+        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+    assert not widget(page, "toggle", "rsu_taxes_from_shares").value
+    assert page.session_state["document"] == original
+    assert load_scenario(database_url, original.id) == original
+    press(page, "Calculate")
+    calculated = page.session_state["document"]
+    assert not calculated.inputs.rsu_taxes_from_shares
+    assert calculated.result.rsu_tax_funding == 0
+    assert calculated.result.retained_rsus == 30000
+    assert calculated.result.cash_funded_tax == calculated.result.taxes.total
+    assert calculated.result.taxes == original.result.taxes
+    assert calculated.result.effective_tax_rate == original.result.effective_tax_rate
+    assert (
+        original.result.cash_added - calculated.result.cash_added
+        == calculated.result.retained_rsus - original.result.retained_rsus
+        == original.result.rsu_tax_funding
+    )
+    press(page, "Save")
+    saved = load_scenario(database_url, original.id)
+    assert not saved.inputs.rsu_taxes_from_shares
+    assert not import_backup(saved.model_dump_json().encode()).rsu_taxes_from_shares
+
+    second = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    press(second, "Edit")
+    assert not widget(second, "toggle", "rsu_taxes_from_shares").value
+    second.switch_page("src/financial_model/pages/scenarios.py").run()
+    press(second, "Duplicate")
+    assert not widget(second, "toggle", "rsu_taxes_from_shares").value
+    widget(second, "toggle", "rsu_taxes_from_shares").set_value(True).run()
+    press(second, "Save")
+    assert len(list_scenarios(database_url)) == 2
+    assert load_scenario(database_url, original.id) == saved
+    second.switch_page("src/financial_model/pages/compare.py").run()
+    assert not second.exception
+    assert any(
+        "RSU taxes paid from: Cash" in choice.label for choice in second.checkbox
+    )
+    assert any(
+        "RSU taxes paid from: Vested shares" in choice.label
+        for choice in second.checkbox
+    )
+
+
 def test_main_requires_household_facts() -> None:
     page = editor()
     press(page, "Calculate")

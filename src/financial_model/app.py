@@ -214,7 +214,7 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
             data.get(field),
             f"{prefix}_{field}",
             help_text={
-                "rsu_vesting": "Assumes shares are delivered at vesting and enough can be sold to pay vesting taxes. The remaining shares stay separate from cash.",
+                "rsu_vesting": "Shares are delivered and taxed at vesting. Use the tax-payment toggle under Compensation to choose whether shares or cash pay their taxes. Retained shares stay separate from cash.",
                 "employee_401k": "Traditional pretax contributions. Roth contributions are not modeled.",
             }.get(field),
         )
@@ -613,6 +613,14 @@ def _form(
             help="Ages at year end, separated by commas. Leave blank for none. Supported ages: 0-17.",
         )
         st.subheader("Compensation")
+        rsu_taxes_from_shares = st.toggle(
+            "Use vested shares to pay their taxes",
+            value=data.get("rsu_taxes_from_shares", True),
+            key=_key("rsu_taxes_from_shares"),
+            help="On: sell enough vested RSUs to cover the taxes attributed to them. "
+            "Off: cash pays all taxes and all vested RSUs are retained. "
+            "Applies to both adults; total taxes are unchanged.",
+        )
         adults = []
         for index, column in enumerate(st.columns(2)):
             with column:
@@ -641,6 +649,7 @@ def _form(
         "adults": adults,
         "living_costs": living,
         "allocation_plan": allocation_plan,
+        "rsu_taxes_from_shares": rsu_taxes_from_shares,
         "notes": notes,
         "assumptions_confirmed": confirmed,
     }
@@ -1106,7 +1115,7 @@ def _assumptions() -> None:
             "up to the base annual limit ($23,500 in 2025; $24,500 in 2026). No catch-up contributions, "
             "Roth contributions, itemized deductions, health savings or flexible spending deductions, investment/business "
             "income, stock dispositions, or existing AMT credits.\n\n"
-            "RSUs fund their incremental tax and the remaining shares are retained. Personal savings are funded "
+            "Choose whether vested RSUs fund their incremental tax or cash pays all taxes. Retained shares stay separate from cash. Personal savings are funded "
             "through savings goals. Option exercises use cash and may create AMT. "
             "Tax amounts estimate annual liability, not paycheck withholding. Average monthly cash is annual cash divided by 12."
         )

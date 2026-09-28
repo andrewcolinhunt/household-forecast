@@ -14,7 +14,7 @@ from financial_model.taxes import calculate_taxes
 def _rsu_tax_funding(scenario: Scenario, taxes: TaxResult) -> Decimal:
     """Allocate incremental wage tax to a sale of at most all vested RSUs."""
     rsus = sum((adult.rsu_vesting for adult in scenario.adults), ZERO)
-    if not rsus:
+    if not rsus or not scenario.rsu_taxes_from_shares:
         return ZERO
     without_options = (
         calculate_taxes(scenario, include_iso=False)

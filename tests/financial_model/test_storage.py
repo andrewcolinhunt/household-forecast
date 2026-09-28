@@ -131,8 +131,10 @@ def test_legacy_backup_loads_with_missing_employer_details(
     raw = document.model_dump_json()
     assert '"employer":' not in raw
     assert '"not_working":' not in raw
+    assert '"rsu_taxes_from_shares":' not in raw
     restored = SavedScenario.model_validate_json(raw)
     assert restored == document
+    assert restored.inputs.rsu_taxes_from_shares
     assert restored.inputs.digest() == document.inputs.digest()
     assert all(
         person.employer is None and not person.not_working

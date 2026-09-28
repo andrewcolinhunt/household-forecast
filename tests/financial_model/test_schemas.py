@@ -100,6 +100,31 @@ def test_scenario_json_round_trip(scenario: Scenario) -> None:
         restored.name = "Changed"
 
 
+def test_rsu_tax_funding_default_preserves_digest_and_cash_choice_round_trips(
+    scenario: Scenario,
+) -> None:
+    import hashlib
+
+    legacy_json = scenario.model_dump_json(exclude={"rsu_taxes_from_shares"})
+    assert scenario.rsu_taxes_from_shares
+    assert scenario.digest() == hashlib.sha256(legacy_json.encode()).hexdigest()
+    assert "rsu_taxes_from_shares" not in scenario.model_dump()
+    cash = Scenario.model_validate(
+        scenario.model_dump() | {"rsu_taxes_from_shares": False}
+    )
+    assert cash.digest() != scenario.digest()
+    assert cash.model_dump()["rsu_taxes_from_shares"] is False
+    assert Scenario.model_validate_json(cash.model_dump_json()) == cash
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+def test_rsu_tax_funding_requires_boolean(scenario: Scenario, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Scenario.model_validate(
+            scenario.model_dump() | {"rsu_taxes_from_shares": value}
+        )
+
+
 def test_iso_exercise_fractional_price_and_negative_spread() -> None:
     option = ISOExercise(shares=100, strike="1.001", fair_market_value="0.9")
     assert option.cost == Decimal("100.10")

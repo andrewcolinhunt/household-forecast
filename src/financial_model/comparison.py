@@ -615,7 +615,7 @@ def equity_html(
         html
         + _definitions(
             {
-                "RSUs": "The model assumes shares are delivered at vesting and enough can be sold to fund their incremental taxes. Retained shares are valued at vesting; they are not cash. Savings goals identify their intended use without selling or transferring them.",
+                "RSUs": "Shares are delivered and taxed at vesting. Each plan chooses whether vested shares fund their incremental taxes or cash pays all taxes. With cash funding, all vested shares are retained. Retained shares are valued at vesting; they are not cash. Savings goals identify their intended use without selling or transferring them.",
                 "Stock options": "Vesting counts describe this year's vesting, not the full grant or all vested options. Monthly counts and values are annual averages. Per-share prices are unchanged. Unexercised awards are excluded from cash flow and funded savings.",
                 "Estimated intrinsic value": "Options vesting multiplied by the positive difference between assumed share value and exercise price. Excludes taxes and time value; it is not sale proceeds. A zero intrinsic value does not mean the option has no potential value. A sale may not be possible.",
                 "Option exercises": "Exercise cost purchases shares; it is not a living expense. Share value uses exercise-date fair market value, not sale proceeds. Any modeled exercise tax is included in the tax calculation. Unexercised award estimates do not affect taxes.",

@@ -41,7 +41,7 @@ still change even if it is easy to sell. The app keeps these distinctions visibl
 | --- | --- | --- |
 | Cash | Available without selling shares or withdrawing retirement funds | Net cash added after expenses, retirement contributions, and ISO exercise costs |
 | Retirement | Withdrawal restrictions apply; employer plan vesting is not modeled | Contributions, before any future withdrawal taxes |
-| RSU shares | Shares delivered at vesting; sale restrictions may apply | Estimated vesting value after taxes, subject to price changes |
+| RSU shares | Shares delivered at vesting; sale restrictions may apply | Vesting value less any taxes funded from shares, subject to price changes |
 | Exercised option shares | Shares owned; ability to sell is not recorded | Exercise-date value, not guaranteed sale proceeds |
 | Unexercised options | Rights to buy shares; exercise needs funding and sale may be unavailable | An uncertain estimate shown separately from saving totals |
 
@@ -50,21 +50,29 @@ equal this amount. Annual additions are not existing balances, and combined goal
 amounts are not all available to spend.
 
 The model does not record public/private company status or trading restrictions.
-It assumes RSU shares are delivered at vesting and that enough can be sold to
-cover their taxes. It does not model private RSUs with delayed settlement or no
-sale available for tax funding. No share holdings are counted as available cash.
+It assumes RSU shares are delivered and taxed at vesting. Share-funded taxes
+also assume enough shares can be sold at their vesting value; cash-funded taxes
+retain all vested shares. Delayed settlement is not modeled. No share holdings
+are counted as available cash.
 
 See FINRA's explanations of [liquidity and investment risk](https://www.finra.org/investors/investing/investing-basics/risk)
 and [employee stock awards](https://syndication.finra.org/content/questions-employees-should-ask-about-stock-awards).
 
 ## RSUs and ISO shares
 
-RSUs count as wages once, at vesting. The model assumes enough vested shares are
-sold to pay the incremental taxes attributable to RSUs. It calculates taxes on
+RSUs count as wages once, at vesting. By default, enough vested shares are
+sold to pay the incremental taxes attributable to RSUs. The model calculates taxes on
 cash wages alone, then on cash plus RSUs, holding other facts fixed and excluding
 ISO spread from both calculations. The difference, bounded between zero and
 gross RSUs, is funded from RSUs. Remaining tax, including ISO-related AMT, is
 funded from cash.
+
+Turning off **Use vested shares to pay their taxes** makes cash pay all taxes
+and retains all vested RSUs. Total tax, effective tax rate, and net additions
+from income are unchanged: cash falls by the amount no longer funded from
+shares, while retained shares rise by the same amount. Cash goal funding and
+shortfalls reflect the lower cash balance. The choice applies to both adults
+and is saved independently for each annual plan.
 
 ISO exercise-and-hold uses cash equal to shares × strike price. Purchased shares
 are valued at shares × exercise-date fair market value. Positive exercise

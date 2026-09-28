@@ -109,6 +109,9 @@ def _assumptions(inputs: Scenario) -> dict[str, str]:
     """Describe every variable assumption with its person and units."""
     costs = inputs.living_costs
     facts = {
+        "RSU taxes paid from": "Vested shares"
+        if inputs.rsu_taxes_from_shares
+        else "Cash",
         "Rent": f"${_number(costs.rent)}/mo",
         "Childcare": f"${_number(costs.childcare)}/mo",
         "Other living expenses": f"${_number(costs.other)}/mo",

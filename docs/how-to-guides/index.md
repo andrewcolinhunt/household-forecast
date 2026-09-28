@@ -107,6 +107,17 @@ someone is not working. Checking the box removes the current employer when you
 calculate or save; it does not change any compensation amounts. Set those
 separately. Employer details follow the same calculate/save process as other inputs.
 
+Under **Compensation**, toggle **Use vested shares to pay their taxes**:
+
+- **On** (default): vested RSUs cover the taxes attributed to them; the remaining
+  shares are retained.
+- **Off**: cash pays all taxes and all vested RSUs are retained. This leaves less
+  cash for spending and savings goals and can create a cash shortfall.
+
+The setting applies to both adults in this annual plan. Total taxes and the
+effective tax rate stay the same. Choose **Calculate** to preview the result or
+**Save** to keep it. Duplicate a plan to compare both choices side by side.
+
 Edits stay in your browser session when you switch pages or open another
 scenario. Use a scenario's **Edit** button or the **Unsaved drafts** section to
 return. Save before closing the browser.

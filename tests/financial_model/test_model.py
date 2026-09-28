@@ -32,10 +32,12 @@ def tax_result(amount: int) -> TaxResult:
     )
 
 
+@pytest.mark.parametrize("from_shares", [True, False])
 def test_evaluate_scenario_annual_accounting(
-    monkeypatch: pytest.MonkeyPatch, scenario: Scenario
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario, from_shares: bool
 ) -> None:
     data = scenario.model_dump(mode="json")
+    data["rsu_taxes_from_shares"] = from_shares
     data["adults"][0].update(
         rsu_vesting=20000, employee_401k=20000, employer_retirement_rate="0.04"
     )
@@ -53,18 +55,24 @@ def test_evaluate_scenario_annual_accounting(
 
     monkeypatch.setattr(model, "calculate_taxes", taxes)
     result = model.evaluate_scenario(scenario)
-    assert calls == [(True, True), (True, False), (False, False)]
+    assert calls == (
+        [(True, True), (True, False), (False, False)] if from_shares else [(True, True)]
+    )
+    funding = 6000 if from_shares else 0
     assert result.gross_rsus == 30000
-    assert result.rsu_tax_funding == 6000
-    assert result.retained_rsus == 24000
-    assert result.cash_funded_tax == 41000
+    assert result.rsu_tax_funding == funding
+    assert result.retained_rsus == 30000 - funding
+    assert result.cash_funded_tax == 47000 - funding
     assert result.employee_401k == 20000
     assert result.employer_retirement == 4000
     assert result.option_cost == 2000
     assert result.option_value == 5000
-    assert result.cash_added == 65000
+    assert result.cash_added == 59000 + funding
     assert result.net_saved_from_income == 115000
-    assert result.investments_added == 50000
+    assert result.investments_added == 56000 - funding
+    assert sum(row.rsus for row in result.allocations.rows) == 30000 - funding
+    assert result.taxes.total == 47000
+    assert result.effective_tax_rate == Decimal(47000) / 230000
     assert result.cash_added + result.investments_added == result.net_saved_from_income
     assert (
         result.net_saved_from_income
@@ -123,6 +131,50 @@ def test_evaluate_scenario_equity_funding_bounds(
     assert result.rsu_tax_funding == expected_funding
     assert result.retained_rsus >= 0
     assert result.cash_funded_tax + result.rsu_tax_funding == result.taxes.total
+
+
+def test_cash_funded_rsu_taxes_reduce_cash_without_selling_retained_shares(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario
+) -> None:
+    from financial_model.allocations import fund_cash_goals
+
+    data = scenario.model_dump(mode="json")
+    data["adults"][0]["rsu_vesting"] = 30000
+    data["living_costs"]["rent"] = 13000
+    data["allocation_plan"]["rows"][0]["cash_amount"] = 1000
+    monkeypatch.setattr(
+        model,
+        "calculate_taxes",
+        lambda inputs, *, include_rsus=True, **kwargs: tax_result(
+            50000 if include_rsus else 40000
+        ),
+    )
+    shares = model.evaluate_scenario(Scenario.model_validate(data))
+    inputs = Scenario.model_validate(data | {"rsu_taxes_from_shares": False})
+    cash = model.evaluate_scenario(inputs)
+    assert shares.cash_added == 4000
+    assert cash.cash_added == -6000
+    assert cash.retained_rsus - shares.retained_rsus == 10000
+    assert shares.taxes == cash.taxes
+    assert shares.net_saved_from_income == cash.net_saved_from_income == 24000
+    assert cash.allocations.funding_gap == 7000
+    funded = fund_cash_goals(inputs.allocation_plan, cash.cash_added)
+    assert funded.rows[0].funded == 0
+    assert funded.remaining == -6000
+
+
+@pytest.mark.parametrize("rsus", [0, 1000])
+def test_cash_funded_taxes_preserve_refunds_and_zero_rsus(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario, rsus: int
+) -> None:
+    data = scenario.model_dump(mode="json") | {"rsu_taxes_from_shares": False}
+    data["adults"][0]["rsu_vesting"] = rsus
+    monkeypatch.setattr(model, "calculate_taxes", lambda inputs: tax_result(-1000))
+    result = model.evaluate_scenario(Scenario.model_validate(data))
+    assert result.rsu_tax_funding == 0
+    assert result.cash_funded_tax == -1000
+    assert result.retained_rsus == rsus
+    assert result.cash_added == 201000
 
 
 def test_evaluate_scenario_negative_cash(
@@ -202,6 +254,26 @@ def test_saved_scenario_result_integrity(
     corrupted = result.model_dump() | {"cash_added": 999}
     with pytest.raises(ValidationError, match="does not reconcile"):
         ScenarioResult.model_validate(corrupted)
+
+
+def test_saved_scenario_rejects_share_funding_when_cash_was_selected(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario
+) -> None:
+    data = scenario.model_dump(mode="json")
+    data["adults"][0]["rsu_vesting"] = 1000
+    shares = Scenario.model_validate(data)
+    monkeypatch.setattr(
+        model,
+        "calculate_taxes",
+        lambda inputs, *, include_rsus=True, **kwargs: tax_result(
+            10000 + 200 * include_rsus
+        ),
+    )
+    result = model.evaluate_scenario(shares)
+    cash = Scenario.model_validate(data | {"rsu_taxes_from_shares": False})
+    result = result.model_copy(update={"input_digest": cash.digest()})
+    with pytest.raises(ValidationError, match="does not match"):
+        SavedScenario(inputs=cash, result=result)
 
 
 def test_saved_scenario_without_awards_keeps_original_digest(

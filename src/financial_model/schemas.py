@@ -320,6 +320,10 @@ class Scenario(ValueModel):
     dependents: Annotated[tuple[DependentInputs, ...], Field(max_length=10)] = ()
     living_costs: LivingCosts = Field(default_factory=LivingCosts)
     allocation_plan: AllocationPlan = Field(default_factory=default_allocation_plan)
+    # The existing share-funded default keeps saved input digests unchanged.
+    rsu_taxes_from_shares: Annotated[bool, Field(strict=True)] = Field(
+        default=True, exclude_if=lambda value: value
+    )
     notes: Annotated[str, Field(max_length=2000)] = ""
     filing_status: Literal["married_filing_jointly"] = "married_filing_jointly"
     deduction_method: Literal["standard"] = "standard"
@@ -494,6 +498,7 @@ class SavedScenario(ValueModel):
             self.result.input_digest != self.inputs.digest()
             or self.result.tax_year != self.inputs.tax_year
             or self.result.state != self.inputs.state
+            or (not self.inputs.rsu_taxes_from_shares and self.result.rsu_tax_funding)
         ):
             message = (
                 "Saved result does not match its scenario inputs. Recalculate first."
