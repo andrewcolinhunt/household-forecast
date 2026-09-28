@@ -858,7 +858,7 @@ def _tax_detail(result: ScenarioResult, period: Period) -> None:
 
 def compare_page() -> None:
     """Compare two to four saved scenarios or explicitly calculated session results."""
-    st.title("Compare")
+    st.title("Compare annual plans")
     records = st.session_state["records"]
     choices = {str(record.id): record for record in records}
     document = st.session_state.get("document")
@@ -919,7 +919,7 @@ def _comparison_checklist(
     displays: dict[str, ScenarioDisplay], selected: list[str]
 ) -> None:
     """Keep every choice visible and in place as column selection changes."""
-    st.subheader("Scenarios")
+    st.subheader("Annual plans")
     st.caption(
         "Choose two to four. Check scenarios in the order you want their columns. "
         "Unchecking only removes a scenario from this comparison."
@@ -1283,7 +1283,7 @@ def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
 
 def scenarios_page() -> None:
     """List saved household scenarios and provide entry points to their drafts."""
-    st.title("Scenarios")
+    st.title("Annual plans")
     with st.container(horizontal=True):
         if st.button("New scenario", type="primary"):
             _open_editor()
@@ -1333,8 +1333,10 @@ def main() -> None:
             st.Page(str(HOUSEHOLD_PAGE), title="Household", url_path="household"),
             st.Page(str(GOALS_PAGE), title="Goals", url_path="goals"),
             st.Page(str(WEALTH_PAGE), title="Wealth", url_path="wealth"),
-            st.Page(str(SCENARIOS_PAGE), title="Scenarios", default=True),
-            st.Page(str(COMPARE_PAGE), title="Compare", url_path="compare"),
+            st.Page(str(SCENARIOS_PAGE), title="Annual plans", default=True),
+            st.Page(
+                str(COMPARE_PAGE), title="Compare annual plans", url_path="compare"
+            ),
             st.Page(
                 str(EDITOR_PAGE),
                 title="Scenario editor",

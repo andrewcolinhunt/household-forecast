@@ -40,8 +40,8 @@ def press(page: AppTest, label: str) -> AppTest:
     assert not page.exception
     # AppTest does not retain the destination of an in-app st.switch_page call.
     target = {
-        "Scenarios": "scenarios",
-        "Compare": "compare",
+        "Annual plans": "scenarios",
+        "Compare annual plans": "compare",
         "Household": "household",
         "Goals": "goals",
     }.get(page.title[0].value, "editor")
@@ -358,10 +358,10 @@ def test_main_invalid_backup_keeps_existing_results(
 def test_main_starts_with_library() -> None:
     page = AppTest.from_file(str(ENTRY)).run()
     assert not page.exception
-    assert page.title[0].value == "Scenarios"
+    assert page.title[0].value == "Annual plans"
     assert not page.number_input
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert page.title[0].value == "Compare"
+    assert page.title[0].value == "Compare annual plans"
     assert not page.number_input
 
 
@@ -633,7 +633,7 @@ def test_compare_results_adds_draft_to_selection(scenario: Scenario) -> None:
     widget(page, "number_input", "adult_0_cash_pay").set_value(150000).run()
     press(page, "Calculate")
     press(page, "Compare results")
-    assert page.title[0].value == "Compare"
+    assert page.title[0].value == "Compare annual plans"
     assert page.session_state["comparison_selection"] == ["draft", "snapshot"]
     assert page.tabs
 

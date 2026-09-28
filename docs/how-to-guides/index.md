@@ -78,7 +78,7 @@ do not include future vesting again in opening account balances.
 
 ## Create and edit scenarios
 
-**Scenarios** is the home page. Each saved scenario shows its title,
+**Annual plans** is the home page. Each saved scenario shows its title,
 location, tax year, each person's employer, annual cash surplus or deficit,
 and cash available for spending after funding goals.
 
@@ -145,9 +145,9 @@ If there is not enough cash, later goals are partly funded or unfunded. Their
 planned amounts stay unchanged. Retained shares and 401(k) contributions keep
 their assigned goals; they are not sold or withdrawn to cover cash shortfalls.
 
-## Compare scenarios
+## Compare annual plans
 
-Open **Compare** in the top navigation and check two to four scenarios in the
+Open **Compare annual plans** in the top navigation and check two to four scenarios in the
 visible list. The order you check them sets the table's column order. Checked
 scenarios show **Column 1**, **Column 2**, and so on; the checklist itself stays
 in place. Use **Move left** or **Move right** under **Column order** to reorder
@@ -246,7 +246,7 @@ through year end. NSO exercises and share sales are not supported.
 
 ## Delete a scenario
 
-In **Scenarios**, choose **Delete** on the scenario's card. Check the name
+In **Annual plans**, choose **Delete** on the scenario's card. Check the name
 in the confirmation dialog, then choose **Delete scenario** or **Cancel**.
 Deletion removes the shared record for both people and its draft in your current
 session. It cannot be undone. Download a backup first if you want to keep a copy.
@@ -258,7 +258,7 @@ An open draft in another session can only be saved as a new scenario.
 ## Back up and recover
 
 In the editor's **Results → Backups** section, download the last calculated scenario as
-JSON. To restore it, upload the file under **Backups** in Scenarios or the editor and choose
+JSON. To restore it, upload the file under **Backups** in Annual plans or the editor and choose
 **Load backup as new draft**, then calculate and save. Imports are limited to
 1 MB and the supported schema. Keep these files private: they contain household
 financial inputs. Backups exclude edits made after the last calculation.
