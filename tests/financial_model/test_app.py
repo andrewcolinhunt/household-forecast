@@ -90,7 +90,10 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
     assert "+$20,000</span>" in rendered
     assert "+$1,667</span>" in rendered
-    assert "Cash surplus / shortfall" in rendered
+    assert "Cash left after saving" in rendered
+    assert "Cash saved / month" in rendered
+    assert "Investments added / year" in rendered
+    assert "Effective tax rate" in rendered
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
 
@@ -602,7 +605,14 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (shortfall, other))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    assert page.metric[0].label == "Monthly cash shortfall"
+    assert page.metric[0].label == "Cash saved / month"
+    assert (
+        page.metric[0].value
+        == f"\N{MINUS SIGN}${abs(shortfall.result.cash_added) / 12:,.0f}"
+    )
+    assert page.metric[1].label == "Investments added / year"
+    assert page.metric[1].value == f"${shortfall.result.investments_added:,.0f}"
+    assert any("cash shortfall" in caption.value for caption in page.caption)
     press(page, "Edit")
     assert any("cash shortfall" in warning.value for warning in page.warning)
     assert [tab.label for tab in page.tabs] == [

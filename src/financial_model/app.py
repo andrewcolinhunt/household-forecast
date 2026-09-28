@@ -13,6 +13,7 @@ import streamlit as st
 from pydantic import ValidationError
 
 from financial_model.comparison import (
+    _number,
     cash_flow_html,
     compensation_html,
     overview_html,
@@ -507,17 +508,18 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
         "Taxes funded by RSUs": result.rsu_tax_funding,
         "Taxes funded by cash": result.cash_funded_tax,
         "Employee 401(k)": result.employee_401k,
-        "Additional personal savings": result.extra_savings,
+        "Planned cash saving": result.extra_savings,
         "Employer retirement": result.employer_retirement,
         "Living costs": result.living_cost,
         "ISO purchase cost": result.option_cost,
-        "Remaining cash": result.annual_remaining_cash,
-        "Net cash added (saving + remaining cash)": result.cash_added,
+        "Cash left after saving": result.annual_remaining_cash,
+        "Cash saved": result.cash_added,
         "Retained RSUs": result.retained_rsus,
         "Purchased ISO shares (at exercise FMV)": result.option_value,
         "Cash + contributions + shares acquired": result.total_savings_and_assets,
         "Less option exercise spread": result.option_cost - result.option_value,
-        "Net saved from income": result.net_saved_from_income,
+        "Investments added (contributions + retained RSUs + option cost)": result.investments_added,
+        "Total saved": result.net_saved_from_income,
     }
 
 
@@ -568,7 +570,7 @@ def _results(document: SavedScenario) -> None:
             ]
         )
         st.caption(
-            "Net saving combines cash, retirement, and estimated RSU value. It is not spendable cash. Option award values and exercise spread are excluded."
+            "Total saved = cash saved + investments added. Excludes option gains, existing wealth, and investment growth."
         )
         _tax_detail(result)
         st.json(document.inputs.model_dump(mode="json"), expanded=False)
@@ -597,7 +599,7 @@ def _tax_detail(result: ScenarioResult) -> None:
     )
     rate = result.effective_tax_rate
     st.caption(
-        f"Effective tax rate: {rate:.1%}"
+        f"Effective tax rate (including employee payroll taxes): {rate:.1%}"
         if rate is not None
         else "Effective tax rate: undefined with zero wages."
     )
@@ -922,23 +924,21 @@ def _forget_scenario(record: SavedScenario) -> None:
 def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
     """Show a saved scenario's outcomes and its edit, copy, and delete actions."""
     with st.container(border=True):
-        name, cash, assets = st.columns([2, 1, 1], vertical_alignment="center")
+        name, cash, investments = st.columns([2, 1, 1], vertical_alignment="center")
         name.html(f'<div class="fm-scenario-card">{display.html(heading=True)}</div>')
         remaining = record.result.monthly_remaining_cash
         cash.metric(
-            "Monthly cash shortfall" if remaining < 0 else "Monthly cash surplus",
-            f"${abs(remaining):,.0f}",
-            help="After taxes, living costs, planned saving, and option exercise costs.",
+            "Cash saved / month",
+            _number(record.result.cash_added / 12),
+            help="Planned cash saving plus cash left after saving. Assumes surplus is kept; negative means cash is used.",
         )
-        assets.metric(
-            "Net saved from income / year",
-            f"${record.result.net_saved_from_income:,.0f}",
-            help="Combined cash, retirement, and estimated RSU value, not spendable cash. Includes cash shortfalls; excludes option award values, exercise spread, and investment growth.",
+        investments.metric(
+            "Investments added / year",
+            _number(record.result.investments_added),
+            help="Your 401(k), employer retirement, retained RSUs, and option purchases at cost. Excludes investment growth and option gains; access may be restricted.",
         )
         if remaining < 0:
-            st.caption(
-                "Cash shortfall: planned spending and saving need additional cash."
-            )
+            st.caption(f"${-remaining:,.0f}/month cash shortfall after planned saving.")
         if not _current(record.result):
             st.caption("Recalculation needed: saved results use older rules.")
         with st.container(horizontal=True):
@@ -988,7 +988,7 @@ def scenarios_page() -> None:
                     st.switch_page(str(EDITOR_PAGE))
     if records:
         st.caption(
-            "Net saving combines cash, retirement, and estimated RSU value; it is not all spendable. Options are excluded."
+            "Cash saved includes unspent cash. Investments include retirement contributions and shares."
         )
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"

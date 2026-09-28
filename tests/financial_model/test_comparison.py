@@ -73,28 +73,38 @@ def test_tables_include_every_selected_scenario_in_order(
     assert 'class="fm-track"' not in html
 
 
-def test_overview_separates_monthly_cash_from_annual_assets(documents) -> None:
+def test_overview_reconciles_monthly_and_annual_cash_and_separates_investments(
+    documents,
+) -> None:
     html = overview_html(documents)
-    assert html.index("Per month") < html.index("Per year")
+    assert (
+        html.index("Monthly cash") < html.index("Annual saving") < html.index("Taxes")
+    )
     for index, document in enumerate(documents):
         result = document.result
-        assert cells(html, "Cash surplus / shortfall")[index] == _number(
+        assert cells(html, "Planned cash saving")[index] == _number(
+            result.extra_savings / 12
+        )
+        assert cells(html, "Cash left after saving")[index] == _number(
             result.monthly_remaining_cash
         )
-        assert cells(html, "Net cash added")[index] == _number(result.cash_added)
-        assert cells(html, "Retirement contributions")[index] == _number(
-            result.employee_401k + result.employer_retirement
+        assert cells(html, "Cash saved / month")[index] == _number(
+            result.cash_added / 12
         )
-        assert cells(html, "Net saved from income")[index] == _number(
+        assert cells(html, "Cash saved / year")[index] == _number(result.cash_added)
+        assert cells(html, "Investments added / year")[index] == _number(
+            result.investments_added
+        )
+        assert cells(html, "Total saved / year")[index] == _number(
             result.net_saved_from_income
         )
-    assert cells(html, "Cash moved into option shares") == [
-        "$0",
-        "$3,000",
-        "$3,000",
-        "$3,000",
-    ]
-    assert "Cash moved into option shares</th>" not in overview_html(documents[:1])
+        assert (
+            result.cash_added + result.investments_added == result.net_saved_from_income
+        )
+        assert cells(html, "Effective tax rate")[index] == _number(
+            result.effective_tax_rate, "percent"
+        )
+    assert "Excludes existing wealth and investment growth" in html
 
 
 def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
@@ -144,11 +154,12 @@ def test_saving_reconciles_income_and_excludes_option_spread(documents) -> None:
             + r.retained_rsus
             + r.option_cost
         )
-        assert cells(html, "Net saved from income")[index] == _number(
-            r.net_saved_from_income
-        )
-        assert cells(html, "Net cash added")[index] == _number(
+        assert cells(html, "Total saved")[index] == _number(r.net_saved_from_income)
+        assert cells(html, "Cash saved")[index] == _number(
             r.extra_savings + r.annual_remaining_cash
+        )
+        assert cells(html, "Investments added")[index] == _number(
+            r.employee_401k + r.employer_retirement + r.retained_rsus + r.option_cost
         )
     assert cells(html, "Value above exercise cost") == [
         "$0",
@@ -253,10 +264,10 @@ def test_differences_keep_row_units_reference_and_column_order(
         (cash_flow_html, "Rent", [-d.inputs.living_costs.rent for d in documents]),
         (
             overview_html,
-            "Net saved from income",
+            "Total saved / year",
             [d.result.net_saved_from_income for d in documents],
         ),
-        (saving_html, "Net cash added", [d.result.cash_added for d in documents]),
+        (saving_html, "Cash saved", [d.result.cash_added for d in documents]),
     ):
         html = render(documents, reference_index=reference)
         assert (
@@ -342,6 +353,58 @@ def test_cash_deficits_remain_visible_with_positive_retirement(scenario) -> None
 )
 def test_money_rounding_avoids_negative_zero(value, expected) -> None:
     assert _number(Decimal(value)) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("0.23770458", "23.8%"), ("-0.0004", "0.0%"), ("-0.005", "\N{MINUS SIGN}0.5%")],
+)
+def test_percent_rounding_avoids_negative_zero(value, expected) -> None:
+    assert _number(Decimal(value), "percent") == expected
+
+
+def test_tax_rate_differences_use_percentage_points_and_skip_zero_wages(
+    documents, monkeypatch
+) -> None:
+    from financial_model import model
+    from financial_model.schemas import TaxResult
+
+    base = documents[0].inputs
+    tax_data = documents[0].result.taxes.model_dump()
+    for key, value in tax_data.items():
+        if isinstance(value, Decimal):
+            tax_data[key] = Decimal(0)
+    versions = []
+    for income, tax in ((200000, 40000), (200000, 50000), (200000, -1000), (0, -1000)):
+        inputs = base.model_copy(
+            update={
+                "adults": tuple(
+                    adult.model_copy(update={"cash_pay": Decimal(income) / 2})
+                    for adult in base.adults
+                )
+            }
+        )
+        taxes = TaxResult.model_validate(tax_data | {"federal_income_tax": tax})
+        monkeypatch.setattr(
+            model, "calculate_taxes", lambda *args, taxes=taxes, **kwargs: taxes
+        )
+        versions.append(SavedScenario(inputs=inputs, result=evaluate_scenario(inputs)))
+    html = overview_html(tuple(versions), reference_index=0)
+    assert cells(html, "Effective tax rate") == [
+        "20.0%",
+        "25.0%  +5.0 pp",
+        "\N{MINUS SIGN}0.5%  \N{MINUS SIGN}20.5 pp",
+        "N/A",
+    ]
+    html = overview_html(tuple(versions), reference_index=3)
+    assert cells(html, "Effective tax rate") == [
+        "20.0%",
+        "25.0%",
+        "\N{MINUS SIGN}0.5%",
+        "N/A",
+    ]
+    html = overview_html((versions[0], versions[0]), reference_index=0)
+    assert cells(html, "Effective tax rate") == ["20.0%", "20.0%  No change"]
 
 
 @pytest.mark.parametrize("render", RENDERERS)

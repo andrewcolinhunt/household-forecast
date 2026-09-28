@@ -292,13 +292,23 @@ class ScenarioResult(ValueModel):
         return self.extra_savings + self.annual_remaining_cash
 
     @property
+    def investments_added(self) -> Decimal:
+        """Retirement and retained RSUs plus option purchases at cost, without gains."""
+        return (
+            self.employee_401k
+            + self.employer_retirement
+            + self.retained_rsus
+            + self.option_cost
+        )
+
+    @property
     def net_saved_from_income(self) -> Decimal:
         """Net annual saving, excluding value realized from existing option rights."""
         return self.total_savings_and_assets - self.option_value + self.option_cost
 
     @property
     def effective_tax_rate(self) -> Decimal | None:
-        """Total tax divided by wages; undefined when gross wages are zero."""
+        """Income and employee payroll taxes / cash and RSU wages; None at zero."""
         wages = self.gross_cash + self.gross_rsus
         return self.taxes.total / wages if wages else None
 

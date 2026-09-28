@@ -68,6 +68,8 @@ def test_evaluate_scenario_annual_accounting(
     assert result.monthly_remaining_cash == Decimal("3583.33")
     assert result.total_savings_and_assets == 118000
     assert result.net_saved_from_income == 115000
+    assert result.investments_added == 50000
+    assert result.cash_added + result.investments_added == result.net_saved_from_income
     assert (
         result.net_saved_from_income
         == result.gross_cash
@@ -147,6 +149,56 @@ def test_evaluate_scenario_refund_and_zero_income(
     result = model.evaluate_scenario(Scenario.model_validate(data))
     assert result.annual_remaining_cash == 1000
     assert result.effective_tax_rate is None
+
+
+@pytest.mark.parametrize("rate", ["0", "0.10", "1"])
+def test_saving_goal_only_allocates_cash_without_changing_total_saved(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario, rate: str
+) -> None:
+    data = scenario.model_dump(mode="json")
+    for adult in data["adults"]:
+        adult["savings_rate"] = rate
+    data["adults"][0].update(employee_401k=10000, employer_retirement_rate="0.05")
+    data["living_costs"].update(rent=2000, other=3000)
+    monkeypatch.setattr(model, "calculate_taxes", lambda inputs: tax_result(40000))
+    result = model.evaluate_scenario(Scenario.model_validate(data))
+    assert result.cash_added == 90000
+    assert result.investments_added == 15000
+    assert result.net_saved_from_income == 105000
+    assert result.extra_savings + result.annual_remaining_cash == result.cash_added
+    assert abs(
+        result.monthly_remaining_cash
+        + result.extra_savings / 12
+        - result.cash_added / 12
+    ) < Decimal("0.005")
+    if rate == "0":
+        assert result.extra_savings == 0
+    if rate == "1":
+        assert result.annual_remaining_cash < 0 < result.cash_added
+
+
+def test_effective_tax_rate_includes_all_taxes_and_only_cash_and_rsu_wages(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario
+) -> None:
+    data = scenario.model_dump(mode="json")
+    data["adults"][0].update(
+        rsu_vesting=50000, employee_401k=20000, employer_retirement_rate="0.05"
+    )
+    data["adults"][0]["options"].update(shares=1000, strike=2, fair_market_value=10)
+    taxes = tax_result(30000).model_copy(
+        update={
+            "state_income_tax": Decimal(5000),
+            "social_security": Decimal(10000),
+            "medicare": Decimal(2000),
+            "additional_medicare": Decimal(1000),
+            "ca_sdi": Decimal(1000),
+            "federal_amt": Decimal(10000),
+        }
+    )
+    monkeypatch.setattr(model, "calculate_taxes", lambda *args, **kwargs: taxes)
+    result = model.evaluate_scenario(Scenario.model_validate(data))
+    assert result.taxes.total == 49000  # AMT is already in income tax.
+    assert result.effective_tax_rate == Decimal("0.196")
 
 
 def test_saved_scenario_result_integrity(

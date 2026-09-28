@@ -12,7 +12,7 @@ from typing import Literal
 from financial_model.scenario_display import ScenarioDisplay, scenario_displays
 from financial_model.schemas import PersonInputs, SavedScenario
 
-NumberFormat = Literal["money", "number", "price"]
+NumberFormat = Literal["money", "number", "price", "percent"]
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,10 @@ class _Row:
 
 def _number(value: Decimal, format: NumberFormat = "money") -> str:
     """Preserve per-share precision and avoid displaying negative rounded zero."""
+    if format == "percent":
+        rounded = (value * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        sign = "\N{MINUS SIGN}" if rounded < 0 else ""
+        return f"{sign}{abs(rounded):.1f}%"
     precision = Decimal("0.000001") if format == "price" else Decimal(1)
     rounded = value.quantize(precision, rounding=ROUND_HALF_UP)
     sign = "\N{MINUS SIGN}" if rounded < 0 else ""
@@ -46,7 +50,9 @@ def _cell(row: _Row, index: int, reference: int | None) -> str:
         label = (
             value
             if value is not None
-            else ("Not entered" if row.format == "price" else "Not estimated")
+            else {"price": "Not entered", "percent": "N/A"}.get(
+                row.format, "Not estimated"
+            )
         )
         return f'<td><span class="fm-missing">{escape(label)}</span></td>'
     difference = ""
@@ -54,10 +60,12 @@ def _cell(row: _Row, index: int, reference: int | None) -> str:
     if reference != index and isinstance(baseline, Decimal):
         delta = value - baseline
         amount = _number(delta, row.format)
-        if amount in ("$0", "0"):
+        if amount in ("$0", "0", "0.0%"):
             amount = "No change"
         elif delta > 0:
             amount = f"+{amount}"
+        if row.format == "percent":
+            amount = amount.replace("%", " pp")
         difference = f'<span class="fm-delta">{amount}</span>'
     kind = ' class="fm-deficit"' if row.deficit and value < 0 else ""
     return f"<td><span{kind}>{_number(value, row.format)}</span>{difference}</td>"
@@ -115,42 +123,44 @@ def overview_html(
     displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
 ) -> str:
-    """Summarize monthly cash and annual saving without combining their units."""
+    """Reconcile monthly cash saving and separate annual cash from investments."""
     results = [document.result for document in documents]
-    annual = [
-        _Row("Net cash added", [r.cash_added for r in results], deficit=True),
-        _Row(
-            "Retirement contributions",
-            [r.employee_401k + r.employer_retirement for r in results],
-        ),
-        _Row("RSUs retained after tax", [r.retained_rsus for r in results]),
-    ]
-    if any(r.option_cost for r in results):
-        annual.append(
-            _Row("Cash moved into option shares", [r.option_cost for r in results])
-        )
-    annual.append(
-        _Row(
-            "Net saved from income",
-            [r.net_saved_from_income for r in results],
-            total=True,
-            deficit=True,
-        )
-    )
     groups = {
-        "Per month": [
+        "Monthly cash": [
+            _Row("Planned cash saving", [r.extra_savings / 12 for r in results]),
             _Row(
-                "Cash surplus / shortfall",
+                "Cash left after saving",
                 [r.monthly_remaining_cash for r in results],
+                deficit=True,
+            ),
+            _Row(
+                "Cash saved / month",
+                [r.cash_added / 12 for r in results],
                 total=True,
                 deficit=True,
+            ),
+        ],
+        "Annual saving": [
+            _Row("Cash saved / year", [r.cash_added for r in results], deficit=True),
+            _Row("Investments added / year", [r.investments_added for r in results]),
+            _Row(
+                "Total saved / year",
+                [r.net_saved_from_income for r in results],
+                total=True,
+                deficit=True,
+            ),
+        ],
+        "Taxes": [
+            _Row(
+                "Effective tax rate",
+                [r.effective_tax_rate for r in results],
+                "percent",
             )
         ],
-        "Per year": annual,
     }
     return (
         '<div class="fm-comparison"><h3>Overview</h3>'
-        '<p class="fm-note">Cash remaining each month and amounts added to assets each year.</p>'
+        '<p class="fm-note">Assumes unspent cash is kept. Excludes existing wealth and investment growth.</p>'
         + _table(
             displays or scenario_displays(documents),
             groups,
@@ -159,11 +169,10 @@ def overview_html(
         )
         + _definitions(
             {
-                "Cash surplus / shortfall": "Cash left after taxes, living costs, planned saving, and option exercises. Negative amounts require additional cash.",
-                "Net cash added": "Planned cash saving plus the annual cash surplus or shortfall. Assumes surplus is kept.",
-                "Retirement contributions": "Your 401(k) plus employer contributions. Access is restricted; employer plan vesting is not modeled.",
-                "RSUs retained after tax": "Estimated value of shares kept after vesting taxes. Value can change and sales may be restricted.",
-                "Net saved from income": "Sum of the annual rows above. Combines cash, retirement, and estimated share value; it is not all spendable cash. Excludes investment growth and option gains.",
+                "Cash saved": "Planned cash saving + cash left after saving. The annual amount is 12 times the monthly amount, before display rounding. Negative means cash is used.",
+                "Investments added": "Your 401(k) + employer contributions + RSUs retained after tax + option purchases at cost. Access may be restricted and share values can change. See Saving & equity for the breakdown.",
+                "Total saved": "Cash saved + investments added this year. This is an annual addition, not total wealth or spendable cash. Excludes option gains.",
+                "Effective tax rate": "Federal and state income taxes plus employee payroll taxes, divided by gross salary, bonus, and vested RSUs. Includes taxes funded by RSUs and any ISO exercise tax. Employer contributions and option values are excluded from the denominator. N/A with zero wages; pp means percentage points.",
             }
         )
         + "</div>"
@@ -310,32 +319,35 @@ def saving_html(
     results = [document.result for document in documents]
     groups = {
         "Cash": [
-            _Row("Additional cash saving", [r.extra_savings for r in results]),
+            _Row("Planned cash saving", [r.extra_savings for r in results]),
             _Row(
-                "Cash surplus / shortfall",
+                "Cash left after saving",
                 [r.annual_remaining_cash for r in results],
                 deficit=True,
             ),
             _Row(
-                "Net cash added",
+                "Cash saved",
                 [r.cash_added for r in results],
                 total=True,
                 deficit=True,
             ),
         ],
-        "Retirement": [
+        "Investments": [
             _Row("Your 401(k)s", [r.employee_401k for r in results]),
             _Row("Employer contributions", [r.employer_retirement for r in results]),
+            _Row("RSUs retained after tax", [r.retained_rsus for r in results]),
         ],
-        "Shares": [_Row("RSUs retained after tax", [r.retained_rsus for r in results])],
     }
     if any(r.option_cost for r in results):
-        groups["Shares"].append(
+        groups["Investments"].append(
             _Row("Cash moved into option shares", [r.option_cost for r in results])
         )
+    groups["Investments"].append(
+        _Row("Investments added", [r.investments_added for r in results], total=True)
+    )
     groups["Total"] = [
         _Row(
-            "Net saved from income",
+            "Total saved",
             [r.net_saved_from_income for r in results],
             total=True,
             deficit=True,
@@ -373,11 +385,11 @@ def saving_html(
         + option_detail
         + _definitions(
             {
-                "Additional cash saving": "Planned cash saving from the savings goal in the editor, after employee 401(k) contributions. It reduces monthly cash remaining.",
-                "Net cash added": "Additional cash saving plus the cash surplus or shortfall. This is a subtotal, not an extra contribution. Assumes surplus is kept.",
+                "Planned cash saving": "The savings goal in the editor, less your 401(k). Funded from cash, even when the goal includes RSU income.",
+                "Cash saved": "Planned cash saving + cash left after saving. Assumes surplus is kept; a negative total uses existing cash.",
                 "Retirement": "Your 401(k) plus employer contributions. Access is restricted; future withdrawals may be taxed. Employer plan vesting is not modeled.",
-                "Shares": "Retained RSUs are estimated after vesting taxes. Exercised ISO shares are valued at exercise. Values can change and sales may be restricted.",
-                "Net saved from income": "Net cash added + retirement + retained RSUs + cash moved into option shares. Equivalently, salary + RSUs + employer retirement minus taxes minus living costs. Combines cash and assets with restricted access; it is not all spendable cash.",
+                "Investments added": "Retirement contributions + RSUs retained after tax + option purchases at cost. Excludes option gains. Share values can change and sales may be restricted.",
+                "Total saved": "Cash saved + investments added. Equals salary + RSUs + employer retirement minus taxes and living costs. It is not all spendable cash or total wealth.",
             }
         )
         + "</div>"
@@ -397,10 +409,10 @@ def _monthly_groups(document: SavedScenario) -> dict[str, dict[str, Decimal]]:
         },
         "Money set aside": {
             "Your 401(k)s": -result.employee_401k / 12,
-            "Additional cash saving": -result.extra_savings / 12,
+            "Planned cash saving": -result.extra_savings / 12,
             "ISO exercise cost": -result.option_cost / 12,
         },
-        "Remaining": {"Cash surplus / shortfall": result.monthly_remaining_cash},
+        "Remaining": {"Cash left after saving": result.monthly_remaining_cash},
     }
 
 
@@ -438,8 +450,8 @@ def cash_flow_html(
             {
                 "Monthly averages": "Rounded to whole dollars; actual paycheck timing varies. Retained shares and employer retirement are not cash income.",
                 "Taxes paid from cash": "Excludes taxes funded from vested RSUs. The remaining RSUs are shown in Saving & equity.",
-                "Additional cash saving": "Planned cash saving from the savings goal in the editor, after employee 401(k) contributions.",
-                "Cash surplus / shortfall": "Cash left after the rows above. A shortfall requires additional cash; saving is not reduced and shares are not sold automatically.",
+                "Planned cash saving": "The savings goal in the editor, less your 401(k). This money remains yours; it is set aside rather than spent.",
+                "Cash left after saving": "Cash left after the rows above. Add planned cash saving to get total cash saved, as shown in Overview. A shortfall requires additional cash.",
             }
         )
         + "</div>"
