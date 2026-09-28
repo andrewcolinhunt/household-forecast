@@ -556,6 +556,10 @@ def test_compare_multiple_scenarios_retains_selection(
     assert 'class="fm-reference"' not in rendered
     assert 'class="fm-delta"' not in rendered
     checklist_order = [checkbox.key for checkbox in page.checkbox]
+    assert not any(heading.value == "Column order" for heading in page.subheader)
+    assert (
+        len([b for b in page.button if b.key.startswith("compare_move_")]) == 2 * count
+    )
     assert page.button(key=f"compare_move_{ids[0]}_-1").disabled
     assert page.button(key=f"compare_move_{ids[-1]}_1").disabled
     page.button(key=f"compare_move_{ids[-1]}_-1").click().run()
@@ -588,6 +592,7 @@ def test_compare_multiple_scenarios_retains_selection(
     assert [checkbox.key for checkbox in page.checkbox] == checklist_order
     select_comparison(page, [])
     assert not page.tabs
+    assert not any(b.key.startswith("compare_move_") for b in page.button)
     assert any("Select at least two" in info.value for info in page.info)
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()

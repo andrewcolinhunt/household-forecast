@@ -897,7 +897,6 @@ def compare_page() -> None:
             else "Create or duplicate a scenario to compare two sets of results."
         )
         return
-    _comparison_order(displays, selected)
     _comparison(
         tuple(choices[key] for key in selected),
         tuple(displays[key] for key in selected),
@@ -921,8 +920,8 @@ def _comparison_checklist(
     """Keep every choice visible and in place as column selection changes."""
     st.subheader("Annual plans")
     st.caption(
-        "Choose two to four. Check scenarios in the order you want their columns. "
-        "Unchecking only removes a scenario from this comparison."
+        "Choose two to four. Check plans in column order, or use the arrows to reorder. "
+        "Unchecking only removes a plan from this comparison."
     )
     with st.container(key="comparison_checklist", gap="small"):
         for key, display in displays.items():
@@ -933,14 +932,23 @@ def _comparison_checklist(
             position = f" · Column {selected.index(key) + 1}" if key in selected else ""
             widget_key = f"compare_check_{key}"
             st.session_state[widget_key] = key in selected
-            st.checkbox(
-                f"**{title}**{position}  \n{context}",
-                key=widget_key,
-                disabled=len(selected) == 4 and key not in selected,
-                on_change=_toggle_comparison,
-                args=(key,),
-                width="stretch",
-            )
+            with st.container(
+                key=f"comparison_row_{key}",
+                horizontal=True,
+                wrap=False,
+                vertical_alignment="center",
+                gap="xsmall",
+            ):
+                st.checkbox(
+                    f"**{title}**{position}  \n{context}",
+                    key=widget_key,
+                    disabled=len(selected) == 4 and key not in selected,
+                    on_change=_toggle_comparison,
+                    args=(key,),
+                    width="stretch",
+                )
+                if key in selected:
+                    _comparison_arrows(key, display, selected)
     if len(selected) == 4:
         st.caption("Four selected. Uncheck a scenario to choose another.")
 
@@ -955,30 +963,24 @@ def _move_comparison(key: str, direction: int) -> None:
         st.session_state["comparison_selection"] = selected
 
 
-def _comparison_order(
-    displays: dict[str, ScenarioDisplay], selected: list[str]
-) -> None:
-    """Put column movement controls in the same order as the results below."""
-    st.subheader("Column order")
-    for index, column in enumerate(st.columns(len(selected))):
-        key = selected[index]
-        with column:
-            st.caption(f"Column {index + 1}")
-            st.text(displays[key].title)
-            with st.container(horizontal=True):
-                for direction, label, icon in (
-                    (-1, "Move left", ":material/arrow_back:"),
-                    (1, "Move right", ":material/arrow_forward:"),
-                ):
-                    st.button(
-                        label,
-                        icon=icon,
-                        key=f"compare_move_{key}_{direction}",
-                        help=f"{label}: {displays[key].label}",
-                        disabled=not 0 <= index + direction < len(selected),
-                        on_click=_move_comparison,
-                        args=(key, direction),
-                    )
+def _comparison_arrows(key: str, display: ScenarioDisplay, selected: list[str]) -> None:
+    """Place compact, keyboard-accessible column controls on each checked row."""
+    index = selected.index(key)
+    for direction, label, icon in (
+        (-1, "Move left", ":material/arrow_back:"),
+        (1, "Move right", ":material/arrow_forward:"),
+    ):
+        st.button(
+            f"{label}: {display.label}",
+            icon=icon,
+            key=f"compare_move_{key}_{direction}",
+            help=f"{label}: {display.label}",
+            disabled=not 0 <= index + direction < len(selected),
+            on_click=_move_comparison,
+            args=(key, direction),
+            type="tertiary",
+            width=32,
+        )
 
 
 def _comparison(

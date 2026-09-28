@@ -150,8 +150,8 @@ their assigned goals; they are not sold or withdrawn to cover cash shortfalls.
 Open **Compare annual plans** in the top navigation and check two to four scenarios in the
 visible list. The order you check them sets the table's column order. Checked
 scenarios show **Column 1**, **Column 2**, and so on; the checklist itself stays
-in place. Use **Move left** or **Move right** under **Column order** to reorder
-the results without changing your selections.
+in place. Use the left or right arrow on a checked row to move that plan's column
+without changing your selections. Hover over an arrow to see which plan it moves.
 
 Unchecking removes only that comparison column; it does not delete the saved
 scenario. Checking it again adds it on the right. With four selected, uncheck
