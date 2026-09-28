@@ -1,4 +1,4 @@
-"""Scenario tables, accounting boundaries, and differences for synthetic households."""
+"""Scenario tables and accounting boundaries for synthetic households."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ RENDERERS = (cash_flow_html, equity_html)
 
 
 def cells(html: str, label: str) -> list[str]:
-    """Read each scenario's visible value and optional delta from a named row."""
+    """Read each scenario's visible value from a named row."""
     row = re.search(rf'<th scope="row">{re.escape(escape(label))}</th>(.*?)</tr>', html)
     assert row is not None, label
     return [
@@ -217,65 +217,25 @@ def test_options_distinguish_absent_unknown_zero_and_positive_values(documents) 
             )
         }
     )
-    mixed = equity_html((awards[0], absent, documents[1]), reference_index=0)
+    mixed = equity_html((awards[0], absent, documents[1]))
     assert cells(mixed, "Share value if exercised") == ["Not estimated", "—", "—"]
 
 
-def test_option_differences_preserve_counts_and_per_share_units(documents) -> None:
+def test_option_tables_preserve_counts_and_per_share_units(documents) -> None:
     awards = (
         with_award(documents[0], 8),
         with_award(documents[1], 9, Decimal("2.123457"), 12000),
     )
-    html = equity_html(awards, reference_index=0)
-    assert cells(html, "Options vesting") == ["10,000", "12,000  +2,000"]
+    html = equity_html(awards)
+    assert cells(html, "Options vesting") == ["10,000", "12,000"]
     assert cells(html, "Exercise price per share") == [
         "$2.123456",
-        "$2.123457  +$0.000001",
+        "$2.123457",
     ]
-    assert cells(html, "Assumed share value") == ["$8", "$9  +$1"]
+    assert cells(html, "Assumed share value") == ["$8", "$9"]
     assert cells(html, "Option type") == ["NSO", "NSO"]
-    unknown = equity_html(
-        (with_award(documents[0], None), awards[1]), reference_index=0
-    )
+    unknown = equity_html((with_award(documents[0], None), awards[1]))
     assert cells(unknown, "Assumed share value") == ["Not entered", "$9"]
-
-
-@pytest.mark.parametrize("reference", range(4))
-@pytest.mark.parametrize(("period", "divisor"), [("Annual", 1), ("Monthly", 12)])
-def test_differences_keep_row_units_reference_and_column_order(
-    documents, reference, period, divisor
-) -> None:
-    for render, label, annual in (
-        (equity_html, "RSU value at vesting", [d.result.gross_rsus for d in documents]),
-        (
-            cash_flow_html,
-            "Salary and bonus",
-            [d.result.gross_cash for d in documents],
-        ),
-        (cash_flow_html, "Rent", [-12 * d.inputs.living_costs.rent for d in documents]),
-        (
-            cash_flow_html,
-            "Remaining cash / funding shortfall",
-            [remaining_cash(d) for d in documents],
-        ),
-    ):
-        html = render(documents, reference_index=reference, period=period)
-        headings = re.findall(r'<th scope="col">(.*?)</th>', html)
-        assert '<span class="fm-reference">Reference</span>' in headings[reference + 1]
-        values = cells(html, label)
-        amounts = [v / divisor for v in annual]
-        for index, amount in enumerate(amounts):
-            delta = amount - amounts[reference]
-            expected = (
-                "No change"
-                if not delta
-                else ("+" if delta > 0 else "") + _number(delta)
-            )
-            assert values[index] == (
-                _number(amount)
-                if index == reference
-                else f"{_number(amount)}  {expected}"
-            )
 
 
 def test_people_align_by_name_when_adult_order_changes(documents) -> None:
@@ -287,9 +247,9 @@ def test_people_align_by_name_when_adult_order_changes(documents) -> None:
             )
         }
     )
-    html = cash_flow_html((first, reversed_people), reference_index=0)
+    html = cash_flow_html((first, reversed_people))
     detail = html.split("<summary>Income by person</summary>")[1]
-    assert cells(detail, "Salary and bonus") == ["$120,000", "$120,000  No change"]
+    assert cells(detail, "Salary and bonus") == ["$120,000", "$120,000"]
     assert detail.index("Adult A") < detail.index("Adult B")
     duplicate = first.model_copy(
         update={
@@ -339,7 +299,7 @@ def test_percent_rounding_avoids_negative_zero(value, expected) -> None:
     assert _number(Decimal(value), "percent") == expected
 
 
-def test_tax_rate_differences_use_percentage_points_and_skip_zero_wages(
+def test_tax_rates_preserve_percentages_and_skip_zero_wages(
     documents, monkeypatch
 ) -> None:
     from financial_model import model
@@ -365,35 +325,24 @@ def test_tax_rate_differences_use_percentage_points_and_skip_zero_wages(
             model, "calculate_taxes", lambda *args, taxes=taxes, **kwargs: taxes
         )
         versions.append(SavedScenario(inputs=inputs, result=evaluate_scenario(inputs)))
-    html = cash_flow_html(tuple(versions), reference_index=0)
-    assert cells(html, "Effective tax rate") == [
-        "20.0%",
-        "25.0%  +5.0 pp",
-        "\N{MINUS SIGN}0.5%  \N{MINUS SIGN}20.5 pp",
-        "N/A",
-    ]
-    html = cash_flow_html(tuple(versions), reference_index=3)
+    html = cash_flow_html(tuple(versions))
     assert cells(html, "Effective tax rate") == [
         "20.0%",
         "25.0%",
         "\N{MINUS SIGN}0.5%",
         "N/A",
     ]
-    html = cash_flow_html((versions[0], versions[0]), reference_index=0)
-    assert cells(html, "Effective tax rate") == ["20.0%", "20.0%  No change"]
 
 
 @pytest.mark.parametrize("render", RENDERERS)
-def test_identical_values_show_no_change_and_escape_duplicate_names(
-    documents, render
-) -> None:
+def test_identical_values_escape_duplicate_names(documents, render) -> None:
     name = '<img src=x onerror="alert(1)">'
     first = documents[0].model_copy(
         update={"inputs": documents[0].inputs.model_copy(update={"name": name})}
     )
-    html = render((first,) * 4, reference_index=2)
+    html = render((first,) * 4)
     assert "<img" not in html
-    assert "No change" in html
+    assert 'class="fm-delta"' not in html
     assert "+$0" not in html
     assert f'<span class="fm-scenario-name">{escape(name)}</span>' in html
     assert "Same assumptions" in html
@@ -474,7 +423,7 @@ def test_monthly_options_scale_vesting_values_but_not_per_share_prices(documents
         with_award(documents[0], 8, Decimal("2.123456"), 12000),
         with_award(documents[1], None),
     )
-    html = equity_html(awards, period="Monthly", reference_index=0)
+    html = equity_html(awards, period="Monthly")
     assert cells(html, "Options vesting")[0] == "1,000"
     assert cells(html, "Exercise price per share")[0] == "$2.123456"
     assert cells(html, "Assumed share value") == ["$8", "Not entered"]

@@ -14,7 +14,6 @@ import streamlit as st
 from pydantic import ValidationError
 from streamlit.delta_generator import DeltaGenerator
 
-from financial_model.allocations import allocate_sources
 from financial_model.comparison import (
     Period,
     _number,
@@ -544,14 +543,6 @@ def _allocation_inputs(
     if result and _current(result.result):
         try:
             plan = AllocationPlan.model_validate(updated_plan)
-            allocation = allocate_sources(
-                plan,
-                cash=result.result.cash_added,
-                retirement=result.result.employee_401k
-                + result.result.employer_retirement,
-                rsus=result.result.retained_rsus,
-                option_cost=result.result.option_cost,
-            )
         except ValueError:
             pass  # Calculate reports invalid allocations with the other input errors.
         else:
@@ -563,10 +554,6 @@ def _allocation_inputs(
                 _number((result.result.cash_added - plan.fixed_cash) / factor),
                 help="After planned additional savings. A negative amount is a funding shortfall.",
             )
-            if allocation.funding_gap:
-                st.warning(
-                    f"{unit} funding shortfall: {_number(allocation.funding_gap / factor)}"
-                )
     return updated_plan
 
 
@@ -900,14 +887,12 @@ def compare_page() -> None:
         return
     _comparison(
         tuple(choices[key] for key in selected),
-        selected,
         tuple(displays[key] for key in selected),
     )
 
 
 def _comparison(
     documents: tuple[SavedScenario, ...],
-    selected: list[str],
     displays: tuple[ScenarioDisplay, ...],
 ) -> None:
     """Render the approved views only for comparable calculation snapshots."""
@@ -921,34 +906,12 @@ def _comparison(
             "Recalculate and save scenarios with the current rules before comparing them."
         )
         return
-    _financial_views(documents, displays, selected)
-
-
-def _cash_shortfalls(
-    documents: tuple[SavedScenario, ...],
-    displays: tuple[ScenarioDisplay, ...],
-    period: Period,
-) -> None:
-    """Keep unfunded cash needs visible even when retained equity is substantial."""
-    for document, display in zip(documents, displays, strict=True):
-        gap = document.result.allocations.funding_gap
-        deficit = max(-cash_surplus(document.result), Decimal(0))
-        unit = "month" if period == "Monthly" else "year"
-        if gap:
-            reason = (
-                "Income does not cover taxes, employee contributions, and living expenses."
-                if deficit
-                else "Planned savings and investments exceed the cash surplus."
-            )
-            st.warning(
-                f"{display.label}: {_number(gap / period_divisor(period))}/{unit} funding shortfall. {reason}"
-            )
+    _financial_views(documents, displays)
 
 
 def _financial_views(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...],
-    selected: list[str] | None = None,
 ) -> Period:
     """Use the same definitions for an individual result and all comparisons."""
     period = cast(
@@ -965,8 +928,6 @@ def _financial_views(
         )
         + " Investment growth and retirement projections are not included."
     )
-    reference = _comparison_reference(selected, displays) if selected else None
-    _cash_shortfalls(documents, displays, period)
     tabs = st.tabs(["Cash flow", "Equity compensation"])
     for tab, render in zip(
         tabs,
@@ -978,39 +939,11 @@ def _financial_views(
                 render(
                     documents,
                     displays,
-                    reference,
                     goals=st.session_state.get("goals", ()),
                     period=period,
                 )
             )
     return period
-
-
-def _comparison_reference(
-    selected: list[str], displays: tuple[ScenarioDisplay, ...]
-) -> int | None:
-    """Keep the reference choice when differences are hidden or pages change."""
-    if st.session_state.get("comparison_reference") not in selected:
-        st.session_state["comparison_reference"] = selected[0]
-    toggle, selector = st.columns([1, 2], vertical_alignment="center")
-    enabled = toggle.toggle(
-        "Show differences",
-        key="comparison_show_differences",
-        help="Changes appear below each amount, in the same units as its row. "
-        "For cash outflows, a more negative change means more cash going out.",
-    )
-    if not enabled:
-        return None
-    reference_names = dict(
-        zip(selected, (display.label for display in displays), strict=True)
-    )
-    reference = selector.selectbox(
-        "Reference scenario",
-        selected,
-        key="comparison_reference",
-        format_func=reference_names.__getitem__,
-    )
-    return selected.index(reference)
 
 
 def _backups(document: SavedScenario | None) -> None:
@@ -1222,8 +1155,6 @@ def _forget_scenario(record: SavedScenario) -> None:
         for key in st.session_state.get("comparison_selection", [])
         if key != str(record.id)
     ]
-    if st.session_state.get("comparison_reference") == str(record.id):
-        st.session_state.pop("comparison_reference", None)
 
 
 def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
@@ -1338,8 +1269,6 @@ def main() -> None:
     # Page widgets are transient; persist comparison choices between visits.
     for key in (
         "comparison_selection",
-        "comparison_reference",
-        "comparison_show_differences",
         "display_period",
     ):
         if key in st.session_state:

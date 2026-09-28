@@ -88,8 +88,8 @@ Remove a selection with its × button; this does not delete the saved scenario.
 Selections stay in place when you switch pages. All selected scenarios must use
 the same tax year and current calculation rules.
 
-Choose **Monthly** or **Annual** once for both views. Money amounts,
-vesting counts, and their differences use that period; per-share prices and tax
+Choose **Monthly** or **Annual** once for both views. Money amounts
+and vesting counts use that period; per-share prices and tax
 rates stay unchanged. Monthly values are averages of the modeled year, not a
 paycheck or vesting schedule. The period stays selected when you switch pages.
 
@@ -152,15 +152,6 @@ appears in Cash flow once.
 The editor uses the same two views. This is a one-year budget, not a retirement
 projection. Existing asset balances, investment growth, and future retirement
 needs are not included.
-
-Turn on **Show differences** and choose a **Reference scenario** to add signed
-changes beneath values in every table. Changes use the same units as the row:
-monthly dollars, annual dollars, option counts, or per-share prices. Tax-rate
-differences use percentage points (pp), so 25% versus 20% shows +5.0 pp. For cash
-outflows, a more negative change means more cash going out. Differences are
-neutral comparisons, not ratings of whether a scenario is better. Unknown
-values have no difference. The reference choice stays when you hide differences
-or switch pages; removing that scenario selects the first remaining scenario.
 
 To compare without saving, calculate in the editor and choose **Compare results**.
 The last calculated draft appears as a separate choice. **Keep snapshot** retains

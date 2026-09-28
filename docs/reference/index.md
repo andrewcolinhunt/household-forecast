@@ -66,9 +66,9 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 
 See [calculation assumptions](../concepts/index.md) for formulas and coverage.
 
-The shared Monthly / Annual display setting applies to all result tables and
-funding-shortfall warnings. Monthly views divide annual money flows and vesting
-counts by 12. Per-share prices and tax rates are unchanged. Display conversion
+The shared Monthly / Annual display setting applies to all result tables.
+Monthly views divide annual money flows and vesting counts by 12.
+Per-share prices and tax rates are unchanged. Display conversion
 does not modify stored inputs or results. Rounding can cause small visible
 differences. Goals require exactly one cash remainder and complete RSU
 percentages when RSUs are present. Result validation checks source conservation

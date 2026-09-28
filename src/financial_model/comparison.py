@@ -56,8 +56,8 @@ def _number(value: Decimal, format: NumberFormat = "money") -> str:
     return f"{sign}{'' if format == 'number' else '$'}{amount}"
 
 
-def _cell(row: _Row, index: int, reference: int | None, period: Period) -> str:
-    """Add neutral differences only for pairs of known numeric amounts."""
+def _cell(row: _Row, index: int, period: Period) -> str:
+    """Format a scenario value in the selected period, preserving unknowns."""
     value = row.values[index]
     if not isinstance(value, Decimal):
         label = (
@@ -68,30 +68,15 @@ def _cell(row: _Row, index: int, reference: int | None, period: Period) -> str:
             )
         )
         return f'<td><span class="fm-missing">{escape(label)}</span></td>'
-    difference = ""
-    baseline = row.values[reference] if reference is not None else None
     if row.format in ("money", "number"):
         value /= period_divisor(period)
-        if isinstance(baseline, Decimal):
-            baseline /= period_divisor(period)
-    if reference != index and isinstance(baseline, Decimal):
-        delta = value - baseline
-        amount = _number(delta, row.format)
-        if amount in ("$0", "0", "0.0%"):
-            amount = "No change"
-        elif delta > 0:
-            amount = f"+{amount}"
-        if row.format == "percent":
-            amount = amount.replace("%", " pp")
-        difference = f'<span class="fm-delta">{amount}</span>'
     kind = ' class="fm-deficit"' if row.deficit and value < 0 else ""
-    return f"<td><span{kind}>{_number(value, row.format)}</span>{difference}</td>"
+    return f"<td><span{kind}>{_number(value, row.format)}</span></td>"
 
 
 def _table(
     displays: tuple[ScenarioDisplay, ...],
     groups: dict[str, list[_Row]],
-    reference: int | None,
     caption: str,
     period: Period = "Annual",
 ) -> str:
@@ -107,18 +92,10 @@ def _table(
             kind = ' class="fm-total"' if row.total else ""
             rows.append(
                 f'<tr{kind}><th scope="row">{escape(row.label)}</th>'
-                + "".join(
-                    _cell(row, index, reference, period)
-                    for index in range(len(displays))
-                )
+                + "".join(_cell(row, index, period) for index in range(len(displays)))
                 + "</tr>"
             )
-    headings = "".join(
-        f'<th scope="col">{display.html()}'
-        + ('<span class="fm-reference">Reference</span>' if index == reference else "")
-        + "</th>"
-        for index, display in enumerate(displays)
-    )
+    headings = "".join(f'<th scope="col">{display.html()}</th>' for display in displays)
     return (
         f'<div class="fm-table-scroll" tabindex="0" role="region" aria-label="{escape(caption)}">'
         f'<table class="fm-table" style="min-width:{240 + 160 * len(displays)}px">'
@@ -298,7 +275,6 @@ def _retirement_rows(
 def cash_flow_html(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...] | None = None,
-    reference_index: int | None = None,
     *,
     goals: tuple[Goal, ...] = (),
     period: Period = "Annual",
@@ -333,7 +309,6 @@ def cash_flow_html(
         + _table(
             displays,
             _cash_groups(documents, goals),
-            reference_index,
             "Cash flow",
             period,
         )
@@ -346,12 +321,11 @@ def cash_flow_html(
                 ]
                 for name, adults in _people(documents)
             },
-            reference_index,
             "Cash income by person",
             period,
         )
         + '</details><details class="fm-breakdown"><summary>Tax breakdown</summary>'
-        + _table(displays, {"": tax_rows}, reference_index, "Estimated taxes", period)
+        + _table(displays, {"": tax_rows}, "Estimated taxes", period)
         + '</details><details class="fm-breakdown"><summary>Remaining cash and funding shortfalls</summary>'
         + _table(
             displays,
@@ -373,7 +347,6 @@ def cash_flow_html(
                     ),
                 ]
             },
-            reference_index,
             "Cash funding details",
             period,
         )
@@ -382,7 +355,6 @@ def cash_flow_html(
         + _table(
             displays,
             {"": _retirement_rows(documents, goals)},
-            reference_index,
             "Retirement savings",
             period,
         )
@@ -463,7 +435,6 @@ def _option_rows(people: list[PersonInputs | None]) -> list[_Row]:
 def equity_html(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...] | None = None,
-    reference_index: int | None = None,
     *,
     goals: tuple[Goal, ...] = (),
     period: Period = "Annual",
@@ -503,7 +474,7 @@ def equity_html(
     html = (
         '<div class="fm-comparison"><h3>Equity compensation</h3>'
         '<p class="fm-note">RSU vesting, taxes funded from shares, and shares retained by savings goal.</p>'
-        + _table(displays, groups, reference_index, "RSUs", period)
+        + _table(displays, groups, "RSUs", period)
         + '<details class="fm-breakdown"><summary>RSU income by person</summary>'
         + _table(
             displays,
@@ -516,7 +487,6 @@ def equity_html(
                 ]
                 for name, adults in people
             },
-            reference_index,
             "RSU income by person",
             period,
         )
@@ -526,7 +496,6 @@ def equity_html(
             _table(
                 displays,
                 awards,
-                reference_index,
                 "Stock option vesting and exercise estimates",
                 period,
             )
@@ -564,7 +533,6 @@ def equity_html(
                         ),
                     ]
                 },
-                reference_index,
                 "ISO exercises and retained shares",
                 period,
             )

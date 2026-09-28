@@ -50,7 +50,6 @@
 .fm-comparison .fm-group th { font-size: 1.05rem; font-weight: 700; }
 .fm-comparison .fm-table .fm-total th, .fm-comparison .fm-table .fm-total td { font-weight: 650; }
 .fm-comparison .fm-table .fm-total th[scope="row"] { padding-left: 12px; }
-.fm-comparison .fm-delta, .fm-comparison .fm-reference { display: block; font-size: .75rem; font-weight: 400; margin-top: 4px; opacity: .75; }
 .fm-comparison .fm-missing { font-size: .85rem; opacity: .75; white-space: normal; }
 .fm-comparison .fm-deficit { color: light-dark(#b42318, #ffb4ab); }
 .fm-scenario-record summary { padding: 0; font-size: inherit; cursor: pointer; }

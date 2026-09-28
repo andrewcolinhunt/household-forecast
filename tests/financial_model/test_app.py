@@ -78,8 +78,6 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     press(page, "Calculate")
     page.switch_page("src/financial_model/pages/compare.py").run()
     page.multiselect(key="comparison_selection").set_value(["snapshot", "draft"]).run()
-    page.toggle(key="comparison_show_differences").set_value(True).run()
-    page.selectbox(key="comparison_reference").select("snapshot").run()
     assert not page.exception
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
@@ -91,7 +89,8 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
     assert '<span class="fm-scenario-status">Last calculated draft</span>' in rendered
     assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
-    assert "+$1,667</span>" in rendered
+    assert "$10,000</span>" in rendered
+    assert 'class="fm-delta"' not in rendered
     assert "Planned savings and investments" in rendered
     assert "Net additions to assets" not in rendered
     assert "Total allocated to goals" not in rendered
@@ -101,7 +100,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     calculated = page.session_state["document"]
     page.radio(key="display_period").set_value("Annual").run()
     rendered = "\n".join(element.proto.body for element in page.get("html"))
-    assert "+$20,000</span>" in rendered
+    assert "$120,000</span>" in rendered
     assert "+$1,667</span>" not in rendered
     assert page.session_state["document"] == calculated
     page.switch_page("src/financial_model/pages/household.py").run()
@@ -508,7 +507,7 @@ def test_deleted_scenario_cannot_be_saved_back_by_another_session(
 
 
 @pytest.mark.parametrize("count", [3, 4])
-def test_compare_multiple_scenarios_retains_selection_and_reference(
+def test_compare_multiple_scenarios_retains_selection(
     scenario: Scenario,
     monkeypatch: pytest.MonkeyPatch,
     count: int,
@@ -536,28 +535,19 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
         "Cash flow",
         "Equity compensation",
     ]
-    assert not page.toggle(key="comparison_show_differences").value
+    assert not page.toggle
     assert not page.selectbox
-    page.toggle(key="comparison_show_differences").set_value(True).run()
-    page.selectbox(key="comparison_reference").select(ids[-1]).run()
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert f'<span class="fm-scenario-name">Option {count - 1}</span>' in rendered
-    assert '<span class="fm-reference">Reference</span>' in rendered
-    page.toggle(key="comparison_show_differences").set_value(False).run()
-    assert not page.selectbox
-    assert 'class="fm-delta"' not in "\n".join(e.proto.body for e in page.get("html"))
+    assert 'class="fm-reference"' not in rendered
+    assert 'class="fm-delta"' not in rendered
     for target in ("scenarios", "compare"):
         page.switch_page(f"src/financial_model/pages/{target}.py").run()
     assert page.multiselect[0].value == ids
-    assert not page.toggle(key="comparison_show_differences").value
-    page.toggle(key="comparison_show_differences").set_value(True).run()
-    assert page.selectbox(key="comparison_reference").value == ids[-1]
-    for target in ("scenarios", "compare"):
-        page.switch_page(f"src/financial_model/pages/{target}.py").run()
-    assert page.toggle(key="comparison_show_differences").value
-    assert page.selectbox(key="comparison_reference").value == ids[-1]
+    assert not page.toggle
+    assert not page.selectbox
     page.multiselect[0].set_value(ids[:-1]).run()
-    assert page.selectbox(key="comparison_reference").value == ids[0]
+    assert page.multiselect[0].value == ids[:-1]
     assert len(records) == 5
 
 
@@ -624,7 +614,10 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     assert page.metric[1].value == app._number(app.remaining_cash(shortfall))
     assert any("Funding shortfall" in caption.value for caption in page.caption)
     press(page, "Edit")
-    assert any("funding shortfall" in warning.value for warning in page.warning)
+    assert not page.warning
+    rendered = "\n".join(e.proto.body for e in page.get("html"))
+    assert "Remaining cash / funding shortfall" in rendered
+    assert 'class="fm-deficit"' in rendered
     assert [tab.label for tab in page.tabs] == [
         "Assumptions",
         "Savings goals",
@@ -633,7 +626,10 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
         "Equity compensation",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert any("funding shortfall" in warning.value for warning in page.warning)
+    assert not page.warning
+    rendered = "\n".join(e.proto.body for e in page.get("html"))
+    assert "Remaining cash / funding shortfall" in rendered
+    assert 'class="fm-deficit"' in rendered
 
 
 @pytest.mark.integration
@@ -682,7 +678,7 @@ def test_employer_metadata_survives_navigation_save_reload_and_copy(
     assert load_scenario(database_url, saved.id) == saved
 
 
-def test_employer_changes_refresh_labels_without_changing_selection_or_reference(
+def test_employer_changes_refresh_labels_without_changing_selection(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     records = []
@@ -699,8 +695,6 @@ def test_employer_changes_refresh_labels_without_changing_selection_or_reference
     assert page.multiselect[0].value == ids
     assert "Acme" in page.multiselect[0].options[0]
     assert "Example" in page.multiselect[0].options[1]
-    page.toggle(key="comparison_show_differences").set_value(True).run()
-    page.selectbox(key="comparison_reference").select(ids[1]).run()
     data = records[1].inputs.model_dump(mode="json")
     data["adults"][0]["employer"] = "New employer"
     changed = Scenario.model_validate(data)
@@ -710,7 +704,6 @@ def test_employer_changes_refresh_labels_without_changing_selection_or_reference
     page.run()
     assert not page.exception
     assert page.multiselect[0].value == ids
-    assert page.selectbox(key="comparison_reference").value == ids[1]
     assert "New employer" in page.multiselect[0].options[1]
     rendered = "\n".join(e.proto.body for e in page.get("html"))
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
