@@ -13,6 +13,69 @@ financial results. Saved scenario backups retain the names used when saved. A go
 referenced by a saved scenario or an open draft cannot be deleted from this page.
 Spending is the automatic cash remainder, separate from editable goals.
 
+## Save wealth snapshots
+
+Open **Wealth** to keep assets and debts at a financial date. Choose **New
+snapshot**, set the date, and label it **Actual** or **Hypothetical**. A name is
+optional; otherwise the date becomes its title. Mark household coverage as
+partial until all intended assets and debts are included, and describe exclusions.
+
+Add accounts with their owner, account type, tax treatment, and reported value.
+Within an account, use **Add holding** to record individual securities or groups
+of assets. Holding type and asset class are separate: an ETF can contain equities,
+fixed income, or a mixture. A 401(k) or HSA label does not identify its investments.
+Owner choices suggest names from Household; you can enter another name. Saved
+snapshots retain those labels when household defaults change.
+
+Enter amounts in USD without commas or a currency symbol, such as `1250.00`.
+Leave an unknown amount blank; enter `0` only for a known zero. You can save an
+account total before identifying its holdings. The difference appears as
+**Unitemized contents**, rather than assumed cash. A $100,000 account containing
+$90,000 of identified holdings contributes $100,000 to assets, with $10,000
+unitemized. If its total is unknown, only known holdings contribute to the partial
+subtotal. Holdings exceeding a reported total must be reconciled before saving.
+
+Add a home or other assets outside accounts under **Directly held assets**, and
+amounts owed under **Debts**. Enter debt as a positive number; it is subtracted
+once. Do not also enter an account holding as a direct asset. For an account with
+borrowing, record gross assets and the borrowing separately. Combined Savings or
+Credit amounts can be marked as not yet itemized; replace those rows when entering
+individual accounts. Replace grouped holdings when adding their constituents.
+
+**Net recorded position** is known assets less known debts. It does not claim
+complete household net worth. Separate summaries show assets by account type and
+asset class. **Missing information** identifies unknown values, owners, tax
+details, and source dates. A snapshot's financial date does not establish when an
+account last updated; use its optional valuation date and source notes.
+
+**Save snapshot** saves without calculating taxes. **Edit** corrects the same
+dated record. Its date is fixed after saving: use **Duplicate** in Wealth to
+record a later date, review all copied balances, and save a new snapshot. A
+duplicate remains unsaved until you save it. **Save as new snapshot** also keeps
+an independent copy of current edits. Changing one snapshot never changes another.
+
+Edits survive navigation between pages within the browser session. Return through
+**Edit** or **Session drafts**. If someone else changed or deleted the record,
+saving cannot overwrite their change. Save a new copy, or choose **Reload saved
+snapshot → Discard edits and reload wealth**. **Refresh** updates the library.
+
+Under **Wealth backups**, download the current valid contents as JSON, including
+unsaved edits. This also works in local preview, where database saving is disabled.
+Upload a wealth backup and choose **Load wealth backup as new draft** to restore
+its contents without reusing its saved identity. Files are limited to 1 MB;
+scenario backups and wealth backups have different readers. Keep exports private.
+
+**Delete** opens a confirmation identifying the saved snapshot. Deletion removes
+it for both users and clears its draft in the current session. A changed revision
+cannot be deleted until you refresh and review it again. Revisions detect
+competing edits; they do not provide an archive of every previous edit.
+
+Wealth snapshots currently serve as a saved inventory. Annual scenarios and goal
+allocations remain independent. Applying scenarios to starting wealth, assigning
+existing assets to goals, investment growth, and retirement projections are future
+work. Unvested awards, tax lots, and detailed tax splits can be described in notes;
+do not include future vesting again in opening account balances.
+
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its title,
@@ -213,7 +276,8 @@ service without removing that data; `docker compose up -d --wait` starts it
 again. Keep the named volume when recreating the container.
 
 Local credentials are in the ignored `.env` and `.streamlit/secrets.toml` files.
-The app uses a separate account with read/create/update/delete access to scenarios, goals, and scenario-goal references.
+The app uses a separate account with read/create/update/delete access to scenarios,
+goals, scenario-goal references, household defaults, and wealth snapshots.
 These files and the volume belong to this computer; cloning the repository does
 not copy the database. Local access does not provide a shared hosted URL.
 
@@ -232,7 +296,8 @@ JSON backups are also available in the app.
 
 Create a dedicated database, then apply `scripts/schema.sql` using its SQL
 console or a PostgreSQL client. The app never creates or migrates tables on
-startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `scenarios`, `goals`, `scenario_goals`, and `household`,
+startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on
+`scenarios`, `goals`, `scenario_goals`, `household`, and `wealth_snapshots`,
 plus schema usage and database connection rights. Use a separate owner for
 schema changes.
 
@@ -245,6 +310,13 @@ remain on the server and are not part of scenario exports.
 Restart the app and save a synthetic scenario. Open another browser session and
 verify that it can load it. Use a separate test database for automated tests;
 never use the family database for testing.
+
+For an existing version-two database, reapply `scripts/schema.sql` as its owner
+to add `wealth_snapshots`, then grant those four privileges on the new table to
+the runtime role. This is an additive setup step; it does not rewrite scenarios,
+household defaults, or goals. If the new table or permissions are missing, Wealth
+reports that it cannot read saved snapshots and retains session drafts. The app
+does not apply schema changes automatically.
 
 ## Migrate a version-one database
 

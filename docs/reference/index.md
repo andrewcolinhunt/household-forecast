@@ -1,6 +1,7 @@
 # Model Reference
 
-All public models live in `financial_model.schemas`. Submitted models are
+Annual and household models live in `financial_model.schemas`; wealth inventory
+models live in `financial_model.wealth`. Submitted models are
 immutable, reject unknown fields, and serialize with Pydantic JSON methods.
 Money inputs are nonnegative finite decimals with at most two decimal places.
 Share prices allow six decimal places; shares are nonnegative whole numbers.
@@ -25,6 +26,43 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 | `GoalCashFunding` | Goal ID, planned cash, funded cash, and derived shortfall |
 | `CashFunding` | Funded fixed goals in priority order and signed remaining cash |
 | `SavedScenario` | Schema version, UUID, revision, update timestamp, inputs and matching result |
+
+## Wealth inventory models
+
+These models reuse the same immutable values and decimal money constraints as
+the annual model. They do not invoke taxes or change scenario schema version 2.
+
+| Type | Content |
+| --- | --- |
+| `AssetPosition` | Local UUID, label, instrument type, asset class, nullable value, optional security identifier, source notes |
+| `DirectAssetPosition` | Asset fields plus owner, tax treatment, and optional valuation date |
+| `AccountPosition` | Local UUID, label, institution, owner, account type, tax treatment, nullable reported value, valuation date, combined-account flag, source notes, holdings |
+| `DebtPosition` | Local UUID, label, owner/borrower, debt type, nullable amount owed, valuation date, combined-debt flag, source notes |
+| `WealthSnapshot` | Name, financial `as_of` date, actual/hypothetical kind, USD currency, coverage and source notes, accounts, direct assets, debts |
+| `SavedWealthSnapshot` | `document_type="wealth_snapshot"`, schema version 1, UUID, revision, save timestamp, and a `snapshot` |
+
+Unknown monetary values are `None`, serialized as `null`. Known amounts serialize
+as decimal strings, including explicit zeros. IDs are distinct across every row
+within a snapshot; labels need not be unique. Separate snapshots own their copied
+contents, even if local row IDs match.
+
+`AccountPosition.known_value` uses the reported total when known; otherwise it
+uses known holdings as a partial amount. `unitemized` is the reported total minus
+known holdings, or `None` if the total is unknown. Holdings cannot exceed a known
+total. Missing amounts are never inferred from account names or categories.
+
+`WealthSnapshot.assets`, `liabilities`, and `net_recorded` are derived subtotals.
+`asset_classes` includes unitemized amounts separately from classified holdings;
+`account_types` includes direct assets as a separate group. Each grouping sums to
+the known asset subtotal. `has_balances` distinguishes an empty or entirely unknown
+inventory from known zeros. `missing_details` describes incomplete coverage,
+amounts, classifications, owners, tax treatment, and source dates. These properties
+are derived on read and are not independently stored totals.
+
+Account types, tax treatments, instruments, asset classes, and debt types are
+separate controlled values. Mixed or unknown retirement tax treatment remains
+unresolved; dollar-level tax splits and cost basis are not part of this inventory
+schema. Owners are copied labels, not live references to household names or goals.
 
 ## Calculate a scenario
 
@@ -153,3 +191,16 @@ Revision zero means not yet saved; writes increment the revision and reject stal
 updates. `Household.scenario_defaults()` copies family facts into a new input buffer.
 It does not copy a calculation, confirmation, employment, or allocation plan. Existing
 scenario documents remain independent of later household-default changes.
+
+`list_wealth_snapshots`, `load_wealth_snapshot`, `create_wealth_snapshot`,
+`update_wealth_snapshot`, and `delete_wealth_snapshot` store complete validated
+documents in `wealth_snapshots`. Listing sorts by financial date, then save time.
+Creation requires revision 1. Updates and deletions use an atomic revision check;
+updates also preserve the financial date. Use a new identity for another date.
+No snapshot operation modifies scenarios, household defaults, or goal assignments.
+
+`import_wealth_backup(bytes) -> WealthSnapshot` validates the wealth document
+type and schema, enforces the 1 MB limit, and returns contents without database
+identity. The UI opens those contents as an unsaved draft. Backups and PostgreSQL
+use the same document shape. Future saved projections must embed the exact wealth
+and scenario inputs used, rather than resolving mutable library IDs on display.
