@@ -18,10 +18,11 @@ from financial_model.allocations import allocate_sources
 from financial_model.comparison import (
     Period,
     _number,
-    allocation_html,
-    compensation_html,
-    overview_html,
+    cash_flow_html,
+    cash_surplus,
+    equity_html,
     period_divisor,
+    remaining_cash,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.scenario_display import (
@@ -207,21 +208,24 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
             label,
             data.get(field),
             f"{prefix}_{field}",
-            help_text=(
-                "Assumes shares are delivered at vesting and enough can be sold to pay vesting taxes. The remaining shares stay separate from cash."
-                if field == "rsu_vesting"
-                else None
-            ),
+            help_text={
+                "rsu_vesting": "Assumes shares are delivered at vesting and enough can be sold to pay vesting taxes. The remaining shares stay separate from cash.",
+                "employee_401k": "Traditional pretax contributions. Roth contributions are not modeled.",
+            }.get(field),
         )
         for field, label in [
-            ("cash_pay", "Annual cash salary + bonus ($)"),
-            ("rsu_vesting", "Annual RSU vesting value ($)"),
-            ("employee_401k", "Annual pretax 401(k) contribution ($)"),
+            ("cash_pay", "Annual salary and bonus ($)"),
+            ("rsu_vesting", "Annual RSU value at vesting ($)"),
+            ("employee_401k", "Annual employee 401(k) contributions ($)"),
         ]
     }
     rates = {}
     for field, label, default in [
-        ("employer_retirement_rate", "Employer retirement (% of cash pay)", "0"),
+        (
+            "employer_retirement_rate",
+            "Employer retirement contributions (% of salary and bonus)",
+            "0",
+        ),
     ]:
         percent = st.number_input(
             label,
@@ -316,7 +320,7 @@ def _option_inputs(prefix: str, data: dict[str, Any]) -> dict[str, Any]:
             key=_key(f"{prefix}_shares"),
         )
         strike = st.number_input(
-            "Strike price ($/share)",
+            "Exercise price ($/share)",
             min_value=0.0,
             value=float(data.get("strike", 0)),
             format="%.6f",
@@ -334,13 +338,17 @@ def _option_inputs(prefix: str, data: dict[str, Any]) -> dict[str, Any]:
 
 def _living_inputs(data: dict[str, Any], state: str) -> dict[str, Any]:
     """Separate monthly spending from tax-credit eligibility facts."""
-    st.subheader("Living costs")
+    st.subheader("Living expenses")
     columns = st.columns(3)
     amounts = {}
     for column, field, label in zip(
         columns,
         ["rent", "childcare", "other"],
-        ["Monthly rent ($)", "Monthly childcare ($)", "Other monthly costs ($)"],
+        [
+            "Monthly rent ($)",
+            "Monthly childcare ($)",
+            "Other monthly living expenses ($)",
+        ],
         strict=True,
     ):
         with column:
@@ -385,7 +393,7 @@ def _allocation_inputs(
     raw: dict[str, Any] | None, adults: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Collect fixed cash, remainder, and share destinations without asset trading."""
-    st.subheader("Allocations")
+    st.subheader("Savings goals")
     data = raw or default_allocation_plan().model_dump(mode="json")
     catalogue = {str(g.id): g for g in st.session_state.get("goals", ())}
     rows = data["rows"]
@@ -397,22 +405,23 @@ def _allocation_inputs(
     }
     result = st.session_state.get("document")
     unit = st.radio(
-        "Cash amounts",
+        "Savings amounts",
         ["Monthly", "Annual"],
         horizontal=True,
         key=_key("allocation_unit"),
     )
     factor = 12 if unit == "Monthly" else 1
+    period_label = "month" if unit == "Monthly" else "year"
     if result and _current(result.result):
         st.caption(
-            f"Last calculated, {unit.lower()}: {_number(result.result.cash_added / factor)} cash available · {_number(result.result.retained_rsus / factor)} retained RSUs".replace(
+            f"Last calculated, {unit.lower()}: {_number(cash_surplus(result.result) / factor)} cash surplus / deficit · {_number(result.result.retained_rsus / factor)} shares retained from RSUs".replace(
                 "$", r"\$"
             )
         )
     ids = list(names)
     remainder_id = next(r["goal"]["id"] for r in rows if r["cash_amount"] is None)
     remainder = st.selectbox(
-        "Cash remainder goes to",
+        "Remaining cash designated for",
         ids,
         index=ids.index(remainder_id),
         format_func=names.__getitem__,
@@ -430,7 +439,7 @@ def _allocation_inputs(
         original = Decimal(str(row["cash_amount"] or 0))
         # Changing the unit recreates the widget from exact annual draft values.
         value = cash.number_input(
-            f"Cash / {unit.lower()}",
+            f"Additional savings / {period_label}",
             min_value=0.0,
             value=float(original / factor),
             format="%.2f",
@@ -438,9 +447,9 @@ def _allocation_inputs(
             key=_key(f"allocation_cash_{goal_id}_{period_key}"),
         )
         if goal_id == remainder:
-            cash.caption("Remainder")
+            cash.caption("Remaining cash; not a savings deduction")
         rate = shares.number_input(
-            "RSUs (%)",
+            "Retained RSU shares (%)",
             min_value=0.0,
             max_value=100.0,
             value=float(Decimal(str(row["rsu_rate"])) * 100),
@@ -464,10 +473,10 @@ def _allocation_inputs(
     total_rate = sum(Decimal(r["rsu_rate"]) for r in updated)
     if any(Decimal(str(a["rsu_vesting"])) for a in adults) and total_rate != 1:
         st.warning(
-            f"RSU allocation is {total_rate:.0%}; assign 100% before calculating."
+            f"Retained RSU shares total {total_rate:.0%}; designate 100% before calculating."
         )
     retirement = st.selectbox(
-        "401(k) and employer contributions go to",
+        "Retirement contributions designated for",
         ids,
         index=ids.index(data["retirement_goal_id"]),
         format_func=names.__getitem__,
@@ -475,10 +484,11 @@ def _allocation_inputs(
     )
     options = data["option_goal_id"]
     with st.expander(
-        "Option share destination", expanded=any(a["options"]["shares"] for a in adults)
+        "Savings goal for exercised options",
+        expanded=any(a["options"]["shares"] for a in adults),
     ):
         options = st.selectbox(
-            "Exercised option shares go to",
+            "Shares from option exercises designated for",
             ids,
             index=ids.index(options),
             format_func=names.__getitem__,
@@ -533,8 +543,9 @@ def _allocation_inputs(
     }
     if result and _current(result.result):
         try:
+            plan = AllocationPlan.model_validate(updated_plan)
             allocation = allocate_sources(
-                AllocationPlan.model_validate(updated_plan),
+                plan,
                 cash=result.result.cash_added,
                 retirement=result.result.employee_401k
                 + result.result.employer_retirement,
@@ -544,25 +555,17 @@ def _allocation_inputs(
         except ValueError:
             pass  # Calculate reports invalid allocations with the other input errors.
         else:
-            st.caption(f"{unit} allocations using last calculated income and costs")
-            st.table(
-                [
-                    {
-                        "Goal": next(
-                            r["goal"]["name"]
-                            for r in updated
-                            if r["goal"]["id"] == str(row.goal_id)
-                        ),
-                        f"Allocated / {'month' if unit == 'Monthly' else 'year'}": _number(
-                            row.total / factor
-                        ),
-                    }
-                    for row in allocation.rows
-                ]
+            st.caption(
+                "Using last calculated income, taxes, expenses, and option exercises."
+            )
+            st.metric(
+                f"Remaining cash / {period_label}",
+                _number((result.result.cash_added - plan.fixed_cash) / factor),
+                help="After planned additional savings. A negative amount is a funding shortfall.",
             )
             if allocation.funding_gap:
                 st.warning(
-                    f"{unit} cash shortfall: {_number(allocation.funding_gap / factor)}"
+                    f"{unit} funding shortfall: {_number(allocation.funding_gap / factor)}"
                 )
     return updated_plan
 
@@ -639,7 +642,7 @@ def _form(
     _remember_draft()
     if st.session_state.pop("allocation_structure_changed", False):
         st.session_state["editor_epoch"] += 1
-        st.session_state["editor_target"] = "Allocations"
+        st.session_state["editor_target"] = "Savings goals"
         st.rerun()
     loaded = st.session_state.get("loaded_record")
     missing = loaded is not None and all(
@@ -743,23 +746,19 @@ def _current(result: ScenarioResult) -> bool:
 def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
     """Name the same accounting quantities consistently in detail and comparison."""
     return {
-        "Cash compensation": result.gross_cash,
-        "Gross vested RSUs": result.gross_rsus,
-        "Total taxes": result.taxes.total,
-        "Taxes funded by RSUs": result.rsu_tax_funding,
-        "Taxes funded by cash": result.cash_funded_tax,
-        "Employee 401(k)": result.employee_401k,
-        "Employer retirement": result.employer_retirement,
-        "Living costs": result.living_cost,
-        "ISO purchase cost": result.option_cost,
-        "Cash available for allocation": result.cash_added,
-        "Retained RSUs": result.retained_rsus,
-        "Purchased ISO shares (at exercise FMV)": result.option_value,
-        "Total allocated to goals": result.allocations.planned_total,
-        "Cash shortfall": -result.allocations.funding_gap,
-        "Less option exercise spread": result.option_cost - result.option_value,
-        "Investments added (contributions + retained RSUs + option cost)": result.investments_added,
-        "Net additions to assets": result.net_saved_from_income,
+        "Salary and bonus": result.gross_cash,
+        "RSU value at vesting": result.gross_rsus,
+        "Total estimated taxes": result.taxes.total,
+        "Taxes funded from vested shares": result.rsu_tax_funding,
+        "Income and payroll taxes paid from cash": result.cash_funded_tax,
+        "Employee 401(k) contributions": result.employee_401k,
+        "Employer retirement contributions": result.employer_retirement,
+        "Living expenses": result.living_cost,
+        "Cash surplus / deficit": cash_surplus(result),
+        "Option exercise cost": result.option_cost,
+        "Shares retained from RSUs": result.retained_rsus,
+        "Share value at exercise": result.option_value,
+        "Funding shortfall": result.allocations.funding_gap,
     }
 
 
@@ -810,9 +809,6 @@ def _results(document: SavedScenario) -> None:
                 }
                 for label, value in _annual_rows(result).items()
             ]
-        )
-        st.caption(
-            "Net additions to assets = total allocated to goals minus cash shortfall. Existing wealth and investment growth are excluded."
         )
         _tax_detail(result, period)
         st.json(document.inputs.model_dump(mode="json"), expanded=False)
@@ -935,10 +931,17 @@ def _cash_shortfalls(
 ) -> None:
     """Keep unfunded cash needs visible even when retained equity is substantial."""
     for document, display in zip(documents, displays, strict=True):
-        if document.result.allocations.funding_gap:
+        gap = document.result.allocations.funding_gap
+        deficit = max(-cash_surplus(document.result), Decimal(0))
+        unit = "month" if period == "Monthly" else "year"
+        if gap:
+            reason = (
+                "Income does not cover taxes, employee contributions, and living expenses."
+                if deficit
+                else "Planned savings and investments exceed the cash surplus."
+            )
             st.warning(
-                f"{display.label}: ${document.result.allocations.funding_gap / period_divisor(period):,.0f}/{'month' if period == 'Monthly' else 'year'} cash shortfall. "
-                "Goal amounts are planned, not fully funded."
+                f"{display.label}: {_number(gap / period_divisor(period))}/{unit} funding shortfall. {reason}"
             )
 
 
@@ -964,10 +967,10 @@ def _financial_views(
     )
     reference = _comparison_reference(selected, displays) if selected else None
     _cash_shortfalls(documents, displays, period)
-    tabs = st.tabs(["Overview", "Compensation", "Goal allocations"])
+    tabs = st.tabs(["Cash flow", "Equity compensation"])
     for tab, render in zip(
         tabs,
-        (overview_html, compensation_html, allocation_html),
+        (cash_flow_html, equity_html),
         strict=True,
     ):
         with tab:
@@ -1080,7 +1083,7 @@ def _assumptions() -> None:
             "Roth contributions, itemized deductions, health savings or flexible spending deductions, investment/business "
             "income, stock dispositions, or existing AMT credits.\n\n"
             "RSUs fund their incremental tax and the remaining shares are retained. Personal savings are funded "
-            "through household goal allocations. Option purchases use cash and may create AMT. "
+            "through savings goals. Option exercises use cash and may create AMT. "
             "Tax amounts estimate annual liability, not paycheck withholding. Average monthly cash is annual cash divided by 12."
         )
 
@@ -1128,7 +1131,7 @@ def editor_page() -> None:
     if target := st.session_state.pop("editor_target", None):
         st.session_state[section_key] = target
     assumptions, allocations, results = st.tabs(
-        ["Assumptions", "Allocations", "Results"], key=section_key, on_change="rerun"
+        ["Assumptions", "Savings goals", "Results"], key=section_key, on_change="rerun"
     )
     _form(_database_url(), assumptions, allocations)
     loaded = st.session_state.get("loaded_record")
@@ -1226,21 +1229,23 @@ def _forget_scenario(record: SavedScenario) -> None:
 def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
     """Show a saved scenario's outcomes and its edit, copy, and delete actions."""
     with st.container(border=True):
-        name, cash, investments = st.columns([2, 1, 1], vertical_alignment="center")
+        name, cash, balance = st.columns([2, 1, 1], vertical_alignment="center")
         name.html(f'<div class="fm-scenario-card">{display.html(heading=True)}</div>')
         gap = record.result.allocations.funding_gap
         cash.metric(
-            "Net additions / year",
-            _number(record.result.net_saved_from_income),
-            help="Cash, retirement contributions, and retained shares, after any funding gap. Not all spendable.",
+            "Cash surplus / deficit per year",
+            _number(cash_surplus(record.result)),
+            help="After taxes, employee 401(k) contributions, and living expenses. Before additional savings and option exercises.",
         )
-        investments.metric(
-            "Cash shortfall / year",
-            _number(gap),
-            help="Additional cash needed to meet the planned allocations. Zero means the plan is funded.",
+        balance.metric(
+            "Remaining cash / year",
+            _number(remaining_cash(record)),
+            help="After planned additional savings and option exercises. A negative amount is a funding shortfall.",
         )
         if gap:
-            st.caption("Goal allocations are planned, not fully funded.")
+            st.caption(
+                "Funding shortfall after taxes, expenses, and planned contributions."
+            )
         if not _current(record.result):
             st.caption("Recalculation needed: saved results use older rules.")
         with st.container(horizontal=True):
@@ -1288,10 +1293,6 @@ def scenarios_page() -> None:
                         st.session_state.get("editor_epoch", 0) + 1
                     )
                     st.switch_page(str(EDITOR_PAGE))
-    if records:
-        st.caption(
-            "Net additions include every goal and asset type, less any funding gap."
-        )
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"
         for record in records

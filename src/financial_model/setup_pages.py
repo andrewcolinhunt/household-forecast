@@ -154,7 +154,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     """Manage shared goal definitions without changing scenario allocations."""
     st.title("Goals")
     st.caption(
-        "Shared purposes. Set amounts and destinations in each scenario's Allocations tab."
+        "Shared savings goals and cash destinations. Set amounts in each scenario's Savings goals tab."
     )
     with st.form("new_goal", clear_on_submit=True):
         name = st.text_input("New goal name", max_chars=80)

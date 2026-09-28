@@ -140,15 +140,15 @@ def test_matching_titles_show_minimal_real_differences_and_keep_titles(scenario)
     assert len({display.label for display in displays}) == 3
     assert displays[0].differences == (
         "Rent: $3,500/mo",
-        "Retirement · Cash: $1,000/yr",
+        "Retirement · Additional savings: $1,000/yr",
     )
     assert displays[1].differences == (
         "Rent: $4,500/mo",
-        "Retirement · Cash: $1,000/yr",
+        "Retirement · Additional savings: $1,000/yr",
     )
     assert displays[2].differences == (
         "Rent: $3,500/mo",
-        "Retirement · Cash: $2,000/yr",
+        "Retirement · Additional savings: $2,000/yr",
     )
     assert all(display.title == scenario.name for display in displays)
     assert all(display.record_label is None for display in displays)
@@ -166,7 +166,7 @@ def test_difference_details_keep_cents_and_precise_rates(scenario):
     data["allocation_plan"]["rows"][0]["rsu_rate"] = "0.100001"
     changed = original.model_copy(update={"inputs": Scenario.model_validate(data)})
     displays = scenario_displays((original, changed))
-    assert displays[1].differences == ("Retirement · RSUs: 10.0001%",)
+    assert displays[1].differences == ("Retirement · Retained RSU shares: 10.0001%",)
 
 
 def test_differences_cover_option_awards_and_nonmonetary_inputs(scenario):

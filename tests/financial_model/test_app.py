@@ -84,18 +84,17 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
     assert [tab.label for tab in page.tabs] == [
-        "Overview",
-        "Compensation",
-        "Goal allocations",
+        "Cash flow",
+        "Equity compensation",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
     assert '<span class="fm-scenario-status">Last calculated draft</span>' in rendered
     assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
     assert "+$1,667</span>" in rendered
-    assert "Cash allocations" in rendered
-    assert "Net additions to assets" in rendered
-    assert "Total allocated to goals" in rendered
+    assert "Planned savings and investments" in rendered
+    assert "Net additions to assets" not in rendered
+    assert "Total allocated to goals" not in rendered
     assert "Effective tax rate" in rendered
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
@@ -393,9 +392,8 @@ def test_compare_saved_scenarios_without_opening_editor(
     ).run()
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
-        "Overview",
-        "Compensation",
-        "Goal allocations",
+        "Cash flow",
+        "Equity compensation",
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()
@@ -535,9 +533,8 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
     assert not page.exception
     assert page.multiselect[0].proto.max_selections == 4
     assert [tab.label for tab in page.tabs] == [
-        "Overview",
-        "Compensation",
-        "Goal allocations",
+        "Cash flow",
+        "Equity compensation",
     ]
     assert not page.toggle(key="comparison_show_differences").value
     assert not page.selectbox
@@ -618,26 +615,25 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (shortfall, other))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    assert page.metric[0].label == "Net additions / year"
+    assert page.metric[0].label == "Cash surplus / deficit per year"
     assert (
         page.metric[0].value
-        == f"\N{MINUS SIGN}${abs(shortfall.result.net_saved_from_income):,.0f}"
+        == f"\N{MINUS SIGN}${abs(app.cash_surplus(shortfall.result)):,.0f}"
     )
-    assert page.metric[1].label == "Cash shortfall / year"
-    assert page.metric[1].value == f"${shortfall.result.allocations.funding_gap:,.0f}"
-    assert any("not fully funded" in caption.value for caption in page.caption)
+    assert page.metric[1].label == "Remaining cash / year"
+    assert page.metric[1].value == app._number(app.remaining_cash(shortfall))
+    assert any("Funding shortfall" in caption.value for caption in page.caption)
     press(page, "Edit")
-    assert any("cash shortfall" in warning.value for warning in page.warning)
+    assert any("funding shortfall" in warning.value for warning in page.warning)
     assert [tab.label for tab in page.tabs] == [
         "Assumptions",
-        "Allocations",
+        "Savings goals",
         "Results",
-        "Overview",
-        "Compensation",
-        "Goal allocations",
+        "Cash flow",
+        "Equity compensation",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert any("cash shortfall" in warning.value for warning in page.warning)
+    assert any("funding shortfall" in warning.value for warning in page.warning)
 
 
 @pytest.mark.integration
@@ -895,11 +891,11 @@ def test_household_defaults_apply_only_to_new_scenarios(
 
 def test_editor_sections_keep_drafts_and_switch_to_results(scenario):
     page = editor(scenario)
-    assert [t.label for t in page.tabs] == ["Assumptions", "Allocations", "Results"]
+    assert [t.label for t in page.tabs] == ["Assumptions", "Savings goals", "Results"]
     widget(page, "number_input", "adult_0_cash_pay").set_value(123456).run()
     # Tracking the section must not reset inputs in the other tab.
     page.session_state[f"editor_section_{page.session_state['editor_epoch']}"] = (
-        "Allocations"
+        "Savings goals"
     )
     page.run()
     widget(page, "number_input", "allocation_cash_").set_value(500).run()

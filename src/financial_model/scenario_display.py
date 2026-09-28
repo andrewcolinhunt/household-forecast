@@ -111,7 +111,7 @@ def _assumptions(inputs: Scenario) -> dict[str, str]:
     facts = {
         "Rent": f"${_number(costs.rent)}/mo",
         "Childcare": f"${_number(costs.childcare)}/mo",
-        "Other living costs": f"${_number(costs.other)}/mo",
+        "Other living expenses": f"${_number(costs.other)}/mo",
         "Eligible childcare": f"${_number(costs.eligible_care_expense)}/yr",
         "CA renter credit eligible": "Yes" if costs.ca_renter_credit_eligible else "No",
         "Children's ages": ", ".join(
@@ -126,12 +126,14 @@ def _assumptions(inputs: Scenario) -> dict[str, str]:
             "WA Cares exempt": "Yes" if person.wa_cares_exempt else "No",
         }
         for field, label in (
-            ("cash_pay", "Salary + bonus"),
-            ("rsu_vesting", "RSUs"),
-            ("employee_401k", "401(k)"),
+            ("cash_pay", "Salary and bonus"),
+            ("rsu_vesting", "RSU value at vesting"),
+            ("employee_401k", "Employee 401(k) contributions"),
         ):
             values[label] = f"${_number(getattr(person, field))}/yr"
-        for field, label in (("employer_retirement_rate", "Employer retirement"),):
+        for field, label in (
+            ("employer_retirement_rate", "Employer retirement contributions"),
+        ):
             values[label] = f"{_number(100 * getattr(person, field))}%"
         values.update(
             {
@@ -160,15 +162,15 @@ def _assumptions(inputs: Scenario) -> dict[str, str]:
         )
     for row in inputs.allocation_plan.rows:
         name = row.goal.name
-        facts[f"{name} · Cash"] = (
-            "Remainder"
+        facts[f"{name} · Additional savings"] = (
+            "Remaining cash"
             if row.cash_amount is None
             else f"${_number(row.cash_amount)}/yr"
         )
-        facts[f"{name} · RSUs"] = f"{_number(row.rsu_rate * 100)}%"
+        facts[f"{name} · Retained RSU shares"] = f"{_number(row.rsu_rate * 100)}%"
     names = {row.goal.id: row.goal.name for row in inputs.allocation_plan.rows}
-    facts["Retirement destination"] = names[inputs.allocation_plan.retirement_goal_id]
-    facts["Option destination"] = names[inputs.allocation_plan.option_goal_id]
+    facts["Retirement savings goal"] = names[inputs.allocation_plan.retirement_goal_id]
+    facts["Option shares savings goal"] = names[inputs.allocation_plan.option_goal_id]
     return facts
 
 
