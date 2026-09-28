@@ -9,17 +9,15 @@ from html import escape, unescape
 import pytest
 
 from financial_model.comparison import (
-    _monthly_groups,
     _number,
     allocation_html,
-    cash_flow_html,
     compensation_html,
     overview_html,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import OptionAward, SavedScenario, Scenario
 
-RENDERERS = (overview_html, cash_flow_html, compensation_html, allocation_html)
+RENDERERS = (overview_html, compensation_html, allocation_html)
 
 
 def cells(html: str, label: str) -> list[str]:
@@ -65,7 +63,7 @@ def test_tables_include_every_selected_scenario_in_order(
             and count == 1
             and "Annual goal allocations by asset type" in table
         ):
-            assert table.count('scope="col"') == 6
+            assert table.count('scope="col"') == 7
             continue
         assert table.count('scope="col"') == count + 1
         assert [table.index(document.inputs.name) for document in selected] == sorted(
@@ -80,45 +78,57 @@ def test_tables_include_every_selected_scenario_in_order(
     assert 'class="fm-track"' not in html
 
 
-def test_overview_reconciles_goals_and_funding_gaps(documents) -> None:
-    html = overview_html(documents)
+def test_goal_totals_reconcile_assets_and_cash_shortfalls(documents) -> None:
+    html = allocation_html(documents)
     for index, document in enumerate(documents):
         result = document.result
         for label, value in (
-            ("Planned additions", result.allocations.planned_total),
-            ("Less funding gap", -result.allocations.funding_gap),
-            ("Net additions", result.net_saved_from_income),
+            ("Total allocated to goals", result.allocations.planned_total),
+            ("Less cash shortfall", -result.allocations.funding_gap),
+            ("Net additions to assets", result.net_saved_from_income),
         ):
             assert cells(html, label)[index] == _number(value)
-        assert cells(html, "Effective tax rate")[index] == _number(
+        assert cells(overview_html(documents), "Effective tax rate")[index] == _number(
             result.effective_tax_rate, "percent"
         )
         assert result.allocations.net_total == result.net_saved_from_income
     assert "Excludes existing wealth" in html
 
 
-def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
-    for document in documents:
-        groups = _monthly_groups(document)
-        total = sum(
-            value
-            for group, rows in groups.items()
-            if group != "Cash available for goals"
-            for value in rows.values()
-        )
-        assert abs(total * 12) < Decimal("0.00001")
-        assert (
-            groups["Taxes & living costs"]["Taxes paid from cash"]
-            == -document.result.cash_funded_tax / 12
-        )
-    html = cash_flow_html(documents)
-    assert cells(html, "ISO exercise cost") == [
-        "$0",
-        "\N{MINUS SIGN}$250",
-        "\N{MINUS SIGN}$250",
-        "\N{MINUS SIGN}$250",
+@pytest.mark.parametrize(("period", "divisor"), [("Annual", 1), ("Monthly", 12)])
+def test_overview_reconciles_cash_for_every_scenario(
+    documents, period, divisor
+) -> None:
+    html = overview_html(documents, period=period)
+    for index, document in enumerate(documents):
+        r = document.result
+        cash_allocated = sum(row.cash for row in r.allocations.rows)
+        after_deductions = r.gross_cash - r.cash_funded_tax - r.employee_401k
+        assert after_deductions - r.living_cost - r.option_cost == r.cash_added
+        assert r.cash_added - cash_allocated == -r.allocations.funding_gap
+        for label, value in (
+            ("Gross salary + bonus", r.gross_cash),
+            ("Taxes paid from cash", -r.cash_funded_tax),
+            ("Your 401(k) contributions", -r.employee_401k),
+            ("Cash after taxes and 401(k)", after_deductions),
+            ("Cash available before goals", r.cash_added),
+            ("Cash shortfall", -r.allocations.funding_gap),
+        ):
+            assert cells(html, label)[index] == _number(value / divisor)
+    assert cells(html, "ISO share purchases") == [
+        _number(-d.result.option_cost / divisor) for d in documents
     ]
-    assert "ISO exercise cost</th>" not in cash_flow_html(documents[:1])
+    assert "ISO share purchases</th>" not in overview_html(documents[:1])
+    assert (
+        html.index("Gross salary + bonus")
+        < html.index("Cash after taxes and 401(k)")
+        < html.index("Rent")
+        < html.index("Cash available before goals")
+        < html.index("Cash to Retirement")
+        < html.index("Cash shortfall")
+    )
+    assert "Employer contributions</th>" not in html
+    assert "Retained RSUs</th>" not in html
 
 
 def test_allocations_reconcile_income_and_exclude_option_spread(documents) -> None:
@@ -134,7 +144,9 @@ def test_allocations_reconcile_income_and_exclude_option_spread(documents) -> No
             - r.living_cost
         )
         assert r.net_saved_from_income == r.cash_added + r.investments_added
-        assert cells(html, "Net additions")[index] == _number(r.net_saved_from_income)
+        assert cells(html, "Net additions to assets")[index] == _number(
+            r.net_saved_from_income
+        )
         assert cells(html, "Retirement")[index] == _number(r.allocations.rows[0].total)
     assert cells(html, "Exercise spread excluded above") == [
         "$0",
@@ -172,7 +184,7 @@ def test_options_distinguish_absent_unknown_zero_and_positive_values(documents) 
         for d, value in zip(documents, (None, 0, 8, 2), strict=True)
     )
     html = compensation_html(awards)
-    assert cells(html, "Options vesting / year") == ["10,000"] * 4
+    assert cells(html, "Options vesting") == ["10,000"] * 4
     assert cells(html, "Exercise price / share") == ["$2.123456"] * 4
     assert cells(html, "Assumed value / share") == ["Not entered", "$0", "$8", "$2"]
     assert cells(html, "Cost to exercise") == ["$21,235"] * 4
@@ -191,7 +203,7 @@ def test_options_distinguish_absent_unknown_zero_and_positive_values(documents) 
     assert "&lt;Alex &amp; Sam&gt;" in html
     assert "<Alex" not in html
     assert "No option awards entered" in compensation_html(documents)
-    assert "Options vesting / year" not in allocation_html(awards)
+    assert "Options vesting" not in allocation_html(awards)
     # One scenario has the person but no award; another has no matching person.
     no_award = awards[0].inputs.adults[0].model_copy(update={"option_award": None})
     absent = awards[0].model_copy(
@@ -211,7 +223,7 @@ def test_option_differences_preserve_counts_and_per_share_units(documents) -> No
         with_award(documents[1], 9, Decimal("2.123457"), 12000),
     )
     html = compensation_html(awards, reference_index=0)
-    assert cells(html, "Options vesting / year") == ["10,000", "12,000  +2,000"]
+    assert cells(html, "Options vesting") == ["10,000", "12,000  +2,000"]
     assert cells(html, "Exercise price / share") == [
         "$2.123456",
         "$2.123457  +$0.000001",
@@ -225,59 +237,41 @@ def test_option_differences_preserve_counts_and_per_share_units(documents) -> No
 
 
 @pytest.mark.parametrize("reference", range(4))
+@pytest.mark.parametrize(("period", "divisor"), [("Annual", 1), ("Monthly", 12)])
 def test_differences_keep_row_units_reference_and_column_order(
-    documents, reference
+    documents, reference, period, divisor
 ) -> None:
-    for render, label, amounts in (
+    for render, label, annual in (
         (compensation_html, "Salary + bonus", [d.result.gross_cash for d in documents]),
         (
-            cash_flow_html,
-            "Salary + bonus",
-            [d.result.gross_cash / 12 for d in documents],
-        ),
-        (cash_flow_html, "Rent", [-d.inputs.living_costs.rent for d in documents]),
-        (
             overview_html,
-            "Net additions",
-            [d.result.net_saved_from_income for d in documents],
+            "Gross salary + bonus",
+            [d.result.gross_cash for d in documents],
         ),
+        (overview_html, "Rent", [-12 * d.inputs.living_costs.rent for d in documents]),
         (
             allocation_html,
-            "Net additions",
+            "Net additions to assets",
             [d.result.net_saved_from_income for d in documents],
         ),
     ):
-        html = render(documents, reference_index=reference)
-        assert (
-            f'<span class="fm-scenario-name">{documents[reference].inputs.name}</span>'
-            in html
-        )
+        html = render(documents, reference_index=reference, period=period)
         headings = re.findall(r'<th scope="col">(.*?)</th>', html)
         assert '<span class="fm-reference">Reference</span>' in headings[reference + 1]
-        assert sum('class="fm-reference"' in heading for heading in headings[:5]) == 1
-        assert "California · 2025" in html
         values = cells(html, label)
-        assert values[reference] == _number(amounts[reference])
+        amounts = [v / divisor for v in annual]
         for index, amount in enumerate(amounts):
-            if index == reference:
-                continue
             delta = amount - amounts[reference]
             expected = (
                 "No change"
                 if not delta
                 else ("+" if delta > 0 else "") + _number(delta)
             )
-            assert values[index] == f"{_number(amount)}  {expected}"
-    if reference == 0:
-        assert cells(compensation_html(documents, reference_index=0), "Salary + bonus")[
-            1
-        ].endswith("+$20,000")
-        assert cells(cash_flow_html(documents, reference_index=0), "Salary + bonus")[
-            1
-        ].endswith("+$1,667")
-        assert cells(cash_flow_html(documents, reference_index=0), "Rent")[1].endswith(
-            "\N{MINUS SIGN}$2,000"
-        )
+            assert values[index] == (
+                _number(amount)
+                if index == reference
+                else f"{_number(amount)}  {expected}"
+            )
 
 
 def test_people_align_by_name_when_adult_order_changes(documents) -> None:
@@ -320,7 +314,7 @@ def test_cash_deficits_remain_visible_with_positive_retirement(scenario) -> None
     )
     document = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
     assert document.result.cash_added < 0
-    for render in (overview_html, cash_flow_html, allocation_html):
+    for render in (overview_html, allocation_html):
         assert 'class="fm-deficit"' in render((document,))
         assert "\N{MINUS SIGN}$" in render((document,))
 
@@ -419,8 +413,59 @@ def test_shared_goal_names_align_by_id_and_missing_goals_use_zero(documents):
     data["allocation_plan"]["rows"].reverse()
     inputs = Scenario.model_validate(data)
     second = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
-    html = overview_html((first, second), goals=(renamed, other))
+    html = allocation_html((first, second), goals=(renamed, other))
     assert cells(html, "Travel") == ["$0", "$1,200"]
     assert cells(html, "Future")[0] == _number(first.result.allocations.rows[0].total)
     assert "Retirement</th>" not in html
     assert first.inputs.allocation_plan.rows[0].goal.name == "Retirement"
+
+
+@pytest.mark.parametrize(("period", "divisor"), [("Annual", 1), ("Monthly", 12)])
+def test_goal_breakdowns_separate_employee_employer_cash_and_shares(
+    documents, period, divisor
+):
+    document = documents[1]
+    r = document.result
+    total = r.allocations.rows[0]
+    expected = [
+        total.cash,
+        r.employee_401k,
+        r.employer_retirement,
+        total.rsus,
+        total.option_cost,
+        total.total,
+    ]
+    assert sum(expected[:-1]) == expected[-1]
+    single = allocation_html((document,), period=period)
+    assert cells(single, "Retirement") == [_number(v / divisor) for v in expected]
+    multiple = allocation_html((document, documents[0]), period=period)
+    detail = multiple.split("Retirement · funding breakdown</summary>")[1].split(
+        "</details>"
+    )[0]
+    for label, value in zip(
+        (
+            "Cash",
+            "Your 401(k) contributions",
+            "Employer contributions",
+            "Retained RSUs",
+            "Option shares at cost",
+        ),
+        expected[:-1],
+        strict=True,
+    ):
+        assert cells(detail, label)[0] == _number(value / divisor)
+
+
+def test_monthly_options_scale_vesting_values_but_not_per_share_prices(documents):
+    awards = (
+        with_award(documents[0], 8, Decimal("2.123456"), 12000),
+        with_award(documents[1], None),
+    )
+    html = compensation_html(awards, period="Monthly", reference_index=0)
+    assert cells(html, "Options vesting")[0] == "1,000"
+    assert cells(html, "Exercise price / share")[0] == "$2.123456"
+    assert cells(html, "Assumed value / share") == ["$8", "Not entered"]
+    assert cells(html, "Share value if exercised") == ["$8,000", "Not estimated"]
+    assert cells(html, "Cost to exercise")[0] == "$2,123"
+    assert cells(html, "Value above exercise cost")[0] == "$5,877"
+    assert "Annual amounts" not in html

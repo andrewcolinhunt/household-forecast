@@ -85,7 +85,6 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
     assert [tab.label for tab in page.tabs] == [
         "Overview",
-        "Cash flow",
         "Compensation",
         "Goal allocations",
     ]
@@ -93,14 +92,23 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
     assert '<span class="fm-scenario-status">Last calculated draft</span>' in rendered
     assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
-    assert "+$20,000</span>" in rendered
     assert "+$1,667</span>" in rendered
     assert "Cash allocations" in rendered
-    assert "Net additions" in rendered
-    assert "Planned additions" in rendered
+    assert "Net additions to assets" in rendered
+    assert "Total allocated to goals" in rendered
     assert "Effective tax rate" in rendered
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
+    calculated = page.session_state["document"]
+    page.radio(key="display_period").set_value("Annual").run()
+    rendered = "\n".join(element.proto.body for element in page.get("html"))
+    assert "+$20,000</span>" in rendered
+    assert "+$1,667</span>" not in rendered
+    assert page.session_state["document"] == calculated
+    page.switch_page("src/financial_model/pages/household.py").run()
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    assert page.radio(key="display_period").value == "Annual"
+    assert not page.exception
 
 
 @pytest.mark.parametrize("outdated", [False, True])
@@ -386,7 +394,6 @@ def test_compare_saved_scenarios_without_opening_editor(
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
         "Overview",
-        "Cash flow",
         "Compensation",
         "Goal allocations",
     ]
@@ -529,7 +536,6 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
     assert page.multiselect[0].proto.max_selections == 4
     assert [tab.label for tab in page.tabs] == [
         "Overview",
-        "Cash flow",
         "Compensation",
         "Goal allocations",
     ]
@@ -617,24 +623,21 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
         page.metric[0].value
         == f"\N{MINUS SIGN}${abs(shortfall.result.net_saved_from_income):,.0f}"
     )
-    assert page.metric[1].label == "Funding gap / month"
-    assert (
-        page.metric[1].value == f"${shortfall.result.allocations.funding_gap / 12:,.0f}"
-    )
+    assert page.metric[1].label == "Cash shortfall / year"
+    assert page.metric[1].value == f"${shortfall.result.allocations.funding_gap:,.0f}"
     assert any("not fully funded" in caption.value for caption in page.caption)
     press(page, "Edit")
-    assert any("funding gap" in warning.value for warning in page.warning)
+    assert any("cash shortfall" in warning.value for warning in page.warning)
     assert [tab.label for tab in page.tabs] == [
         "Assumptions",
         "Allocations",
         "Results",
         "Overview",
-        "Cash flow",
         "Compensation",
         "Goal allocations",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert any("funding gap" in warning.value for warning in page.warning)
+    assert any("cash shortfall" in warning.value for warning in page.warning)
 
 
 @pytest.mark.integration
