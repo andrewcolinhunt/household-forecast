@@ -11,15 +11,15 @@ import pytest
 from financial_model.comparison import (
     _monthly_groups,
     _number,
+    allocation_html,
     cash_flow_html,
     compensation_html,
     overview_html,
-    saving_html,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import OptionAward, SavedScenario, Scenario
 
-RENDERERS = (overview_html, cash_flow_html, compensation_html, saving_html)
+RENDERERS = (overview_html, cash_flow_html, compensation_html, allocation_html)
 
 
 def cells(html: str, label: str) -> list[str]:
@@ -60,6 +60,13 @@ def test_tables_include_every_selected_scenario_in_order(
     selected = documents[:count]
     html = render(selected)
     for table in re.findall(r"<table.*?</table>", html):
+        if (
+            render is allocation_html
+            and count == 1
+            and "Annual goal allocations by asset type" in table
+        ):
+            assert table.count('scope="col"') == 6
+            continue
         assert table.count('scope="col"') == count + 1
         assert [table.index(document.inputs.name) for document in selected] == sorted(
             table.index(document.inputs.name) for document in selected
@@ -73,38 +80,21 @@ def test_tables_include_every_selected_scenario_in_order(
     assert 'class="fm-track"' not in html
 
 
-def test_overview_reconciles_monthly_and_annual_cash_and_separates_investments(
-    documents,
-) -> None:
+def test_overview_reconciles_goals_and_funding_gaps(documents) -> None:
     html = overview_html(documents)
-    assert (
-        html.index("Monthly cash") < html.index("Annual saving") < html.index("Taxes")
-    )
     for index, document in enumerate(documents):
         result = document.result
-        assert cells(html, "Planned cash saving")[index] == _number(
-            result.extra_savings / 12
-        )
-        assert cells(html, "Cash left after saving")[index] == _number(
-            result.monthly_remaining_cash
-        )
-        assert cells(html, "Cash saved / month")[index] == _number(
-            result.cash_added / 12
-        )
-        assert cells(html, "Cash saved / year")[index] == _number(result.cash_added)
-        assert cells(html, "Investments added / year")[index] == _number(
-            result.investments_added
-        )
-        assert cells(html, "Total saved / year")[index] == _number(
-            result.net_saved_from_income
-        )
-        assert (
-            result.cash_added + result.investments_added == result.net_saved_from_income
-        )
+        for label, value in (
+            ("Planned additions", result.allocations.planned_total),
+            ("Less funding gap", -result.allocations.funding_gap),
+            ("Net additions", result.net_saved_from_income),
+        ):
+            assert cells(html, label)[index] == _number(value)
         assert cells(html, "Effective tax rate")[index] == _number(
             result.effective_tax_rate, "percent"
         )
-    assert "Excludes existing wealth and investment growth" in html
+        assert result.allocations.net_total == result.net_saved_from_income
+    assert "Excludes existing wealth" in html
 
 
 def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
@@ -113,12 +103,10 @@ def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
         total = sum(
             value
             for group, rows in groups.items()
-            if group != "Remaining"
+            if group != "Cash available for goals"
             for value in rows.values()
         )
-        assert abs(total * 12 - document.result.annual_remaining_cash) < Decimal(
-            "0.00001"
-        )
+        assert abs(total * 12) < Decimal("0.00001")
         assert (
             groups["Taxes & living costs"]["Taxes paid from cash"]
             == -document.result.cash_funded_tax / 12
@@ -133,9 +121,8 @@ def test_monthly_groups_reconcile_cash_for_every_scenario(documents) -> None:
     assert "ISO exercise cost</th>" not in cash_flow_html(documents[:1])
 
 
-def test_saving_reconciles_income_and_excludes_option_spread(documents) -> None:
-    html = saving_html(documents)
-    assert "How this total adds up" not in html
+def test_allocations_reconcile_income_and_exclude_option_spread(documents) -> None:
+    html = allocation_html(documents)
     for index, document in enumerate(documents):
         r = document.result
         assert (
@@ -146,29 +133,16 @@ def test_saving_reconciles_income_and_excludes_option_spread(documents) -> None:
             - r.taxes.total
             - r.living_cost
         )
-        assert (
-            r.net_saved_from_income
-            == r.cash_added
-            + r.employee_401k
-            + r.employer_retirement
-            + r.retained_rsus
-            + r.option_cost
-        )
-        assert cells(html, "Total saved")[index] == _number(r.net_saved_from_income)
-        assert cells(html, "Cash saved")[index] == _number(
-            r.extra_savings + r.annual_remaining_cash
-        )
-        assert cells(html, "Investments added")[index] == _number(
-            r.employee_401k + r.employer_retirement + r.retained_rsus + r.option_cost
-        )
-    assert cells(html, "Value above exercise cost") == [
+        assert r.net_saved_from_income == r.cash_added + r.investments_added
+        assert cells(html, "Net additions")[index] == _number(r.net_saved_from_income)
+        assert cells(html, "Retirement")[index] == _number(r.allocations.rows[0].total)
+    assert cells(html, "Exercise spread excluded above") == [
         "$0",
         "$5,000",
         "$5,000",
         "$5,000",
     ]
-    assert "Exercised ISOs" in html
-    assert "not all spendable cash" in html
+    assert "Exercised options" in html
 
 
 def with_award(document, value, strike=Decimal("2.123456"), shares=10000):
@@ -217,7 +191,7 @@ def test_options_distinguish_absent_unknown_zero_and_positive_values(documents) 
     assert "&lt;Alex &amp; Sam&gt;" in html
     assert "<Alex" not in html
     assert "No option awards entered" in compensation_html(documents)
-    assert "Options vesting / year" not in saving_html(awards)
+    assert "Options vesting / year" not in allocation_html(awards)
     # One scenario has the person but no award; another has no matching person.
     no_award = awards[0].inputs.adults[0].model_copy(update={"option_award": None})
     absent = awards[0].model_copy(
@@ -264,10 +238,14 @@ def test_differences_keep_row_units_reference_and_column_order(
         (cash_flow_html, "Rent", [-d.inputs.living_costs.rent for d in documents]),
         (
             overview_html,
-            "Total saved / year",
+            "Net additions",
             [d.result.net_saved_from_income for d in documents],
         ),
-        (saving_html, "Cash saved", [d.result.cash_added for d in documents]),
+        (
+            allocation_html,
+            "Net additions",
+            [d.result.net_saved_from_income for d in documents],
+        ),
     ):
         html = render(documents, reference_index=reference)
         assert (
@@ -342,7 +320,7 @@ def test_cash_deficits_remain_visible_with_positive_retirement(scenario) -> None
     )
     document = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
     assert document.result.cash_added < 0
-    for render in (overview_html, cash_flow_html, saving_html):
+    for render in (overview_html, cash_flow_html, allocation_html):
         assert 'class="fm-deficit"' in render((document,))
         assert "\N{MINUS SIGN}$" in render((document,))
 
@@ -423,3 +401,26 @@ def test_identical_values_show_no_change_and_escape_duplicate_names(
     assert "Same assumptions" in html
     assert "Saved " in html
     assert "fm-scenario-duplicate" not in html
+
+
+def test_shared_goal_names_align_by_id_and_missing_goals_use_zero(documents):
+    from uuid import uuid4
+
+    from financial_model.schemas import Goal
+
+    first = documents[0]
+    retirement = first.inputs.allocation_plan.rows[0].goal
+    renamed = retirement.model_copy(update={"name": "Future"})
+    other = Goal(id=uuid4(), name="Travel")
+    data = documents[1].inputs.model_dump(mode="json")
+    data["allocation_plan"]["rows"].append(
+        {"goal": other.model_dump(mode="json"), "cash_amount": "1200", "rsu_rate": "0"}
+    )
+    data["allocation_plan"]["rows"].reverse()
+    inputs = Scenario.model_validate(data)
+    second = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
+    html = overview_html((first, second), goals=(renamed, other))
+    assert cells(html, "Travel") == ["$0", "$1,200"]
+    assert cells(html, "Future")[0] == _number(first.result.allocations.rows[0].total)
+    assert "Retirement</th>" not in html
+    assert first.inputs.allocation_plan.rows[0].goal.name == "Retirement"

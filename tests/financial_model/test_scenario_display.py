@@ -130,17 +130,26 @@ def test_automatic_titles_use_location_without_work_categories(scenario, first, 
 def test_matching_titles_show_minimal_real_differences_and_keep_titles(scenario):
     original = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     documents = []
-    for rent, saving in [(3500, "0.1"), (4500, "0.1"), (3500, "0.2")]:
+    for rent, saving in [(3500, "1000"), (4500, "1000"), (3500, "2000")]:
         data = scenario.model_dump(mode="json")
         data["living_costs"]["rent"] = rent
-        data["adults"][0]["savings_rate"] = saving
+        data["allocation_plan"]["rows"][0]["cash_amount"] = saving
         inputs = Scenario.model_validate(data)
         documents.append(original.model_copy(update={"id": uuid4(), "inputs": inputs}))
     displays = scenario_displays(tuple(documents))
     assert len({display.label for display in displays}) == 3
-    assert displays[0].differences == ("Rent: $3,500/mo", "Adult A · Saving goal: 10%")
-    assert displays[1].differences == ("Rent: $4,500/mo", "Adult A · Saving goal: 10%")
-    assert displays[2].differences == ("Rent: $3,500/mo", "Adult A · Saving goal: 20%")
+    assert displays[0].differences == (
+        "Rent: $3,500/mo",
+        "Retirement · Cash: $1,000/yr",
+    )
+    assert displays[1].differences == (
+        "Rent: $4,500/mo",
+        "Retirement · Cash: $1,000/yr",
+    )
+    assert displays[2].differences == (
+        "Rent: $3,500/mo",
+        "Retirement · Cash: $2,000/yr",
+    )
     assert all(display.title == scenario.name for display in displays)
     assert all(display.record_label is None for display in displays)
     assert scenario_displays((documents[0],))[0].title == displays[0].title
@@ -154,10 +163,10 @@ def test_difference_details_keep_cents_and_precise_rates(scenario):
     displays = scenario_displays((original, changed))
     assert displays[1].differences == ("Rent: $0.01/mo",)
     data["living_costs"]["rent"] = "0"
-    data["adults"][0]["savings_rate"] = "0.100001"
+    data["allocation_plan"]["rows"][0]["rsu_rate"] = "0.100001"
     changed = original.model_copy(update={"inputs": Scenario.model_validate(data)})
     displays = scenario_displays((original, changed))
-    assert displays[1].differences == ("Adult A · Saving goal: 10.0001%",)
+    assert displays[1].differences == ("Retirement · RSUs: 10.0001%",)
 
 
 def test_differences_cover_option_awards_and_nonmonetary_inputs(scenario):

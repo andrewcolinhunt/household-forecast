@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from html import escape
 from typing import Literal
+from uuid import UUID
 
 from financial_model.scenario_display import ScenarioDisplay, scenario_displays
-from financial_model.schemas import PersonInputs, SavedScenario
+from financial_model.schemas import ZERO, Goal, PersonInputs, SavedScenario
 
 NumberFormat = Literal["money", "number", "price", "percent"]
 
@@ -118,33 +119,64 @@ def _definitions(items: dict[str, str]) -> str:
     return f'<details class="fm-definitions"><summary>Definitions</summary><dl>{rows}</dl></details>'
 
 
+def _goal_names(
+    documents: tuple[SavedScenario, ...], goals: tuple[Goal, ...]
+) -> dict[UUID, str]:
+    """Align purposes by stable identity, using current names when available."""
+    snapshots = {
+        row.goal.id: row.goal.name
+        for doc in documents
+        for row in doc.inputs.allocation_plan.rows
+    }
+    current = {g.id: g.name for g in goals}
+    names = {key: current.get(key, name) for key, name in snapshots.items()}
+    counts = Counter(names.values())
+    return {
+        key: f"{name} · {str(key)[:6]}" if counts[name] > 1 else name
+        for key, name in names.items()
+    }
+
+
+def _goal_values(
+    documents: tuple[SavedScenario, ...], goal_id: UUID, field: str
+) -> list[Decimal]:
+    """Use zero for a goal absent from a scenario, retaining selected column order."""
+    return [
+        next(
+            (
+                getattr(row, field)
+                for row in doc.result.allocations.rows
+                if row.goal_id == goal_id
+            ),
+            ZERO,
+        )
+        for doc in documents
+    ]
+
+
 def overview_html(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
+    *,
+    goals: tuple[Goal, ...] = (),
 ) -> str:
-    """Reconcile monthly cash saving and separate annual cash from investments."""
-    results = [document.result for document in documents]
+    """Compare planned goal additions and reconcile any unfunded cash."""
+    results = [doc.result for doc in documents]
     groups = {
-        "Monthly cash": [
-            _Row("Planned cash saving", [r.extra_savings / 12 for r in results]),
-            _Row(
-                "Cash left after saving",
-                [r.monthly_remaining_cash for r in results],
-                deficit=True,
-            ),
-            _Row(
-                "Cash saved / month",
-                [r.cash_added / 12 for r in results],
-                total=True,
-                deficit=True,
-            ),
+        "Goals · per year": [
+            _Row(name, _goal_values(documents, goal_id, "total"))
+            for goal_id, name in _goal_names(documents, goals).items()
         ],
-        "Annual saving": [
-            _Row("Cash saved / year", [r.cash_added for r in results], deficit=True),
-            _Row("Investments added / year", [r.investments_added for r in results]),
+        "Total · per year": [
+            _Row("Planned additions", [r.allocations.planned_total for r in results]),
             _Row(
-                "Total saved / year",
+                "Less funding gap",
+                [-r.allocations.funding_gap for r in results],
+                deficit=True,
+            ),
+            _Row(
+                "Net additions",
                 [r.net_saved_from_income for r in results],
                 total=True,
                 deficit=True,
@@ -152,27 +184,24 @@ def overview_html(
         ],
         "Taxes": [
             _Row(
-                "Effective tax rate",
-                [r.effective_tax_rate for r in results],
-                "percent",
+                "Effective tax rate", [r.effective_tax_rate for r in results], "percent"
             )
         ],
     }
     return (
-        '<div class="fm-comparison"><h3>Overview</h3>'
-        '<p class="fm-note">Assumes unspent cash is kept. Excludes existing wealth and investment growth.</p>'
+        '<div class="fm-comparison"><h3>Annual goal funding</h3>'
+        '<p class="fm-note">Planned additions by purpose. A funding gap means the plan needs more cash.</p>'
         + _table(
             displays or scenario_displays(documents),
             groups,
             reference_index,
-            "Monthly cash and annual saving",
+            "Annual goal funding",
         )
         + _definitions(
             {
-                "Cash saved": "Planned cash saving + cash left after saving. The annual amount is 12 times the monthly amount, before display rounding. Negative means cash is used.",
-                "Investments added": "Your 401(k) + employer contributions + RSUs retained after tax + option purchases at cost. Access may be restricted and share values can change. See Saving & equity for the breakdown.",
-                "Total saved": "Cash saved + investments added this year. This is an annual addition, not total wealth or spendable cash. Excludes option gains.",
-                "Effective tax rate": "Federal and state income taxes plus employee payroll taxes, divided by gross salary, bonus, and vested RSUs. Includes taxes funded by RSUs and any ISO exercise tax. Employer contributions and option values are excluded from the denominator. N/A with zero wages; pp means percentage points.",
+                "Planned additions": "Cash, retirement contributions, retained RSUs, and option purchases at cost, each assigned once. Shares retain their value risk and access restrictions.",
+                "Net additions": "Planned additions less the cash funding gap. Excludes existing wealth, investment growth, and option gains. Allocating money does not spend it.",
+                "Effective tax rate": "Federal and state income taxes plus employee payroll taxes divided by gross salary, bonus, and vested RSUs. Includes RSU-funded and ISO exercise taxes. N/A at zero wages. Differences use percentage points (pp).",
             }
         )
         + "</div>"
@@ -254,6 +283,8 @@ def compensation_html(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
+    *,
+    goals: tuple[Goal, ...] = (),
 ) -> str:
     """Separate annual cash, RSUs, retirement, and uncertain option awards."""
     displays = displays or scenario_displays(documents)
@@ -299,7 +330,7 @@ def compensation_html(
         + options
         + _definitions(
             {
-                "RSUs": "Share value at vesting before tax. Retained shares are shown in Saving & equity; value and sale availability can change.",
+                "RSUs": "Share value at vesting before tax. Retained shares are shown in Goal allocations; value and sale availability can change.",
                 "Employer contributions": "In addition to salary. Access is restricted; employer plan vesting is not modeled. Other employer benefits are not modeled.",
                 "Option values": "Annual vesting, not the full multiyear grant. Share value if exercised is the option count times assumed share value. Cost to exercise is the count times exercise price. Value above cost is floored at zero and excludes tax.",
                 "Option awards": "Estimates do not enter cash, taxes, or saving totals. A $0 estimate excludes future appreciation. Enter actual qualifying ISO exercises separately in the editor.",
@@ -309,96 +340,116 @@ def compensation_html(
     )
 
 
-def saving_html(
+def allocation_html(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
+    *,
+    goals: tuple[Goal, ...] = (),
 ) -> str:
-    """Reconcile annual saving, keeping option purchases and gains distinct."""
+    """Show each goal's sources without treating all goal assets as accessible cash."""
     displays = displays or scenario_displays(documents)
-    results = [document.result for document in documents]
-    groups = {
-        "Cash": [
-            _Row("Planned cash saving", [r.extra_savings for r in results]),
+    names = _goal_names(documents, goals)
+    if len(documents) == 1:
+        result = documents[0].result
+        rows = "".join(
+            f'<tr><th scope="row">{escape(names[row.goal_id])}</th>'
+            + "".join(
+                f"<td>{_number(getattr(row, field))}</td>"
+                for field in ("cash", "retirement", "rsus", "option_cost", "total")
+            )
+            + "</tr>"
+            for row in result.allocations.rows
+        )
+        tables = (
+            '<div class="fm-table-scroll" tabindex="0"><table class="fm-table" style="min-width:900px"><caption>Annual goal allocations by asset type</caption><thead><tr><th scope="col">Goal</th><th scope="col">Cash</th><th scope="col">Retirement accounts</th><th scope="col">Retained RSUs</th><th scope="col">Option shares at cost</th><th scope="col">Total planned</th></tr></thead><tbody>'
+            + rows
+            + "</tbody></table></div>"
+        )
+    else:
+        tables = _table(
+            displays,
+            {
+                "Goals": [
+                    _Row(name, _goal_values(documents, goal_id, "total"), total=True)
+                    for goal_id, name in names.items()
+                ]
+            },
+            reference_index,
+            "Annual goal allocations",
+        )
+    for goal_id, name in names.items():
+        detail = [
+            _Row(label, _goal_values(documents, goal_id, field))
+            for label, field in (
+                ("Cash", "cash"),
+                ("Retirement accounts", "retirement"),
+                ("Retained RSUs", "rsus"),
+                ("Option shares at cost", "option_cost"),
+            )
+        ]
+        if len(documents) > 1:
+            tables += (
+                f'<details class="fm-breakdown"><summary>{escape(name)} · asset breakdown</summary>'
+                + _table(
+                    displays,
+                    {"": detail},
+                    reference_index,
+                    f"{name}: annual asset breakdown",
+                )
+                + "</details>"
+            )
+    totals = {
+        "Reconciliation": [
             _Row(
-                "Cash left after saving",
-                [r.annual_remaining_cash for r in results],
+                "Planned additions",
+                [d.result.allocations.planned_total for d in documents],
+            ),
+            _Row(
+                "Less funding gap",
+                [-d.result.allocations.funding_gap for d in documents],
                 deficit=True,
             ),
             _Row(
-                "Cash saved",
-                [r.cash_added for r in results],
+                "Net additions",
+                [d.result.net_saved_from_income for d in documents],
                 total=True,
                 deficit=True,
             ),
-        ],
-        "Investments": [
-            _Row("Your 401(k)s", [r.employee_401k for r in results]),
-            _Row("Employer contributions", [r.employer_retirement for r in results]),
-            _Row("RSUs retained after tax", [r.retained_rsus for r in results]),
-        ],
+        ]
     }
-    if any(r.option_cost for r in results):
-        groups["Investments"].append(
-            _Row("Cash moved into option shares", [r.option_cost for r in results])
-        )
-    groups["Investments"].append(
-        _Row("Investments added", [r.investments_added for r in results], total=True)
-    )
-    groups["Total"] = [
-        _Row(
-            "Total saved",
-            [r.net_saved_from_income for r in results],
-            total=True,
-            deficit=True,
-        )
-    ]
-    option_detail = ""
-    if any(adult.options.shares for d in documents for adult in d.inputs.adults):
-        option_detail = (
-            '<section class="fm-section"><h3>Exercised ISOs</h3>'
-            '<p class="fm-note">Cash moved into shares this year. Exercise gains are excluded from net saving above.</p>'
-            + _table(
-                displays,
-                {
-                    "": [
-                        _Row("Cash paid to exercise", [r.option_cost for r in results]),
-                        _Row(
-                            "Shares acquired at exercise value",
-                            [r.option_value for r in results],
-                        ),
-                        _Row(
-                            "Value above exercise cost",
-                            [r.option_value - r.option_cost for r in results],
-                        ),
-                    ]
-                },
-                reference_index,
-                "Annual ISO purchases",
-            )
-            + "</section>"
-        )
+    if any(d.result.option_cost or d.result.option_value for d in documents):
+        totals["Exercised options"] = [
+            _Row(
+                "Shares acquired at exercise value",
+                [d.result.option_value for d in documents],
+            ),
+            _Row(
+                "Exercise spread excluded above",
+                [d.result.option_value - d.result.option_cost for d in documents],
+            ),
+        ]
     return (
-        '<div class="fm-comparison"><h3>Annual saving &amp; equity</h3>'
-        '<p class="fm-note">Additions this year. Existing balances and investment growth are excluded.</p>'
-        + _table(displays, groups, reference_index, "Annual saving reconciliation")
-        + option_detail
+        '<div class="fm-comparison"><h3>Annual goal allocations</h3>'
+        '<p class="fm-note">Purpose and asset type. Shares are not available cash; retirement withdrawals may be restricted.</p>'
+        + tables
+        + _table(displays, totals, reference_index, "Goal allocation reconciliation")
         + _definitions(
             {
-                "Planned cash saving": "The savings goal in the editor, less your 401(k). Funded from cash, even when the goal includes RSU income.",
-                "Cash saved": "Planned cash saving + cash left after saving. Assumes surplus is kept; a negative total uses existing cash.",
-                "Retirement": "Your 401(k) plus employer contributions. Access is restricted; future withdrawals may be taxed. Employer plan vesting is not modeled.",
-                "Investments added": "Retirement contributions + RSUs retained after tax + option purchases at cost. Excludes option gains. Share values can change and sales may be restricted.",
-                "Total saved": "Cash saved + investments added. Equals salary + RSUs + employer retirement minus taxes and living costs. It is not all spendable cash or total wealth.",
+                "Funding gap": "Goal amounts are planned. Subtract missing cash funding to reconcile net additions; no reserve withdrawal or share sale is assumed.",
+                "Option shares": "Allocated at purchase cost. Exercise spread and unexercised options are excluded from goal funding. Values can change and sales may be restricted.",
             }
         )
         + "</div>"
     )
 
 
-def _monthly_groups(document: SavedScenario) -> dict[str, dict[str, Decimal]]:
-    """Use cash-funded taxes only, keeping retained equity out of monthly cash."""
+def _monthly_groups(
+    document: SavedScenario, goals: tuple[Goal, ...] = ()
+) -> dict[str, dict[str, Decimal]]:
+    """Separate spending from goal transfers, including the named cash remainder."""
     result, costs = document.result, document.inputs.living_costs
+    names = _goal_names((document,), goals)
     return {
         "Money in": {"Salary + bonus": result.gross_cash / 12},
         "Taxes & living costs": {
@@ -407,12 +458,17 @@ def _monthly_groups(document: SavedScenario) -> dict[str, dict[str, Decimal]]:
             "Childcare budget": -costs.childcare,
             "Other living costs": -costs.other,
         },
-        "Money set aside": {
+        "Transfers into assets": {
             "Your 401(k)s": -result.employee_401k / 12,
-            "Planned cash saving": -result.extra_savings / 12,
             "ISO exercise cost": -result.option_cost / 12,
         },
-        "Remaining": {"Cash left after saving": result.monthly_remaining_cash},
+        "Cash available for goals": {
+            "Available before allocation": result.cash_added / 12
+        },
+        "Cash allocations": {
+            names[row.goal_id]: -row.cash / 12 for row in result.allocations.rows
+        },
+        "Funding": {"Additional cash needed": result.allocations.funding_gap / 12},
     }
 
 
@@ -420,26 +476,35 @@ def cash_flow_html(
     documents: tuple[SavedScenario, ...],
     displays: tuple[ScenarioDisplay, ...] | None = None,
     reference_index: int | None = None,
+    *,
+    goals: tuple[Goal, ...] = (),
 ) -> str:
-    """Show grouped monthly cash reconciliation in one column per scenario."""
-    monthly = [_monthly_groups(document) for document in documents]
-    groups = {
-        group: [
+    """Show monthly cash sources, uses, goal destinations, and funding needs."""
+    # Use union goal names so different plans align by identity, not row position.
+    names = _goal_names(documents, goals)
+    monthly = [
+        _monthly_groups(
+            d, tuple(Goal(id=key, name=name) for key, name in names.items())
+        )
+        for d in documents
+    ]
+    groups = {}
+    for group in monthly[0]:
+        labels = list(dict.fromkeys(label for rows in monthly for label in rows[group]))
+        groups[group] = [
             _Row(
                 label,
-                [rows[group][label] for rows in monthly],
-                total=group == "Remaining",
-                deficit=group == "Remaining",
+                [rows[group].get(label, ZERO) for rows in monthly],
+                total=group in ("Cash available for goals", "Funding"),
+                deficit=group == "Cash available for goals",
             )
-            for label in values
+            for label in labels
             if label != "ISO exercise cost"
-            or any(rows[group][label] for rows in monthly)
+            or any(rows[group].get(label, ZERO) for rows in monthly)
         ]
-        for group, values in monthly[0].items()
-    }
     return (
         '<div class="fm-comparison"><h3>Average monthly cash flow</h3>'
-        '<p class="fm-note">Annual amounts ÷ 12. Minus signs show cash going out.</p>'
+        '<p class="fm-note">Annual amounts ÷ 12. Goal allocations remain your assets.</p>'
         + _table(
             displays or scenario_displays(documents),
             groups,
@@ -448,10 +513,9 @@ def cash_flow_html(
         )
         + _definitions(
             {
-                "Monthly averages": "Rounded to whole dollars; actual paycheck timing varies. Retained shares and employer retirement are not cash income.",
-                "Taxes paid from cash": "Excludes taxes funded from vested RSUs. The remaining RSUs are shown in Saving & equity.",
-                "Planned cash saving": "The savings goal in the editor, less your 401(k). This money remains yours; it is set aside rather than spent.",
-                "Cash left after saving": "Cash left after the rows above. Add planned cash saving to get total cash saved, as shown in Overview. A shortfall requires additional cash.",
+                "Taxes paid from cash": "Excludes taxes funded from vested RSUs; retained shares are allocated separately.",
+                "Cash allocations": "Fixed amounts plus the remainder assigned to its named goal. A funding gap is additional cash needed, not an automatic withdrawal.",
+                "Monthly averages": "Rounded to whole dollars. Retirement and retained shares are not cash income. Available before allocation is a subtotal.",
             }
         )
         + "</div>"

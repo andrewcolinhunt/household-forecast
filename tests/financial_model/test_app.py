@@ -82,7 +82,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
         "Overview",
         "Cash flow",
         "Compensation",
-        "Saving & equity",
+        "Goal allocations",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
@@ -90,9 +90,9 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert '<span class="fm-scenario-status">Kept snapshot</span>' in rendered
     assert "+$20,000</span>" in rendered
     assert "+$1,667</span>" in rendered
-    assert "Cash left after saving" in rendered
-    assert "Cash saved / month" in rendered
-    assert "Investments added / year" in rendered
+    assert "Cash allocations" in rendered
+    assert "Net additions" in rendered
+    assert "Planned additions" in rendered
     assert "Effective tax rate" in rendered
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
@@ -326,7 +326,9 @@ def test_main_invalid_backup_keeps_existing_results(
         app.st, "file_uploader", lambda *args, **kwargs: BytesIO(b"invalid")
     )
     page.run()
-    press(page, "Load backup as new draft")
+    assert next(
+        b for b in page.button if b.label == "Load backup as new draft"
+    ).disabled
     assert page.error
     assert page.session_state["document"] == original
 
@@ -381,7 +383,7 @@ def test_compare_saved_scenarios_without_opening_editor(
         "Overview",
         "Cash flow",
         "Compensation",
-        "Saving & equity",
+        "Goal allocations",
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()
@@ -524,7 +526,7 @@ def test_compare_multiple_scenarios_retains_selection_and_reference(
         "Overview",
         "Cash flow",
         "Compensation",
-        "Saving & equity",
+        "Goal allocations",
     ]
     assert not page.toggle(key="comparison_show_differences").value
     assert not page.selectbox
@@ -584,7 +586,7 @@ def test_option_award_save_preserves_taxes_and_survives_reload(
     assert saved.inputs.adults[0].option_award.exercise_spread == 30000
     assert saved.result.taxes == baseline.taxes
     assert saved.result.net_saved_from_income == baseline.net_saved_from_income
-    assert saved.result.annual_remaining_cash == baseline.annual_remaining_cash
+    assert saved.result.cash_added == baseline.cash_added
     assert import_backup(saved.model_dump_json().encode()) == saved.inputs
     second = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     press(second, "Edit")
@@ -605,24 +607,26 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (shortfall, other))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    assert page.metric[0].label == "Cash saved / month"
+    assert page.metric[0].label == "Net additions / year"
     assert (
         page.metric[0].value
-        == f"\N{MINUS SIGN}${abs(shortfall.result.cash_added) / 12:,.0f}"
+        == f"\N{MINUS SIGN}${abs(shortfall.result.net_saved_from_income):,.0f}"
     )
-    assert page.metric[1].label == "Investments added / year"
-    assert page.metric[1].value == f"${shortfall.result.investments_added:,.0f}"
-    assert any("cash shortfall" in caption.value for caption in page.caption)
+    assert page.metric[1].label == "Funding gap / month"
+    assert (
+        page.metric[1].value == f"${shortfall.result.allocations.funding_gap / 12:,.0f}"
+    )
+    assert any("not fully funded" in caption.value for caption in page.caption)
     press(page, "Edit")
-    assert any("cash shortfall" in warning.value for warning in page.warning)
+    assert any("funding gap" in warning.value for warning in page.warning)
     assert [tab.label for tab in page.tabs] == [
         "Overview",
         "Cash flow",
         "Compensation",
-        "Saving & equity",
+        "Goal allocations",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
-    assert any("cash shortfall" in warning.value for warning in page.warning)
+    assert any("funding gap" in warning.value for warning in page.warning)
 
 
 @pytest.mark.integration
@@ -769,3 +773,68 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     assert page.multiselect[0].value == selected
     assert any("Same assumptions" in option for option in page.multiselect[0].options)
     assert load_scenario(database_url, original.id) == original
+
+
+def test_allocation_units_preserve_cents_and_edits_across_navigation(scenario):
+    raw = scenario.model_dump(mode="json")
+    raw["allocation_plan"]["rows"][0]["cash_amount"] = "100.01"
+    page = editor(Scenario.model_validate(raw))
+    press(page, "Calculate")
+    assert (
+        str(page.session_state["document"].inputs.allocation_plan.fixed_cash)
+        == "100.01"
+    )
+    widget(page, "radio", "allocation_unit").set_value("Annual").run()
+    widget(page, "number_input", "allocation_cash_").set_value(1200.01).run()
+    widget(page, "radio", "allocation_unit").set_value("Monthly").run()
+    widget(page, "radio", "allocation_unit").set_value("Annual").run()
+    assert widget(page, "number_input", "allocation_cash_").value == 1200.01
+    press(page, "Calculate")
+    assert (
+        str(page.session_state["document"].inputs.allocation_plan.fixed_cash)
+        == "1200.01"
+    )
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    page.switch_page("src/financial_model/pages/editor.py").run()
+    assert (
+        str(
+            page.session_state["draft_data"]["allocation_plan"]["rows"][0][
+                "cash_amount"
+            ]
+        )
+        == "1200.01"
+    )
+
+
+@pytest.mark.integration
+def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = editor(scenario)
+    press(page, "Add goal")
+    next(w for w in page.text_input if w.label == "Goal name").set_value("House")
+    press(page, "Add")
+    plan = page.session_state["draft_data"]["allocation_plan"]
+    house = plan["rows"][-1]["goal"]["id"]
+    widget(page, "number_input", f"allocation_cash_{house}").set_value(500).run()
+    press(page, "Save")
+    (saved,) = list_scenarios(database_url)
+    assert saved.inputs.allocation_plan.rows[-1].cash_amount == 6000
+    press(page, "Edit goals")
+    next(w for w in page.selectbox if w.label == "Goal to edit").select(house).run()
+    widget(page, "text_input", "goal_name_").set_value("Home deposit")
+    press(page, "Rename")
+    assert not page.error, [e.value for e in page.error]
+    assert (
+        page.session_state["draft_data"]["allocation_plan"]["rows"][-1]["goal"]["name"]
+        == "Home deposit"
+    )
+    press(page, "Save")
+    (saved,) = list_scenarios(database_url)
+    assert saved.inputs.allocation_plan.rows[-1].goal.name == "Home deposit"
+    assert saved.inputs.allocation_plan.rows[-1].cash_amount == 6000
+    fresh = AppTest.from_file(str(ENTRY), default_timeout=60).run()
+    press(fresh, "Edit")
+    assert (
+        fresh.session_state["draft_data"]["allocation_plan"]["rows"][-1]["goal"]["name"]
+        == "Home deposit"
+    )

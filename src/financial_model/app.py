@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from decimal import Decimal
 from pathlib import Path
@@ -12,12 +13,13 @@ import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
+from financial_model.allocations import allocate_sources
 from financial_model.comparison import (
     _number,
+    allocation_html,
     cash_flow_html,
     compensation_html,
     overview_html,
-    saving_html,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.scenario_display import (
@@ -27,16 +29,25 @@ from financial_model.scenario_display import (
 )
 from financial_model.schemas import (
     MODEL_REVISION,
+    AllocationPlan,
+    Goal,
     SavedScenario,
     Scenario,
     ScenarioResult,
+    default_allocation_plan,
+    dollars,
 )
 from financial_model.storage import (
     RevisionConflictError,
+    create_goal,
     create_scenario,
+    delete_goal,
     delete_scenario,
     import_backup,
+    list_goals,
     list_scenarios,
+    resolve_goal_conflicts,
+    update_goal,
     update_scenario,
 )
 from financial_model.taxes import CORE_VERSION, CORRECTION_VERSION, ENGINE_VERSION
@@ -192,7 +203,6 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
     }
     rates = {}
     for field, label, default in [
-        ("savings_rate", "Cash-funded saving goal (% of salary + RSUs)", "0.10"),
         ("employer_retirement_rate", "Employer retirement (% of cash pay)", "0"),
     ]:
         percent = st.number_input(
@@ -202,11 +212,7 @@ def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any
             value=float(Decimal(data.get(field, default)) * 100),
             step=1.0,
             key=_key(f"{prefix}_{field}"),
-            help=(
-                "Funded from salary. Your 401(k) counts toward this goal; retained RSUs and employer contributions are additional."
-                if field == "savings_rate"
-                else "Employer contribution as a percentage of cash salary and bonus."
-            ),
+            help="Employer contribution as a percentage of cash salary and bonus.",
         )
         rates[field] = str(Decimal(str(percent)) / 100)
     exempt = st.checkbox(
@@ -339,6 +345,279 @@ def _living_inputs(data: dict[str, Any], state: str) -> dict[str, Any]:
     }
 
 
+def _read_goal_catalogue(dsn: str | None) -> None:
+    """Use live shared names, with local snapshots available in preview mode."""
+    if dsn:
+        try:
+            st.session_state["goals"] = list_goals(dsn)
+        except psycopg.Error:
+            st.session_state.setdefault("goals", ())
+    else:
+        st.session_state.setdefault("goals", ())
+
+
+def _allocation_inputs(
+    raw: dict[str, Any] | None, adults: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Collect fixed cash, remainder, and share destinations without asset trading."""
+    st.subheader("Allocations")
+    data = raw or default_allocation_plan().model_dump(mode="json")
+    catalogue = {str(g.id): g for g in st.session_state.get("goals", ())}
+    rows = data["rows"]
+    names = {
+        r["goal"]["id"]: catalogue.get(
+            r["goal"]["id"], Goal.model_validate(r["goal"])
+        ).name
+        for r in rows
+    }
+    result = st.session_state.get("document")
+    if result and _current(result.result):
+        st.caption(
+            f"Last calculated: {_number(result.result.cash_added / 12)}/month cash available · {_number(result.result.retained_rsus)}/year retained RSUs"
+        )
+    unit = st.radio(
+        "Cash amounts",
+        ["Monthly", "Annual"],
+        horizontal=True,
+        key=_key("allocation_unit"),
+    )
+    factor = 12 if unit == "Monthly" else 1
+    ids = list(names)
+    remainder_id = next(r["goal"]["id"] for r in rows if r["cash_amount"] is None)
+    remainder = st.selectbox(
+        "Cash remainder goes to",
+        ids,
+        index=ids.index(remainder_id),
+        format_func=names.__getitem__,
+        key=_key("allocation_remainder"),
+    )
+    period_key = unit.lower()
+    updated = []
+    for row in rows:
+        goal_id = row["goal"]["id"]
+        goal = catalogue.get(goal_id, Goal.model_validate(row["goal"]))
+        label, cash, shares = st.columns([2, 1, 1])
+        label.markdown(f"**{goal.name}**")
+        original = Decimal(str(row["cash_amount"] or 0))
+        # Changing the unit recreates the widget from exact annual draft values.
+        value = cash.number_input(
+            f"Cash / {unit.lower()}",
+            min_value=0.0,
+            value=float(original / factor),
+            format="%.2f",
+            disabled=goal_id == remainder,
+            key=_key(f"allocation_cash_{goal_id}_{period_key}"),
+        )
+        if goal_id == remainder:
+            cash.caption("Remainder")
+        rate = shares.number_input(
+            "RSUs (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(Decimal(str(row["rsu_rate"])) * 100),
+            format="%.2f",
+            key=_key(f"allocation_rsu_{goal_id}"),
+        )
+        updated.append(
+            {
+                "goal": goal.model_dump(mode="json"),
+                "cash_amount": None
+                if goal_id == remainder
+                else str(
+                    original
+                    if value == float(original / factor)
+                    else dollars(Decimal(str(value)) * factor)
+                ),
+                "rsu_rate": str(Decimal(str(rate)) / 100),
+            }
+        )
+    total_rate = sum(Decimal(r["rsu_rate"]) for r in updated)
+    if any(Decimal(str(a["rsu_vesting"])) for a in adults) and total_rate != 1:
+        st.warning(
+            f"RSU allocation is {total_rate:.0%}; assign 100% before calculating."
+        )
+    retirement = st.selectbox(
+        "401(k) and employer contributions go to",
+        ids,
+        index=ids.index(data["retirement_goal_id"]),
+        format_func=names.__getitem__,
+        key=_key("allocation_retirement"),
+    )
+    options = data["option_goal_id"]
+    with st.expander(
+        "Option share destination", expanded=any(a["options"]["shares"] for a in adults)
+    ):
+        options = st.selectbox(
+            "Exercised option shares go to",
+            ids,
+            index=ids.index(options),
+            format_func=names.__getitem__,
+            key=_key("allocation_options"),
+        )
+    with st.container(horizontal=True):
+        if st.button("Add goal"):
+            st.session_state["goal_dialog"] = "add"
+        if st.button("Edit goals"):
+            st.session_state["goal_dialog"] = "edit"
+    updated_plan = {
+        "rows": updated,
+        "retirement_goal_id": retirement,
+        "option_goal_id": options,
+    }
+    if result and _current(result.result):
+        try:
+            allocation = allocate_sources(
+                AllocationPlan.model_validate(updated_plan),
+                cash=result.result.cash_added,
+                retirement=result.result.employee_401k
+                + result.result.employer_retirement,
+                rsus=result.result.retained_rsus,
+                option_cost=result.result.option_cost,
+            )
+        except ValueError:
+            pass  # Calculate reports invalid allocations with the other input errors.
+        else:
+            st.caption("Annual allocations using last calculated income and costs")
+            st.table(
+                [
+                    {
+                        "Goal": names[str(row.goal_id)],
+                        "Planned / year": _number(row.total),
+                    }
+                    for row in allocation.rows
+                ]
+            )
+            if allocation.funding_gap:
+                st.warning(f"Funding gap: {_number(allocation.funding_gap)}/year")
+    return updated_plan
+
+
+def _close_goal_dialog() -> None:
+    """Clear the dialog request after submitting or dismissing it."""
+    st.session_state.pop("goal_dialog", None)
+
+
+@st.dialog("Add goal", on_dismiss=_close_goal_dialog)
+def _add_goal_dialog() -> None:
+    """Add a shared or new goal to the current plan without allocating twice."""
+    plan = st.session_state["draft_data"].get(
+        "allocation_plan", default_allocation_plan().model_dump(mode="json")
+    )
+    present = {r["goal"]["id"] for r in plan["rows"]}
+    unused = [g for g in st.session_state.get("goals", ()) if str(g.id) not in present]
+    choices = {"new": "New goal", **{str(g.id): g.name for g in unused}}
+    selected = st.selectbox("Goal", list(choices), format_func=choices.__getitem__)
+    name = st.text_input("Goal name", max_chars=80) if selected == "new" else ""
+    if st.button("Add", type="primary"):
+        try:
+            goal = (
+                Goal(name=name)
+                if selected == "new"
+                else next(g for g in unused if str(g.id) == selected)
+            )
+            dsn = _database_url()
+            if dsn and selected == "new":
+                goal = create_goal(dsn, goal)
+            elif selected == "new":
+                st.session_state["goals"] = (*st.session_state.get("goals", ()), goal)
+            plan["rows"].append(
+                {
+                    "goal": goal.model_dump(mode="json"),
+                    "cash_amount": "0",
+                    "rsu_rate": "0",
+                }
+            )
+            st.session_state["draft_data"]["allocation_plan"] = plan
+            st.session_state["editor_epoch"] += 1
+            _remember_draft()
+            _close_goal_dialog()
+            st.rerun()
+        except (ValueError, RevisionConflictError, psycopg.Error) as error:
+            st.error(
+                str(error)
+                if isinstance(error, (ValueError, RevisionConflictError))
+                else "Could not save the goal. Try again."
+            )
+
+
+@st.dialog("Edit goals", on_dismiss=_close_goal_dialog)
+def _edit_goals_dialog() -> None:
+    """Rename shared purposes or remove unused rows without losing allocations."""
+    plan = st.session_state["draft_data"]["allocation_plan"]
+    goals = {str(g.id): g for g in st.session_state.get("goals", ())}
+    goals = {
+        **{r["goal"]["id"]: Goal.model_validate(r["goal"]) for r in plan["rows"]},
+        **goals,
+    }
+    selected = st.selectbox(
+        "Goal to edit", list(goals), format_func=lambda key: goals[key].name
+    )
+    goal = goals[selected]
+    name = st.text_input(
+        "Name", value=goal.name, max_chars=80, key=f"goal_name_{selected}"
+    )
+    rename, remove, delete = st.columns(3)
+    action = (
+        "rename"
+        if rename.button("Rename")
+        else "remove"
+        if remove.button("Remove from scenario")
+        else "delete"
+        if delete.button("Delete unused goal")
+        else None
+    )
+    if not action:
+        return
+    try:
+        dsn = _database_url()
+        if action == "rename":
+            changed = Goal.model_validate(goal.model_dump() | {"name": name})
+            if dsn:
+                if selected in {str(g.id) for g in st.session_state.get("goals", ())}:
+                    changed = update_goal(dsn, changed)
+                else:
+                    changed = create_goal(dsn, changed)
+            st.session_state["goals"] = (
+                *(g for g in st.session_state.get("goals", ()) if g.id != goal.id),
+                changed,
+            )
+            for row in plan["rows"]:
+                if row["goal"]["id"] == selected:
+                    row["goal"] = changed.model_dump(mode="json")
+        elif action == "remove":
+            row = next((r for r in plan["rows"] if r["goal"]["id"] == selected), None)
+            if row and (
+                row["cash_amount"] is None
+                or Decimal(str(row["cash_amount"]))
+                or Decimal(str(row["rsu_rate"]))
+                or selected in (plan["retirement_goal_id"], plan["option_goal_id"])
+            ):
+                msg = (
+                    "Reassign this goal's amounts and destinations before removing it."
+                )
+                raise ValueError(msg)
+            plan["rows"] = [r for r in plan["rows"] if r["goal"]["id"] != selected]
+        else:
+            if any(r["goal"]["id"] == selected for r in plan["rows"]):
+                msg = "Remove this goal from the current scenario first."
+                raise ValueError(msg)
+            if dsn:
+                delete_goal(dsn, goal)
+            st.session_state["goals"] = tuple(
+                g for g in st.session_state.get("goals", ()) if g.id != goal.id
+            )
+        st.session_state["editor_epoch"] += 1
+        _remember_draft()
+        _close_goal_dialog()
+        st.rerun()
+    except (ValueError, RevisionConflictError, psycopg.Error) as error:
+        st.error(
+            str(error)
+            if isinstance(error, (ValueError, RevisionConflictError))
+            else "Could not update the goal. Try again."
+        )
+
+
 def _form(dsn: str | None) -> None:
     """Retain edits on each rerun; calculate and save only on explicit actions."""
     data = st.session_state["draft_data"]
@@ -372,7 +651,7 @@ def _form(dsn: str | None) -> None:
             key=_key("children"),
             help="Ages at year end, separated by commas. Leave blank for none. Supported ages: 0-17.",
         )
-        st.subheader("Compensation and saving")
+        st.subheader("Compensation")
         adults = []
         for index, column in enumerate(st.columns(2)):
             with column:
@@ -380,6 +659,7 @@ def _form(dsn: str | None) -> None:
                 existing = data.get("adults", [{}, {}])[index]
                 adults.append(_adult_inputs(index, existing, state))
         living = _living_inputs(data.get("living_costs", {}), state)
+        allocation_plan = _allocation_inputs(data.get("allocation_plan"), adults)
         notes = st.text_area(
             "Scenario notes",
             value=data.get("notes", ""),
@@ -397,6 +677,7 @@ def _form(dsn: str | None) -> None:
         "state": state,
         "adults": adults,
         "living_costs": living,
+        "allocation_plan": allocation_plan,
         "notes": notes,
         "assumptions_confirmed": confirmed,
     }
@@ -508,15 +789,14 @@ def _annual_rows(result: ScenarioResult) -> dict[str, Decimal]:
         "Taxes funded by RSUs": result.rsu_tax_funding,
         "Taxes funded by cash": result.cash_funded_tax,
         "Employee 401(k)": result.employee_401k,
-        "Planned cash saving": result.extra_savings,
         "Employer retirement": result.employer_retirement,
         "Living costs": result.living_cost,
         "ISO purchase cost": result.option_cost,
-        "Cash left after saving": result.annual_remaining_cash,
-        "Cash saved": result.cash_added,
+        "Cash available for allocation": result.cash_added,
         "Retained RSUs": result.retained_rsus,
         "Purchased ISO shares (at exercise FMV)": result.option_value,
-        "Cash + contributions + shares acquired": result.total_savings_and_assets,
+        "Planned goal additions": result.allocations.planned_total,
+        "Cash funding gap": -result.allocations.funding_gap,
         "Less option exercise spread": result.option_cost - result.option_value,
         "Investments added (contributions + retained RSUs + option cost)": result.investments_added,
         "Total saved": result.net_saved_from_income,
@@ -570,7 +850,7 @@ def _results(document: SavedScenario) -> None:
             ]
         )
         st.caption(
-            "Total saved = cash saved + investments added. Excludes option gains, existing wealth, and investment growth."
+            "Net additions = planned goal additions minus funding gap. Existing wealth and investment growth are excluded."
         )
         _tax_detail(result)
         st.json(document.inputs.model_dump(mode="json"), expanded=False)
@@ -689,10 +969,10 @@ def _cash_shortfalls(
 ) -> None:
     """Keep unfunded cash needs visible even when retained equity is substantial."""
     for document, display in zip(documents, displays, strict=True):
-        if document.result.annual_remaining_cash < 0:
+        if document.result.allocations.funding_gap:
             st.warning(
-                f"{display.label}: ${-document.result.monthly_remaining_cash:,.0f}/month cash shortfall. "
-                "Planned saving is not reduced and no extra shares are sold automatically."
+                f"{display.label}: ${document.result.allocations.funding_gap / 12:,.0f}/month funding gap. "
+                "Goal amounts are planned, not fully funded."
             )
 
 
@@ -703,14 +983,21 @@ def _financial_views(
 ) -> None:
     """Use the same definitions for an individual result and all comparisons."""
     reference = _comparison_reference(selected, displays) if selected else None
-    tabs = st.tabs(["Overview", "Cash flow", "Compensation", "Saving & equity"])
+    tabs = st.tabs(["Overview", "Cash flow", "Compensation", "Goal allocations"])
     for tab, render in zip(
         tabs,
-        (overview_html, cash_flow_html, compensation_html, saving_html),
+        (overview_html, cash_flow_html, compensation_html, allocation_html),
         strict=True,
     ):
         with tab:
-            st.html(render(documents, displays, reference))
+            st.html(
+                render(
+                    documents,
+                    displays,
+                    reference,
+                    goals=st.session_state.get("goals", ()),
+                )
+            )
 
 
 def _comparison_reference(
@@ -753,14 +1040,44 @@ def _backups(document: SavedScenario | None) -> None:
         upload = st.file_uploader(
             "Import a scenario backup", type=["json"], max_upload_size=1
         )
-        if st.button("Load backup as new draft", disabled=upload is None) and upload:
+        inputs = None
+        ready = upload is not None
+        if upload:
             try:
-                inputs = import_backup(upload.getvalue())
-            except (ValidationError, ValueError) as error:
-                _input_error(error) if isinstance(error, ValidationError) else st.error(
-                    str(error)
+                raw = json.loads(upload.getvalue())
+                legacy = isinstance(raw, dict) and raw.get("schema_version") == 1
+                destinations = None
+                if legacy:
+                    ready = st.checkbox(
+                        "Assign old saving, contributions, RSUs and option shares to Retirement; cash remainder to Available to spend"
+                    )
+                    destinations = default_allocation_plan()
+                inputs = import_backup(
+                    upload.getvalue(), legacy_destinations=destinations
                 )
-                return
+                catalogue = {g.id: g for g in st.session_state.get("goals", ())}
+                replacements = {}
+                for row in inputs.allocation_plan.rows:
+                    current = catalogue.get(row.goal.id)
+                    if current and current.name != row.goal.name:
+                        choice = st.selectbox(
+                            f"Imported goal '{row.goal.name}' is now named '{current.name}'",
+                            ["Use current shared goal", "Create a separate goal"],
+                            index=None,
+                            key=f"import_goal_{row.goal.id}",
+                        )
+                        ready = ready and choice is not None
+                        if choice:
+                            replacements[row.goal.id] = (
+                                current
+                                if choice == "Use current shared goal"
+                                else Goal(name=row.goal.name)
+                            )
+                inputs = resolve_goal_conflicts(inputs, replacements)
+            except (ValueError, KeyError, TypeError):
+                ready = False
+                st.error("This backup could not be read. Check its format and version.")
+        if st.button("Load backup as new draft", disabled=not ready) and inputs:
             _set_editor(inputs)
             st.switch_page(str(EDITOR_PAGE))
         st.caption(
@@ -780,7 +1097,7 @@ def _assumptions() -> None:
             "Roth contributions, itemized deductions, health savings or flexible spending deductions, investment/business "
             "income, stock dispositions, or existing AMT credits.\n\n"
             "RSUs fund their incremental tax and the remaining shares are retained. Personal savings are funded "
-            "from cash; 401(k) contributions count toward that goal. Option purchases use cash and may create AMT. "
+            "through household goal allocations. Option purchases use cash and may create AMT. "
             "Tax amounts estimate annual liability, not paycheck withholding. Average monthly cash is annual cash divided by 12."
         )
 
@@ -866,6 +1183,10 @@ def editor_page() -> None:
             st.subheader("Results")
             st.caption("Calculate to see income, taxes, and savings.")
         _backups(document)
+    if st.session_state.get("goal_dialog") == "add":
+        _add_goal_dialog()
+    elif st.session_state.get("goal_dialog") == "edit":
+        _edit_goals_dialog()
 
 
 @st.dialog("Delete scenario?", dismissible=False)
@@ -926,19 +1247,19 @@ def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
     with st.container(border=True):
         name, cash, investments = st.columns([2, 1, 1], vertical_alignment="center")
         name.html(f'<div class="fm-scenario-card">{display.html(heading=True)}</div>')
-        remaining = record.result.monthly_remaining_cash
+        gap = record.result.allocations.funding_gap
         cash.metric(
-            "Cash saved / month",
-            _number(record.result.cash_added / 12),
-            help="Planned cash saving plus cash left after saving. Assumes surplus is kept; negative means cash is used.",
+            "Net additions / year",
+            _number(record.result.net_saved_from_income),
+            help="Cash, retirement contributions, and retained shares, after any funding gap. Not all spendable.",
         )
         investments.metric(
-            "Investments added / year",
-            _number(record.result.investments_added),
-            help="Your 401(k), employer retirement, retained RSUs, and option purchases at cost. Excludes investment growth and option gains; access may be restricted.",
+            "Funding gap / month",
+            _number(gap / 12),
+            help="Additional cash needed to meet the planned allocations. Zero means the plan is funded.",
         )
-        if remaining < 0:
-            st.caption(f"${-remaining:,.0f}/month cash shortfall after planned saving.")
+        if gap:
+            st.caption("Goal allocations are planned, not fully funded.")
         if not _current(record.result):
             st.caption("Recalculation needed: saved results use older rules.")
         with st.container(horizontal=True):
@@ -988,7 +1309,7 @@ def scenarios_page() -> None:
                     st.switch_page(str(EDITOR_PAGE))
     if records:
         st.caption(
-            "Cash saved includes unspent cash. Investments include retirement contributions and shares."
+            "Net additions include every goal and asset type, less any funding gap."
         )
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"
@@ -1024,6 +1345,7 @@ def main() -> None:
             "Local preview: drafts last for this session. Download a backup to keep them."
         )
     st.session_state["records"] = _read_store(dsn)
+    _read_goal_catalogue(dsn)
     if notice := st.session_state.pop("notice", None):
         st.success(notice)
     if imported := st.session_state.pop("pending_inputs", None):
