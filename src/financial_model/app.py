@@ -373,7 +373,9 @@ def _allocation_inputs(
     result = st.session_state.get("document")
     if result and _current(result.result):
         st.caption(
-            f"Last calculated: {_number(result.result.cash_added / 12)}/month cash available · {_number(result.result.retained_rsus)}/year retained RSUs"
+            f"Last calculated: {_number(result.result.cash_added / 12)}/month cash available · {_number(result.result.retained_rsus)}/year retained RSUs".replace(
+                "$", r"\$"
+            )
         )
     unit = st.radio(
         "Cash amounts",
