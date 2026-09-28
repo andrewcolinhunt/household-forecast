@@ -3,8 +3,9 @@
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its title,
-location, tax year, each person's employer, monthly cash surplus or shortfall,
-and annual net saving from income.
+location, tax year, each person's employer, cash saved per month,
+and investments added per year. Cash shortfalls after planned saving remain
+visible separately.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
@@ -65,10 +66,21 @@ details to distinguish identical copies. The database does not store creation
 dates. Draft and snapshot labels remain separate. Notes do not count as a change
 to financial assumptions.
 
-**Overview** opens first. It shows monthly cash surplus or shortfall, followed by
-annual cash added, retirement contributions, retained RSUs, and net saving.
-Cash moved into option shares appears when present. Monthly and annual amounts
-are grouped separately.
+**Overview** opens first. Monthly planned cash saving plus cash left after saving
+equals **Cash saved / month**. Multiplying by 12 gives **Cash saved / year**, before
+display rounding. For example, $1,000 set aside plus $2,000 left over is $3,000
+saved per month, or $36,000 per year. The set-aside amount is already yours;
+allocating more to it does not create more saving.
+
+Annual **Total saved** is cash saved plus investments added. Investments include
+your 401(k), employer retirement, RSUs retained after tax, and option purchases
+at cost. These are additions this year, not total wealth or investment returns.
+Cash saving assumes unspent cash is kept; a negative amount uses existing cash.
+
+**Effective tax rate** includes federal/state income taxes and employee payroll
+taxes, divided by gross salary, bonus, and vested RSUs. It includes RSU-funded
+taxes and any modeled ISO exercise tax. It excludes employer contributions and
+option values from the denominator. Zero wages show **N/A**.
 
 **Cash flow** groups average monthly income, taxes, living costs, and savings.
 ISO exercise costs appear when present. Retained RSUs and employer retirement
@@ -80,15 +92,14 @@ amounts. The separate options table shows annual vesting counts, per-share
 prices, share value if exercised, cost to exercise, and value above cost.
 An unknown estimate stays unknown; a dash means no matching person or award.
 
-**Saving & equity** separates net cash added, retirement contributions, retained
-RSU shares. Cash added is planned cash saving plus the cash
-surplus or shortfall. Retirement has restricted access; shares have changing
-values and may have sale restrictions. Shares acquired by exercising ISOs appear
-separately. **Net saved from income** combines cash, retirement, and estimated
-RSU value; it is not spendable cash. It is compensation less taxes and living
-costs, including any cash shortfall. It excludes option award values, exercise
+**Saving & equity** breaks down annual cash saving and investments added, with
+subtotals matching Overview. Retirement has restricted access; share values can
+change and sales may be restricted. Option purchases count at cost in total
+saving; acquired share value and exercise spread appear separately.
+**Total saved** equals salary, RSUs, and employer retirement less taxes and living
+costs, including cash shortfalls. It excludes option award values, exercise
 spread, and investment growth. The table shows the reconciliation directly;
-**Net cash added** is a subtotal. Cash paid for option shares is an asset transfer.
+**Cash saved** is a subtotal. Cash paid for option shares is an asset transfer.
 
 The editor uses these same four views for a single calculated scenario. A cash
 shortfall means planned spending and saving need additional cash; the app does
@@ -96,7 +107,8 @@ not reduce planned saving or sell more shares automatically.
 
 Turn on **Show differences** and choose a **Reference scenario** to add signed
 changes beneath values in every table. Changes use the same units as the row:
-monthly dollars, annual dollars, option counts, or per-share prices. For cash
+monthly dollars, annual dollars, option counts, or per-share prices. Tax-rate
+differences use percentage points (pp), so 25% versus 20% shows +5.0 pp. For cash
 outflows, a more negative change means more cash going out. Differences are
 neutral comparisons, not ratings of whether a scenario is better. Unknown
 values have no difference. The reference choice stays when you hide differences

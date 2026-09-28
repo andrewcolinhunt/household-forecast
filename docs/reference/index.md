@@ -48,16 +48,29 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 | `annual_remaining_cash` | Cash after taxes, personal saving, option purchases, and living costs |
 | `monthly_remaining_cash` | Annual remaining cash / 12, rounded to cents |
 | `cash_added` | Derived net cash retained: additional cash saving + annual remaining cash, including any deficit; excludes all shares and retirement |
+| `investments_added` | Employee and employer retirement + retained RSUs + option purchases at cost; excludes option gains and investment growth |
 | `extra_savings` | Personal savings goal beyond employee 401(k), funded from cash |
 | `rsu_tax_funding` | Incremental tax paid from vested RSUs |
 | `retained_rsus` | Gross vested RSUs less their tax funding |
 | `option_value` | Purchased shares at exercise-date FMV |
 | `total_savings_and_assets` | Remaining cash + personal/employer saving + retained RSUs + purchased shares |
-| `net_saved_from_income` | Derived property: cash pay + RSUs + employer retirement − taxes − living costs; excludes option exercise spread |
+| `net_saved_from_income` | Shown as Total saved: `cash_added + investments_added`, or cash pay + RSUs + employer retirement − taxes − living costs; excludes option exercise spread |
 | `taxes.total` | Income taxes plus employee payroll taxes; AMT already included |
-| `effective_tax_rate` | Total tax / gross cash and RSU wages; `None` for zero wages |
+| `effective_tax_rate` | Federal/state income and employee payroll taxes / gross cash and RSU wages; includes RSU-funded and ISO-related taxes; `None` for zero wages |
 
 See [calculation assumptions](../concepts/index.md) for formulas and coverage.
+
+**Cash left after saving** uses `monthly_remaining_cash` (or
+`annual_remaining_cash` in annual details). **Cash saved / month** uses
+`cash_added / 12`, including planned cash saving. Display rounding can cause
+small differences when multiplying visible monthly amounts by 12. Saving goals
+allocate cash between set-aside and remaining amounts; they do not change total
+cash retained. Negative cash retained reduces total saving even when investment
+contributions are positive.
+
+Effective tax rate uses gross wages before 401(k) deductions, excludes employer
+contributions and option values from its denominator, and may be negative when
+refundable credits exceed taxes. AMT is already included in income taxes.
 
 `OptionAward.exercise_spread` returns the nonnegative estimated value above
 exercise cost for this year's vesting, rounded to cents. It returns `None` when
