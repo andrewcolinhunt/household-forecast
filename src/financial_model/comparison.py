@@ -161,14 +161,19 @@ def overview_html(
     *,
     goals: tuple[Goal, ...] = (),
 ) -> str:
-    """Compare planned goal additions and reconcile any unfunded cash."""
+    """Compare monthly living costs, annual goal funding, and unfunded cash."""
     results = [doc.result for doc in documents]
     groups = {
-        "Goals · per year": [
+        "Living costs · per month": [
+            _Row(
+                "Living-cost budget", [r.living_cost / 12 for r in results], total=True
+            )
+        ],
+        "Goal funding · per year": [
             _Row(name, _goal_values(documents, goal_id, "total"))
             for goal_id, name in _goal_names(documents, goals).items()
         ],
-        "Total · per year": [
+        "Totals · per year": [
             _Row("Planned additions", [r.allocations.planned_total for r in results]),
             _Row(
                 "Less funding gap",
@@ -189,16 +194,18 @@ def overview_html(
         ],
     }
     return (
-        '<div class="fm-comparison"><h3>Annual goal funding</h3>'
-        '<p class="fm-note">Planned additions by purpose. A funding gap means the plan needs more cash.</p>'
+        '<div class="fm-comparison"><h3>Scenario overview</h3>'
+        '<p class="fm-note">Monthly living costs and annual goal funding.</p>'
         + _table(
             displays or scenario_displays(documents),
             groups,
             reference_index,
-            "Annual goal funding",
+            "Scenario overview",
         )
         + _definitions(
             {
+                "Living-cost budget": "Rent, childcare, and other living costs. Excludes taxes and money allocated to goals.",
+                "Funding gap": "Additional cash needed to fund the planned goal allocations.",
                 "Planned additions": "Cash, retirement contributions, retained RSUs, and option purchases at cost, each assigned once. Shares retain their value risk and access restrictions.",
                 "Net additions": "Planned additions less the cash funding gap. Excludes existing wealth, investment growth, and option gains. Allocating money does not spend it.",
                 "Effective tax rate": "Federal and state income taxes plus employee payroll taxes divided by gross salary, bonus, and vested RSUs. Includes RSU-funded and ISO exercise taxes. N/A at zero wages. Differences use percentage points (pp).",
