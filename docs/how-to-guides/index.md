@@ -16,7 +16,7 @@ referenced by a saved scenario or an open draft cannot be deleted from this page
 
 **Scenarios** is the home page. Each saved scenario shows its title,
 location, tax year, each person's employer, net additions per year,
-and the monthly funding gap.
+and the annual cash shortfall.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
@@ -65,7 +65,7 @@ In the editor's **Allocations** section:
 2. Divide retained RSUs across goals, totaling 100% when RSUs are present.
 3. Assign existing 401(k)/employer contributions and exercised option shares to
    goals. These amounts are calculated from compensation, not entered again.
-4. Choose **Calculate**, review the annual allocations and funding gap, then save.
+4. Choose **Calculate**, review the allocations and cash shortfall, then save.
 
 **Add goal to scenario** includes an existing shared goal with zero allocations.
 Use **Manage household goals** to create or rename goals on the Goals page.
@@ -77,7 +77,7 @@ types. Available to spend is still held cash; actual spending belongs in living
 costs. Assigning shares does not sell them, and assigning cash does not invest it.
 
 If fixed cash allocations exceed available cash, the remainder is zero and the
-plan shows a funding gap. Such scenarios can still be saved and compared.
+plan shows a cash shortfall. Such scenarios can still be saved and compared.
 
 ## Compare scenarios
 
@@ -86,9 +86,14 @@ Remove a selection with its × button; this does not delete the saved scenario.
 Selections stay in place when you switch pages. All selected scenarios must use
 the same tax year and current calculation rules.
 
+Choose **Monthly** or **Annual** once for all three views. Money amounts,
+vesting counts, and their differences use that period; per-share prices and tax
+rates stay unchanged. Monthly values are averages of the modeled year, not a
+paycheck or vesting schedule. The period stays selected when you switch pages.
+
 Each view uses a table with the same scenario columns and order. On a narrow
-screen, scroll horizontally while row labels stay visible. Expand **Definitions**
-for the meaning of an amount.
+screen, scroll horizontally while row labels stay visible. Expand
+**How these numbers are calculated** or **Definitions** for formulas and inputs.
 
 Column headings and cards show the title above year and employer details. State
 appears in the details when a custom label replaces the automatic title.
@@ -103,32 +108,44 @@ details to distinguish identical copies. The database does not store creation
 dates. Draft and snapshot labels remain separate. Notes do not count as a change
 to financial assumptions.
 
-**Overview** shows planned annual additions by goal, the funding gap, and net
-additions. Each asset is counted once. These are annual changes, not current
-balances or investment returns.
+**Overview** is the cash-flow view. It starts with gross salary and bonus,
+subtracts taxes paid from cash and employee 401(k) contributions, then living
+costs and any ISO share purchases. It shows cash available before goals, each
+cash allocation, and the resulting cash shortfall. Minus signs show outflows.
+If cash is already negative before goals, expenses and deductions exceed cash
+pay even without additional goal saving. Zero shortfall means all cash has a
+purpose; it does not mean there is no spending money.
+
+Health insurance and other deductions not entered separately belong in the
+living-cost budget once. The subtotal after taxes and 401(k) is before those
+budgeted deductions. Expense inputs do not reduce taxable wages.
 
 **Effective tax rate** includes federal/state income taxes and employee payroll
 taxes, divided by gross salary, bonus, and vested RSUs. It includes RSU-funded
 taxes and any modeled ISO exercise tax. It excludes employer contributions and
 option values from the denominator. Zero wages show **N/A**.
 
-**Cash flow** groups average monthly income, taxes, living costs, and savings.
-ISO exercise costs appear when present. Retained RSUs and employer retirement
-are excluded from spendable cash. Minus signs show cash going out.
-
-**Compensation** separates annual salary and bonus, RSUs vesting before tax, and
+**Compensation** separates salary and bonus, RSUs vesting before tax, and
 employer retirement contributions. Expand **By person** to see each adult's
-amounts. The separate options table shows annual vesting counts, per-share
+amounts. The separate options table shows vesting counts, per-share
 prices, share value if exercised, cost to exercise, and value above cost.
 An unknown estimate stays unknown; a dash means no matching person or award.
 
-**Goal allocations** separates each goal's cash, retirement accounts, retained
-RSUs, and option shares at purchase cost. A single scenario shows asset columns;
-comparisons show scenario columns with expandable asset details for each goal.
-Exercise spread is shown separately and excluded from goal funding.
+**Goal allocations** separates each goal's cash, your 401(k), employer
+contributions, retained RSUs, and option shares at purchase cost. Retirement is
+a purpose that can include several accounts and asset types. A single scenario
+shows asset columns; comparisons show scenario columns with an expandable
+**funding breakdown** for each goal. Exercise spread is shown separately and
+excluded from goal funding.
 
-The editor uses the same four views. A funding gap means the plan requires more
-cash; no withdrawal, borrowing, or additional share sale is assumed.
+**Total allocated to goals** sums those sources once. **Net additions to assets**
+subtracts the cash shortfall. These amounts include restricted assets and are
+not take-home cash. A shortfall means the allocations are planned, not fully
+funded; no withdrawal, borrowing, or additional share sale is assumed.
+
+The editor uses the same three views. This is a one-year budget, not a retirement
+projection. Existing asset balances, investment growth, and future retirement
+needs are not included.
 
 Turn on **Show differences** and choose a **Reference scenario** to add signed
 changes beneath values in every table. Changes use the same units as the row:

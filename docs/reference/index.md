@@ -66,10 +66,20 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 
 See [calculation assumptions](../concepts/index.md) for formulas and coverage.
 
-Monthly views divide annual amounts by 12. Display rounding can cause small
-visible differences. Goals require exactly one cash remainder and complete RSU
+The shared Monthly / Annual display setting applies to all result tables and
+cash-shortfall warnings. Monthly views divide annual money flows and vesting
+counts by 12. Per-share prices and tax rates are unchanged. Display conversion
+does not modify stored inputs or results. Rounding can cause small visible
+differences. Goals require exactly one cash remainder and complete RSU
 percentages when RSUs are present. Result validation checks source conservation
 and verifies allocations against the stored plan.
+
+Overview reconciles cash pay through deductions, expenses, and cash allocations.
+Goal allocations reconciles all asset types separately. Its employee and employer
+contribution rows split the existing `GoalAddition.retirement` total using the
+scenario's contribution destination; they do not create new sources. Display
+labels use **Total allocated to goals**, **Cash shortfall**, and **Net additions
+to assets** for `planned_total`, `funding_gap`, and `net_total`, respectively.
 
 Effective tax rate uses gross wages before 401(k) deductions, excludes employer
 contributions and option values from its denominator, and may be negative when
