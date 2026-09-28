@@ -61,6 +61,8 @@ EDITOR_PAGE = PAGE_DIR / "editor.py"
 COMPARE_PAGE = PAGE_DIR / "compare.py"
 HOUSEHOLD_PAGE = PAGE_DIR / "household.py"
 GOALS_PAGE = PAGE_DIR / "goals.py"
+WEALTH_PAGE = PAGE_DIR / "wealth.py"
+WEALTH_EDITOR_PAGE = PAGE_DIR / "wealth_editor.py"
 DRAFT_FIELDS = ("draft_data", "draft_ages", "loaded_record", "document", "draft_id")
 
 
@@ -1259,12 +1261,19 @@ def main() -> None:
         [
             st.Page(str(HOUSEHOLD_PAGE), title="Household", url_path="household"),
             st.Page(str(GOALS_PAGE), title="Goals", url_path="goals"),
+            st.Page(str(WEALTH_PAGE), title="Wealth", url_path="wealth"),
             st.Page(str(SCENARIOS_PAGE), title="Scenarios", default=True),
             st.Page(str(COMPARE_PAGE), title="Compare", url_path="compare"),
             st.Page(
                 str(EDITOR_PAGE),
                 title="Scenario editor",
                 url_path="editor",
+                visibility="hidden",
+            ),
+            st.Page(
+                str(WEALTH_EDITOR_PAGE),
+                title="Wealth snapshot editor",
+                url_path="wealth-editor",
                 visibility="hidden",
             ),
         ],
