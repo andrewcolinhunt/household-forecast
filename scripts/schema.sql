@@ -21,3 +21,12 @@ CREATE TABLE IF NOT EXISTS scenario_goals (
     goal_id UUID NOT NULL REFERENCES goals(id) ON DELETE RESTRICT,
     PRIMARY KEY (scenario_id, goal_id)
 );
+
+
+CREATE TABLE IF NOT EXISTS household (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    document JSONB NOT NULL,
+    CHECK (document ->> 'schema_version' = '1'),
+    CHECK ((document ->> 'revision')::integer = revision)
+);

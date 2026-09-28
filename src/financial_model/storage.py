@@ -13,7 +13,13 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from financial_model.migration import convert_legacy_inputs
-from financial_model.schemas import AllocationPlan, Goal, SavedScenario, Scenario
+from financial_model.schemas import (
+    AllocationPlan,
+    Goal,
+    Household,
+    SavedScenario,
+    Scenario,
+)
 
 MAX_BACKUP_BYTES = 1_000_000
 
@@ -247,3 +253,38 @@ def resolve_goal_conflicts(
         if replacement := replacements.get(UUID(plan[field])):
             plan[field] = str(replacement.id)
     return Scenario.model_validate(data)
+
+
+def load_household(dsn: str) -> Household | None:
+    """Read the shared family defaults, if they have been configured."""
+    with _connect(dsn) as connection:
+        row = connection.execute(
+            "SELECT document FROM household WHERE id = TRUE"
+        ).fetchone()
+    return Household.model_validate(row["document"]) if row else None
+
+
+def save_household(dsn: str, household: Household) -> Household:
+    """Save defaults with a revision check, without modifying any scenario."""
+    updated = household.model_copy(update={"revision": household.revision + 1})
+    with _connect(dsn) as connection:
+        if household.revision == 0:
+            row = connection.execute(
+                "INSERT INTO household (id, revision, document) VALUES (TRUE, %s, %s) ON CONFLICT (id) DO NOTHING RETURNING id",
+                (updated.revision, Jsonb(updated.model_dump(mode="json"))),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "UPDATE household SET revision = %s, document = %s WHERE id = TRUE AND revision = %s RETURNING id",
+                (
+                    updated.revision,
+                    Jsonb(updated.model_dump(mode="json")),
+                    household.revision,
+                ),
+            ).fetchone()
+        if row is None:
+            message = (
+                "Household defaults changed in another session. Reload before saving."
+            )
+            raise RevisionConflictError(message)
+    return updated

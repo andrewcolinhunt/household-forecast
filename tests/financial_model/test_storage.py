@@ -189,3 +189,27 @@ def test_import_identity_resolution_does_not_merge_same_names(document):
         evaluate_scenario(inputs).net_saved_from_income
         == document.result.net_saved_from_income
     )
+
+
+@pytest.mark.integration
+def test_household_revision_checks_and_scenario_isolation(database_url, document):
+    from financial_model.schemas import Household
+    from financial_model.storage import load_household, save_household
+
+    create_scenario(database_url, document)
+    assert load_household(database_url) is None
+    draft = Household(
+        tax_year=2026, adults=({"name": "Alex", "age": 32}, {"name": "Sam", "age": 37})
+    )
+    saved = save_household(database_url, draft)
+    assert saved.revision == 1
+    assert load_household(database_url) == saved
+    with pytest.raises(RevisionConflictError):
+        save_household(database_url, draft)
+    changed = save_household(database_url, saved.model_copy(update={"tax_year": 2025}))
+    with pytest.raises(RevisionConflictError):
+        save_household(database_url, saved)
+    assert load_household(database_url) == changed
+    assert load_scenario(database_url, document.id) == document
+    assert "revision" not in changed.scenario_defaults()
+    assert "allocation_plan" not in changed.scenario_defaults()

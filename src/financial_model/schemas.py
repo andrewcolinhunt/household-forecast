@@ -138,6 +138,28 @@ class DependentInputs(ValueModel):
     age: Annotated[int, Field(strict=True, ge=0, le=17)]
 
 
+class HouseholdPerson(ValueModel):
+    """Shared name and age at the household defaults' reference year end."""
+
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    age: Annotated[int, Field(strict=True, ge=18, le=64)]
+
+
+class Household(ValueModel):
+    """Defaults copied into new scenarios; existing scenario inputs stay independent."""
+
+    schema_version: Literal[1] = 1
+    revision: Annotated[int, Field(strict=True, ge=0)] = 0
+    tax_year: Year
+    adults: tuple[HouseholdPerson, HouseholdPerson]
+    dependents: Annotated[tuple[DependentInputs, ...], Field(max_length=10)] = ()
+    filing_status: Literal["married_filing_jointly"] = "married_filing_jointly"
+
+    def scenario_defaults(self) -> dict[str, object]:
+        """Return only family facts; confirmation, income, and allocations stay separate."""
+        return self.model_dump(mode="json", exclude={"schema_version", "revision"})
+
+
 class LivingCosts(ValueModel):
     """Recurring monthly expenses and annual credit-eligible care expenses."""
 
