@@ -96,7 +96,7 @@ additional saving, or option shares does not itself increase this total.
 
 ISO exercise spread can come from options earned in earlier years. It is
 excluded from net saving; exercise-related taxes remain an expense. Acquired
-shares appear in **Equity compensation**; their cash cost appears in **Cash flow**. The
+shares appear in **Equity overview**; their cash cost appears in **Cash overview**. The
 reconciliation adds back the exercise cost to cash remaining because that cash
 was moved into shares rather than spent on living costs.
 

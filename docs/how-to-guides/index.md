@@ -65,7 +65,7 @@ In the editor's **Savings goals** section:
 2. Designate retained RSU shares for goals, totaling 100% when RSUs are present.
 3. Assign existing 401(k)/employer contributions and exercised option shares to
    goals. These amounts are calculated from compensation, not entered again.
-4. Choose **Calculate**, review Cash flow and Equity compensation, then save.
+4. Choose **Calculate**, review Cash overview and Equity overview, then save.
 
 **Add goal to scenario** includes an existing shared goal with zero allocations.
 Use **Manage household goals** to create or rename goals on the Goals page.
@@ -74,7 +74,7 @@ cash, RSUs, and contribution destinations first, then save the scenario.
 
 Retirement, House, and Available to spend are editable names, not special goal
 types. **Available to spend** identifies the default destination for remaining
-cash. Cash flow displays this residual as a positive balance, without deducting
+cash. Cash overview displays this residual as a positive balance, without deducting
 it again as savings. Actual spending belongs in living expenses. Designating
 shares for a goal does not sell them, and designating cash does not invest it.
 
@@ -110,7 +110,7 @@ details to distinguish identical copies. The database does not store creation
 dates. Draft and snapshot labels remain separate. Notes do not count as a change
 to financial assumptions.
 
-**Cash flow** shows salary and bonus, taxes paid from cash, employee 401(k)
+**Cash overview** shows salary and bonus, taxes paid from cash, employee 401(k)
 contributions, and living expenses. **Cash surplus / deficit** is the balance
 before additional savings and option exercises. Planned savings by goal and
 option exercise costs are deducted next. **Remaining cash / funding shortfall**
@@ -140,14 +140,14 @@ shares and any modeled ISO exercise tax. It excludes employer contributions and
 option values from the denominator. Zero wages show **N/A**. Expand **Tax
 breakdown** to reconcile total taxes to the portion paid from cash.
 
-**Equity compensation** follows RSU value at vesting through taxes funded from
+**Equity overview** follows RSU value at vesting through taxes funded from
 vested shares to shares retained and their savings goals. **Stock options** shows
 vesting counts, per-share prices, share value if exercised, exercise cost, and
 estimated intrinsic value. These award estimates do not enter cash flow or
 funded savings. An unknown estimate stays unknown; a dash means no matching
 person or award. Modeled **Option exercises** appear separately, with shares
 acquired, exercise cost, exercise-date value, and savings goal. Their cost also
-appears in Cash flow once.
+appears in Cash overview once.
 
 The editor uses the same two views. This is a one-year budget, not a retirement
 projection. Existing asset balances, investment growth, and future retirement
@@ -168,7 +168,7 @@ In each adult's **Stock option award** section, select **Include an option
 award**. Enter ISO or NSO, the number vesting this year, and exercise price per
 share. Enter an assumed share value if known; leave it blank otherwise.
 
-The **Equity compensation** view shows option awards separately. **Estimated
+The **Equity overview** view shows option awards separately. **Estimated
 intrinsic value** is the number vesting multiplied by the positive difference
 between assumed share value and exercise price. It excludes taxes and time value;
 it is not sale proceeds.

@@ -928,7 +928,7 @@ def _financial_views(
         )
         + " Investment growth and retirement projections are not included."
     )
-    tabs = st.tabs(["Cash flow", "Equity compensation"])
+    tabs = st.tabs(["Cash overview", "Equity overview"])
     for tab, render in zip(
         tabs,
         (cash_flow_html, equity_html),

@@ -304,12 +304,12 @@ def cash_flow_html(
         for d in documents
     ]
     return (
-        '<div class="fm-comparison"><h3>Cash flow</h3>'
+        '<div class="fm-comparison"><h3>Cash overview</h3>'
         '<p class="fm-note">Income, expenses, planned savings, and remaining cash.</p>'
         + _table(
             displays,
             _cash_groups(documents, goals),
-            "Cash flow",
+            "Cash overview",
             period,
         )
         + '<details class="fm-breakdown"><summary>Income by person</summary>'
@@ -472,7 +472,7 @@ def equity_html(
         if any(p and p.option_award for p in adults)
     }
     html = (
-        '<div class="fm-comparison"><h3>Equity compensation</h3>'
+        '<div class="fm-comparison"><h3>Equity overview</h3>'
         '<p class="fm-note">RSU vesting, taxes funded from shares, and shares retained by savings goal.</p>'
         + _table(displays, groups, "RSUs", period)
         + '<details class="fm-breakdown"><summary>RSU income by person</summary>'
@@ -507,7 +507,7 @@ def equity_html(
     if any(p and p.options.shares for _, adults in people for p in adults):
         html += (
             '<section class="fm-section"><h3>Option exercises</h3>'
-            '<p class="fm-note">ISO shares exercised and held. Exercise cost is also shown in Cash flow.</p>'
+            '<p class="fm-note">ISO shares exercised and held. Exercise cost is also shown in Cash overview.</p>'
             + _table(
                 displays,
                 {

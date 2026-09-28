@@ -74,7 +74,7 @@ differences. Goals require exactly one cash remainder and complete RSU
 percentages when RSUs are present. Result validation checks source conservation
 and verifies allocations against the stored plan.
 
-Cash flow and Equity compensation render the same saved annual snapshot.
+Cash overview and Equity overview render the same saved annual snapshot.
 `cash_surplus(result)` adds option exercise cost back to `cash_added`, giving
 cash after taxes, employee 401(k), and living expenses, before new investments.
 `remaining_cash(document)` subtracts fixed planned cash savings from `cash_added`.
@@ -88,7 +88,7 @@ contributions. The retirement summary selects the goal by `retirement_goal_id`,
 not its name, and splits employee and employer contributions without creating
 new sources. It includes any cash remainder assigned to that goal.
 
-Equity compensation reconciles gross RSU value, taxes funded from shares, and
+Equity overview reconciles gross RSU value, taxes funded from shares, and
 retained shares designated for goals. Informational option awards remain
 separate from actual ISO exercises. Exercised shares are shown at exercise-date
 FMV in the equity view, and at exercise cost in the retirement summary; no option

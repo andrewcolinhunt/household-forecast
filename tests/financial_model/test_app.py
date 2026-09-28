@@ -82,8 +82,8 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert not page.error
     assert page.session_state["document"].inputs.adults[0].cash_pay == 120000
     assert [tab.label for tab in page.tabs] == [
-        "Cash flow",
-        "Equity compensation",
+        "Cash overview",
+        "Equity overview",
     ]
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
@@ -391,8 +391,8 @@ def test_compare_saved_scenarios_without_opening_editor(
     ).run()
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
-        "Cash flow",
-        "Equity compensation",
+        "Cash overview",
+        "Equity overview",
     ]
     page.switch_page("src/financial_model/pages/scenarios.py").run()
     page.switch_page("src/financial_model/pages/compare.py").run()
@@ -532,8 +532,8 @@ def test_compare_multiple_scenarios_retains_selection(
     assert not page.exception
     assert page.multiselect[0].proto.max_selections == 4
     assert [tab.label for tab in page.tabs] == [
-        "Cash flow",
-        "Equity compensation",
+        "Cash overview",
+        "Equity overview",
     ]
     assert not page.toggle
     assert not page.selectbox
@@ -622,8 +622,8 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
         "Assumptions",
         "Savings goals",
         "Results",
-        "Cash flow",
-        "Equity compensation",
+        "Cash overview",
+        "Equity overview",
     ]
     page.switch_page("src/financial_model/pages/compare.py").run()
     assert not page.warning
