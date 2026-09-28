@@ -39,7 +39,7 @@ def test_evaluate_scenario_annual_accounting(
     data["adults"][0].update(
         rsu_vesting=20000, employee_401k=20000, employer_retirement_rate="0.04"
     )
-    data["adults"][1].update(rsu_vesting=10000, savings_rate="0.20")
+    data["adults"][1].update(rsu_vesting=10000)
     data["adults"][1]["options"].update(shares=1000, strike=2, fair_market_value=5)
     data["living_costs"].update(rent=2000, childcare=1000, other=3000)
     scenario = Scenario.model_validate(data)
@@ -59,14 +59,10 @@ def test_evaluate_scenario_annual_accounting(
     assert result.retained_rsus == 24000
     assert result.cash_funded_tax == 41000
     assert result.employee_401k == 20000
-    assert result.extra_savings == 22000
     assert result.employer_retirement == 4000
     assert result.option_cost == 2000
     assert result.option_value == 5000
-    assert result.annual_remaining_cash == 43000
     assert result.cash_added == 65000
-    assert result.monthly_remaining_cash == Decimal("3583.33")
-    assert result.total_savings_and_assets == 118000
     assert result.net_saved_from_income == 115000
     assert result.investments_added == 50000
     assert result.cash_added + result.investments_added == result.net_saved_from_income
@@ -94,7 +90,6 @@ def test_cash_added_excludes_equity_and_retirement_and_includes_deficits(
         model, "calculate_taxes", lambda *args, **kwargs: tax_result(10000)
     )
     result = model.evaluate_scenario(Scenario.model_validate(data))
-    assert result.annual_remaining_cash < 0
     assert result.cash_added == expected
     assert result.cash_added == (
         result.gross_cash
@@ -135,8 +130,9 @@ def test_evaluate_scenario_negative_cash(
 ) -> None:
     monkeypatch.setattr(model, "calculate_taxes", lambda inputs: tax_result(300000))
     result = model.evaluate_scenario(scenario)
-    assert result.annual_remaining_cash == -120000
-    assert result.total_savings_and_assets == -100000
+    assert result.cash_added == -100000
+    assert result.allocations.funding_gap == 100000
+    assert result.net_saved_from_income == -100000
 
 
 def test_evaluate_scenario_refund_and_zero_income(
@@ -147,17 +143,16 @@ def test_evaluate_scenario_refund_and_zero_income(
         adult["cash_pay"] = 0
     monkeypatch.setattr(model, "calculate_taxes", lambda inputs: tax_result(-1000))
     result = model.evaluate_scenario(Scenario.model_validate(data))
-    assert result.annual_remaining_cash == 1000
+    assert result.cash_added == 1000
     assert result.effective_tax_rate is None
 
 
-@pytest.mark.parametrize("rate", ["0", "0.10", "1"])
-def test_saving_goal_only_allocates_cash_without_changing_total_saved(
-    monkeypatch: pytest.MonkeyPatch, scenario: Scenario, rate: str
+@pytest.mark.parametrize("amount", ["0", "20000", "200000"])
+def test_goals_only_allocate_cash_without_changing_total_saved(
+    monkeypatch: pytest.MonkeyPatch, scenario: Scenario, amount: str
 ) -> None:
     data = scenario.model_dump(mode="json")
-    for adult in data["adults"]:
-        adult["savings_rate"] = rate
+    data["allocation_plan"]["rows"][0]["cash_amount"] = amount
     data["adults"][0].update(employee_401k=10000, employer_retirement_rate="0.05")
     data["living_costs"].update(rent=2000, other=3000)
     monkeypatch.setattr(model, "calculate_taxes", lambda inputs: tax_result(40000))
@@ -165,16 +160,9 @@ def test_saving_goal_only_allocates_cash_without_changing_total_saved(
     assert result.cash_added == 90000
     assert result.investments_added == 15000
     assert result.net_saved_from_income == 105000
-    assert result.extra_savings + result.annual_remaining_cash == result.cash_added
-    assert abs(
-        result.monthly_remaining_cash
-        + result.extra_savings / 12
-        - result.cash_added / 12
-    ) < Decimal("0.005")
-    if rate == "0":
-        assert result.extra_savings == 0
-    if rate == "1":
-        assert result.annual_remaining_cash < 0 < result.cash_added
+    assert result.allocations.rows[0].cash == Decimal(amount)
+    assert result.allocations.funding_gap == max(Decimal(amount) - 90000, 0)
+    assert result.allocations.net_total == result.net_saved_from_income
 
 
 def test_effective_tax_rate_includes_all_taxes_and_only_cash_and_rsu_wages(
@@ -211,7 +199,7 @@ def test_saved_scenario_result_integrity(
     changed = Scenario.model_validate(scenario.model_dump() | {"name": "Different"})
     with pytest.raises(ValidationError, match="does not match"):
         SavedScenario(inputs=changed, result=result)
-    corrupted = result.model_dump() | {"annual_remaining_cash": 999}
+    corrupted = result.model_dump() | {"cash_added": 999}
     with pytest.raises(ValidationError, match="does not reconcile"):
         ScenarioResult.model_validate(corrupted)
 

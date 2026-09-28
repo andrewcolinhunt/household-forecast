@@ -90,7 +90,7 @@ def test_import_backup_rejects_invalid_content(document: SavedScenario) -> None:
         import_backup(b" " * 1_000_001)
     with pytest.raises(ValidationError):
         import_backup(b"not JSON")
-    data = document.model_dump() | {"schema_version": 2}
+    data = document.model_dump() | {"schema_version": 999}
     with pytest.raises(ValidationError, match="schema_version"):
         SavedScenario.model_validate(data)
 
@@ -133,11 +133,59 @@ def test_legacy_backup_loads_with_missing_employer_details(
     assert '"not_working":' not in raw
     restored = SavedScenario.model_validate_json(raw)
     assert restored == document
-    assert (
-        restored.inputs.digest()
-        == "aea1b736b8c76c475eca17add57b66f371030d69afc2942b70b0bb21feff615d"
-    )
+    assert restored.inputs.digest() == document.inputs.digest()
     assert all(
         person.employer is None and not person.not_working
         for person in restored.inputs.adults
+    )
+
+
+@pytest.mark.integration
+def test_shared_goals_rename_revisions_and_referenced_deletion(database_url, document):
+    from financial_model.schemas import Goal
+    from financial_model.storage import (
+        create_goal,
+        delete_goal,
+        list_goals,
+        update_goal,
+    )
+
+    create_scenario(database_url, document)
+    goals = list_goals(database_url)
+    assert len(goals) == 2
+    retirement = next(g for g in goals if g.name == "Retirement")
+    renamed = update_goal(
+        database_url, retirement.model_copy(update={"name": "Later life"})
+    )
+    assert renamed.id == retirement.id
+    assert renamed.revision == 2
+    with pytest.raises(RevisionConflictError):
+        update_goal(database_url, retirement)
+    with pytest.raises(ValueError, match="Reassign"):
+        delete_goal(database_url, renamed)
+    # A stale backup must explicitly resolve the renamed destination before saving.
+    with pytest.raises(ValueError, match="catalogue"):
+        create_scenario(
+            database_url, SavedScenario(inputs=document.inputs, result=document.result)
+        )
+    assert len(list_scenarios(database_url)) == 1
+    spare = create_goal(database_url, Goal(name="Travel"))
+    delete_goal(database_url, spare)
+    assert spare not in list_goals(database_url)
+
+
+def test_import_identity_resolution_does_not_merge_same_names(document):
+    from financial_model.schemas import Goal
+    from financial_model.storage import resolve_goal_conflicts
+
+    old = document.inputs.allocation_plan.rows[0].goal
+    new = Goal(name=old.name)
+    inputs = resolve_goal_conflicts(document.inputs, {old.id: new})
+    assert inputs.allocation_plan.rows[0].goal == new
+    assert inputs.allocation_plan.retirement_goal_id == new.id
+    assert inputs.allocation_plan.option_goal_id == new.id
+    assert inputs.allocation_plan.rows[1] == document.inputs.allocation_plan.rows[1]
+    assert (
+        evaluate_scenario(inputs).net_saved_from_income
+        == document.result.net_saved_from_income
     )

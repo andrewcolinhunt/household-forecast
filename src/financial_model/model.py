@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from financial_model import __version__
-from financial_model.schemas import ZERO, Scenario, ScenarioResult, TaxResult, dollars
+from financial_model.allocations import allocate_sources
+from financial_model.schemas import ZERO, Scenario, ScenarioResult, TaxResult
 from financial_model.taxes import calculate_taxes
 
 
@@ -42,7 +43,6 @@ def evaluate_scenario(scenario: Scenario) -> ScenarioResult:
         amounts["gross_cash"]
         - cash_tax
         - amounts["employee_401k"]
-        - amounts["extra_savings"]
         - amounts["option_cost"]
         - amounts["living_cost"]
     )
@@ -58,15 +58,13 @@ def evaluate_scenario(scenario: Scenario) -> ScenarioResult:
             rsu_tax_funding=funding,
             retained_rsus=retained_rsus,
             cash_funded_tax=cash_tax,
-            annual_remaining_cash=remaining,
-            monthly_remaining_cash=dollars(remaining / 12),
-            total_savings_and_assets=(
-                remaining
-                + retained_rsus
-                + amounts["employee_401k"]
-                + amounts["extra_savings"]
-                + amounts["employer_retirement"]
-                + amounts["option_value"]
+            cash_added=remaining,
+            allocations=allocate_sources(
+                scenario.allocation_plan,
+                cash=remaining,
+                retirement=amounts["employee_401k"] + amounts["employer_retirement"],
+                rsus=retained_rsus,
+                option_cost=amounts["option_cost"],
             ),
         )
     )
@@ -79,9 +77,6 @@ def _annual_amounts(scenario: Scenario) -> dict[str, Decimal]:
         "gross_cash": sum((adult.cash_pay for adult in adults), ZERO),
         "gross_rsus": sum((adult.rsu_vesting for adult in adults), ZERO),
         "employee_401k": sum((adult.employee_401k for adult in adults), ZERO),
-        "extra_savings": sum(
-            (adult.employee_savings - adult.employee_401k for adult in adults), ZERO
-        ),
         "employer_retirement": sum(
             (adult.employer_retirement for adult in adults), ZERO
         ),

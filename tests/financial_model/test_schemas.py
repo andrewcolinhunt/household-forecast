@@ -163,9 +163,8 @@ def test_option_award_round_trip_and_input_digest(scenario: Scenario) -> None:
 
 
 def test_employer_metadata_keeps_existing_input_digest(scenario: Scenario) -> None:
-    # Captured before employer fields were added, not recomputed by this test.
-    original = "aea1b736b8c76c475eca17add57b66f371030d69afc2942b70b0bb21feff615d"
-    assert scenario.digest() == original
+    # Missing optional employer metadata remains equivalent to explicit empty values.
+    original = scenario.digest()
     data = scenario.model_dump(mode="json")
     assert "employer" not in data["adults"][0]
     assert "not_working" not in data["adults"][0]

@@ -6,7 +6,7 @@ import hashlib
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Literal, Self
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import (
     AwareDatetime,
@@ -26,7 +26,7 @@ Rate = Annotated[Decimal, Field(ge=0, le=1, allow_inf_nan=False)]
 Year = Literal[2025, 2026]
 State = Literal["CA", "WA"]
 ZERO = Decimal("0.00")
-MODEL_REVISION = "1"
+MODEL_REVISION = "2"
 DEFERRAL_LIMIT = {2025: Decimal(23500), 2026: Decimal(24500)}
 PLAN_LIMIT = {2025: Decimal(70000), 2026: Decimal(72000)}
 
@@ -99,7 +99,6 @@ class PersonInputs(ValueModel):
     cash_pay: Money = ZERO
     rsu_vesting: Money = ZERO
     employee_401k: Money = ZERO
-    savings_rate: Rate = Decimal("0.10")
     employer_retirement_rate: Rate = ZERO
     wa_cares_exempt: Annotated[bool, Field(strict=True)] = False
     options: ISOExercise = Field(default_factory=ISOExercise)
@@ -126,11 +125,6 @@ class PersonInputs(ValueModel):
     def wages(self) -> Decimal:
         """Wages before pretax retirement contributions."""
         return self.cash_pay + self.rsu_vesting
-
-    @property
-    def employee_savings(self) -> Decimal:
-        """Cash-funded saving, including the employee 401(k) contribution."""
-        return max(dollars(self.savings_rate * self.wages), self.employee_401k)
 
     @property
     def employer_retirement(self) -> Decimal:
@@ -172,6 +166,103 @@ class LivingCosts(ValueModel):
         return self
 
 
+class Goal(ValueModel):
+    """An editable purpose, independent of accounts and asset types."""
+
+    id: UUID = Field(default_factory=uuid4)
+    name: Annotated[str, Field(min_length=1, max_length=80)]
+    revision: Annotated[int, Field(strict=True, ge=1)] = 1
+
+
+class GoalAllocation(ValueModel):
+    """One goal's fixed annual cash amount or remainder, and retained RSU share."""
+
+    goal: Goal
+    cash_amount: Money | None = ZERO
+    rsu_rate: Rate = ZERO
+
+
+class AllocationPlan(ValueModel):
+    """Complete source destinations with exactly one cash remainder."""
+
+    rows: Annotated[tuple[GoalAllocation, ...], Field(min_length=1, max_length=30)]
+    retirement_goal_id: UUID
+    option_goal_id: UUID
+
+    @model_validator(mode="after")
+    def validate_destinations(self) -> Self:
+        """Reject duplicate goals, missing destinations, and ambiguous remainders."""
+        ids = {row.goal.id for row in self.rows}
+        if len(ids) != len(self.rows):
+            msg = "Each goal can appear only once in an allocation plan."
+            raise ValueError(msg)
+        if sum(row.cash_amount is None for row in self.rows) != 1:
+            msg = "Choose exactly one cash remainder goal."
+            raise ValueError(msg)
+        if self.retirement_goal_id not in ids or self.option_goal_id not in ids:
+            msg = "Contribution and option destinations must be in the plan."
+            raise ValueError(msg)
+        if sum((row.rsu_rate for row in self.rows), ZERO) > 1:
+            msg = "RSU allocations cannot exceed 100%."
+            raise ValueError(msg)
+        return self
+
+    @property
+    def fixed_cash(self) -> Decimal:
+        """Annual cash requested before allocating the remainder."""
+        return sum((row.cash_amount or ZERO for row in self.rows), ZERO)
+
+
+def default_allocation_plan() -> AllocationPlan:
+    """Offer editable starting goals shared across new scenario templates."""
+    retirement = Goal(
+        id=uuid5(NAMESPACE_URL, "financial-model/retirement"), name="Retirement"
+    )
+    available = Goal(
+        id=uuid5(NAMESPACE_URL, "financial-model/available"), name="Available to spend"
+    )
+    return AllocationPlan(
+        rows=(
+            GoalAllocation(goal=retirement, rsu_rate=Decimal(1)),
+            GoalAllocation(goal=available, cash_amount=None),
+        ),
+        retirement_goal_id=retirement.id,
+        option_goal_id=retirement.id,
+    )
+
+
+class GoalAddition(ValueModel):
+    """Planned annual additions to one goal, preserving their asset forms."""
+
+    goal_id: UUID
+    cash: Money
+    retirement: Money
+    rsus: Money
+    option_cost: Money
+
+    @property
+    def total(self) -> Decimal:
+        """All planned additions, before the household funding gap."""
+        return self.cash + self.retirement + self.rsus + self.option_cost
+
+
+class AllocationResult(ValueModel):
+    """Planned goal amounts and the cash funding needed to realize them."""
+
+    rows: tuple[GoalAddition, ...]
+    funding_gap: Money
+
+    @property
+    def planned_total(self) -> Decimal:
+        """Sum of planned additions; this is not fully funded when a gap exists."""
+        return sum((row.total for row in self.rows), ZERO)
+
+    @property
+    def net_total(self) -> Decimal:
+        """Net additions after subtracting missing cash funding."""
+        return self.planned_total - self.funding_gap
+
+
 class Scenario(ValueModel):
     """Complete inputs for the supported full-year, joint-filing household."""
 
@@ -181,6 +272,7 @@ class Scenario(ValueModel):
     adults: tuple[PersonInputs, PersonInputs]
     dependents: Annotated[tuple[DependentInputs, ...], Field(max_length=10)] = ()
     living_costs: LivingCosts = Field(default_factory=LivingCosts)
+    allocation_plan: AllocationPlan = Field(default_factory=default_allocation_plan)
     notes: Annotated[str, Field(max_length=2000)] = ""
     filing_status: Literal["married_filing_jointly"] = "married_filing_jointly"
     deduction_method: Literal["standard"] = "standard"
@@ -190,6 +282,12 @@ class Scenario(ValueModel):
     @model_validator(mode="after")
     def validate_supported_facts(self) -> Self:
         """Reject assumptions outside the app's tested contribution/credit scope."""
+        if (
+            any(a.rsu_vesting for a in self.adults)
+            and sum((r.rsu_rate for r in self.allocation_plan.rows), ZERO) != 1
+        ):
+            msg = "Allocate 100% of retained RSUs across your goals."
+            raise ValueError(msg)
         if self.state != "CA" and self.living_costs.ca_renter_credit_eligible:
             message = (
                 "California renter credit eligibility applies only to CA scenarios."
@@ -274,7 +372,6 @@ class ScenarioResult(ValueModel):
     gross_cash: Money
     gross_rsus: Money
     employee_401k: Money
-    extra_savings: Money
     employer_retirement: Money
     option_cost: Money
     option_value: Money
@@ -282,14 +379,8 @@ class ScenarioResult(ValueModel):
     rsu_tax_funding: Money
     retained_rsus: Money
     cash_funded_tax: Amount
-    annual_remaining_cash: Amount
-    monthly_remaining_cash: Amount
-    total_savings_and_assets: Amount
-
-    @property
-    def cash_added(self) -> Decimal:
-        """Net cash retained, including planned cash saving and any cash deficit."""
-        return self.extra_savings + self.annual_remaining_cash
+    cash_added: Amount
+    allocations: AllocationResult
 
     @property
     def investments_added(self) -> Decimal:
@@ -304,7 +395,7 @@ class ScenarioResult(ValueModel):
     @property
     def net_saved_from_income(self) -> Decimal:
         """Net annual saving, excluding value realized from existing option rights."""
-        return self.total_savings_and_assets - self.option_value + self.option_cost
+        return self.cash_added + self.investments_added
 
     @property
     def effective_tax_rate(self) -> Decimal | None:
@@ -314,41 +405,35 @@ class ScenarioResult(ValueModel):
 
     @model_validator(mode="after")
     def validate_accounting(self) -> Self:
-        """Require the stored result to satisfy both cash and asset identities."""
+        """Require cash, shares, contributions, and goal allocations to reconcile."""
+        rows = self.allocations.rows
         cash = (
             self.gross_cash
             - self.cash_funded_tax
             - self.employee_401k
-            - self.extra_savings
             - self.option_cost
             - self.living_cost
         )
-        assets = (
-            cash
-            + self.retained_rsus
-            + self.employee_401k
-            + self.extra_savings
-            + self.employer_retirement
-            + self.option_value
-        )
         if (
-            cash != self.annual_remaining_cash
-            or dollars(cash / 12) != self.monthly_remaining_cash
-            or assets != self.total_savings_and_assets
+            cash != self.cash_added
             or self.retained_rsus + self.rsu_tax_funding != self.gross_rsus
             or self.cash_funded_tax + self.rsu_tax_funding != self.taxes.total
+            or sum((r.cash for r in rows), ZERO) - self.allocations.funding_gap != cash
+            or sum((r.retirement for r in rows), ZERO)
+            != self.employee_401k + self.employer_retirement
+            or sum((r.rsus for r in rows), ZERO) != self.retained_rsus
+            or sum((r.option_cost for r in rows), ZERO) != self.option_cost
+            or self.allocations.net_total != self.net_saved_from_income
         ):
-            message = (
-                "Calculation snapshot does not reconcile. Recalculate the scenario."
-            )
-            raise ValueError(message)
+            msg = "Calculation snapshot does not reconcile. Recalculate the scenario."
+            raise ValueError(msg)
         return self
 
 
 class SavedScenario(ValueModel):
     """Versioned document used by PostgreSQL and JSON backups."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     id: UUID = Field(default_factory=uuid4)
     revision: Annotated[int, Field(strict=True, ge=1)] = 1
     updated_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -367,4 +452,16 @@ class SavedScenario(ValueModel):
                 "Saved result does not match its scenario inputs. Recalculate first."
             )
             raise ValueError(message)
+        from financial_model.allocations import allocate_sources
+
+        expected = allocate_sources(
+            self.inputs.allocation_plan,
+            cash=self.result.cash_added,
+            retirement=self.result.employee_401k + self.result.employer_retirement,
+            rsus=self.result.retained_rsus,
+            option_cost=self.result.option_cost,
+        )
+        if expected != self.result.allocations:
+            msg = "Saved allocations do not match the scenario plan."
+            raise ValueError(msg)
         return self
