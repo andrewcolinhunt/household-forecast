@@ -3,9 +3,8 @@
 ## Create and edit scenarios
 
 **Scenarios** is the home page. Each saved scenario shows its title,
-location, tax year, each person's employer, cash saved per month,
-and investments added per year. Cash shortfalls after planned saving remain
-visible separately.
+location, tax year, each person's employer, net additions per year,
+and the monthly funding gap.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
@@ -42,6 +41,28 @@ that change. Keep your version with **Save as new scenario**, or use
 **Reload saved version → Discard edits and reload** when a saved version still
 exists. **Refresh** updates the library without replacing your drafts.
 
+## Allocate assets to goals
+
+In the editor's **Allocations** section:
+
+1. Choose monthly or annual cash entry. Enter fixed amounts and choose one goal
+   for the cash remainder. The app stores exact annual amounts.
+2. Divide retained RSUs across goals, totaling 100% when RSUs are present.
+3. Assign existing 401(k)/employer contributions and exercised option shares to
+   goals. These amounts are calculated from compensation, not entered again.
+4. Choose **Calculate**, review the annual allocations and funding gap, then save.
+
+**Add goal** creates a purpose or adds an existing shared goal to this scenario.
+**Edit goals** renames a goal for the household. Reassign its allocations before
+removing it from a scenario; a goal referenced by saved scenarios cannot be deleted.
+
+Retirement, House, and Available to spend are editable names, not special goal
+types. Available to spend is still held cash; actual spending belongs in living
+costs. Assigning shares does not sell them, and assigning cash does not invest it.
+
+If fixed cash allocations exceed available cash, the remainder is zero and the
+plan shows a funding gap. Such scenarios can still be saved and compared.
+
 ## Compare scenarios
 
 Open **Compare** in the top navigation and select two to four scenarios.
@@ -58,7 +79,7 @@ appears in the details when a custom label replaces the automatic title.
 Selectors use compact versions of the same information.
 
 When titles and context match, the app adds enough differing inputs to distinguish
-the scenarios, such as rent per month or one person's saving goal. Titles stay
+the scenarios, such as rent per month or a goal's cash allocation. Titles stay
 stable when the comparison selection changes. Identical assumptions are marked
 **Same assumptions**. Expand **Saved details** to see their last-saved date,
 with a short record identifier when dates also match. Selectors include those
@@ -66,16 +87,9 @@ details to distinguish identical copies. The database does not store creation
 dates. Draft and snapshot labels remain separate. Notes do not count as a change
 to financial assumptions.
 
-**Overview** opens first. Monthly planned cash saving plus cash left after saving
-equals **Cash saved / month**. Multiplying by 12 gives **Cash saved / year**, before
-display rounding. For example, $1,000 set aside plus $2,000 left over is $3,000
-saved per month, or $36,000 per year. The set-aside amount is already yours;
-allocating more to it does not create more saving.
-
-Annual **Total saved** is cash saved plus investments added. Investments include
-your 401(k), employer retirement, RSUs retained after tax, and option purchases
-at cost. These are additions this year, not total wealth or investment returns.
-Cash saving assumes unspent cash is kept; a negative amount uses existing cash.
+**Overview** shows planned annual additions by goal, the funding gap, and net
+additions. Each asset is counted once. These are annual changes, not current
+balances or investment returns.
 
 **Effective tax rate** includes federal/state income taxes and employee payroll
 taxes, divided by gross salary, bonus, and vested RSUs. It includes RSU-funded
@@ -92,18 +106,13 @@ amounts. The separate options table shows annual vesting counts, per-share
 prices, share value if exercised, cost to exercise, and value above cost.
 An unknown estimate stays unknown; a dash means no matching person or award.
 
-**Saving & equity** breaks down annual cash saving and investments added, with
-subtotals matching Overview. Retirement has restricted access; share values can
-change and sales may be restricted. Option purchases count at cost in total
-saving; acquired share value and exercise spread appear separately.
-**Total saved** equals salary, RSUs, and employer retirement less taxes and living
-costs, including cash shortfalls. It excludes option award values, exercise
-spread, and investment growth. The table shows the reconciliation directly;
-**Cash saved** is a subtotal. Cash paid for option shares is an asset transfer.
+**Goal allocations** separates each goal's cash, retirement accounts, retained
+RSUs, and option shares at purchase cost. A single scenario shows asset columns;
+comparisons show scenario columns with expandable asset details for each goal.
+Exercise spread is shown separately and excluded from goal funding.
 
-The editor uses these same four views for a single calculated scenario. A cash
-shortfall means planned spending and saving need additional cash; the app does
-not reduce planned saving or sell more shares automatically.
+The editor uses the same four views. A funding gap means the plan requires more
+cash; no withdrawal, borrowing, or additional share sale is assumed.
 
 Turn on **Show differences** and choose a **Reference scenario** to add signed
 changes beneath values in every table. Changes use the same units as the row:
@@ -157,6 +166,11 @@ JSON. To restore it, upload the file under **Backups** in Scenarios or the edito
 1 MB and the supported schema. Keep these files private: they contain household
 financial inputs. Backups exclude edits made after the last calculation.
 
+Backups include goal identities and names. If an imported identity has a different
+current name, explicitly keep the shared goal or create a separate one. Version-one
+backups require review of the proposed destinations before loading. Their old extra
+saving becomes a fixed annual Retirement allocation; taxes are recalculated.
+
 ## Run the local database
 
 The configured local database uses Docker Desktop and `compose.yaml`:
@@ -172,7 +186,7 @@ service without removing that data; `docker compose up -d --wait` starts it
 again. Keep the named volume when recreating the container.
 
 Local credentials are in the ignored `.env` and `.streamlit/secrets.toml` files.
-The app uses a separate account with read/create/update/delete access to scenarios.
+The app uses a separate account with read/create/update/delete access to scenarios, goals, and scenario-goal references.
 These files and the volume belong to this computer; cloning the repository does
 not copy the database. Local access does not provide a shared hosted URL.
 
@@ -191,7 +205,7 @@ JSON backups are also available in the app.
 
 Create a dedicated database, then apply `scripts/schema.sql` using its SQL
 console or a PostgreSQL client. The app never creates or migrates tables on
-startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `scenarios`,
+startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `scenarios`, `goals`, and `scenario_goals`,
 plus schema usage and database connection rights. Use a separate owner for
 schema changes.
 
@@ -204,6 +218,21 @@ remain on the server and are not part of scenario exports.
 Restart the app and save a synthetic scenario. Open another browser session and
 verify that it can load it. Use a separate test database for automated tests;
 never use the family database for testing.
+
+## Migrate a version-one database
+
+Use an owner connection in `FINANCIAL_MODEL_DATABASE_URL`, with a private folder
+outside this repository. The first command writes original backups and a preview;
+review the destinations and totals before applying:
+
+```bash
+pixi run --locked python scripts/migrate_goal_allocations.py preview /private/path/review
+pixi run --locked python scripts/migrate_goal_allocations.py apply /private/path/review
+```
+
+The migration preserves scenario IDs and verifies unchanged taxes and net additions.
+It stops if records changed after the preview. Give the app role access to the new
+`goals` and `scenario_goals` tables after migration. Restart the app once complete.
 
 ## Prepare a private deployment
 

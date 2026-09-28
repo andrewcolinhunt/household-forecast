@@ -2,27 +2,31 @@
 
 The model follows one household through one calendar year. It separates cash,
 retirement contributions, vested RSUs, and purchased option shares. Average
-monthly remaining cash is the annual cash balance divided by 12; it does not
+monthly cash flow is annual cash flow divided by 12; it does not
 predict paycheck timing or withholding.
 
-## Saving and cash
+## Goals and cash
 
-Each adult's cash-funded saving goal is a percentage of cash compensation plus
-vested RSUs. The employee's traditional 401(k) contribution counts toward that
-goal. Personal saving is at least the 401(k) contribution; any remainder is an
-after-tax allocation funded from cash. Employer retirement contributions are
-additional and do not reduce cash pay.
+A goal describes an asset's purpose. Its asset type still describes how it is held.
+Cash and retirement accounts can both fund Retirement, but retain different access
+rules. Goals are shared across scenarios; allocations belong to each scenario.
 
 ```text
-personal saving = max(goal rate × (cash pay + RSUs), employee 401(k))
-additional saving = personal saving − employee 401(k)
-remaining cash = cash pay − cash-funded taxes − personal saving
+cash available = cash pay − cash-funded taxes − employee 401(k)
                  − option purchase cost − annual living costs
+cash remainder = max(cash available − fixed cash allocations, 0)
+funding gap = max(fixed cash allocations − cash available, 0)
+net additions = planned goal additions − funding gap
 ```
 
-Remaining cash can be negative. A shortfall means the planned spending and
-saving require more cash than salary supplies. The app does not reduce saving,
-sell extra shares, or borrow to cover it.
+One goal receives the cash remainder. Retained RSUs are split by percentages;
+retirement contributions and exercised shares each have a goal destination.
+RSU splits conserve every cent, assigning rounding pennies by largest fractional
+remainder and then stable goal ID. Assignments do not change taxes or net additions.
+
+Unfunded plans remain visible. The model does not silently cut allocations,
+withdraw existing assets, sell extra shares, or borrow. A goal named Available to
+spend still holds cash; spending belongs in expenses.
 
 ## Access and value certainty
 
@@ -37,11 +41,9 @@ still change even if it is easy to sell. The app keeps these distinctions visibl
 | Exercised option shares | Shares owned; ability to sell is not recorded | Exercise-date value, not guaranteed sale proceeds |
 | Unexercised options | Rights to buy shares; exercise needs funding and sale may be unavailable | An uncertain estimate shown separately from saving totals |
 
-`cash added = additional cash saving + remaining cash`. A cash shortfall reduces
-this amount; it can be negative. This assumes additional saving and any surplus
-are kept in cash. It is a projected annual change, not an existing bank balance.
-The combined net-saving measure includes retirement and estimated shares, so it
-is not an amount available to spend.
+Cash available can be negative. Planned cash allocations less their funding gap
+equal this amount. Annual additions are not existing balances, and combined goal
+amounts are not all available to spend.
 
 The model does not record public/private company status or trading restrictions.
 It assumes RSU shares are delivered at vesting and that enough can be sold to
@@ -94,16 +96,14 @@ additional saving, or option shares does not itself increase this total.
 
 ISO exercise spread can come from options earned in earlier years. It is
 excluded from net saving; exercise-related taxes remain an expense. Acquired
-shares and their cash cost appear separately in **Saving & equity**. The
+shares and their cash cost appear separately in **Goal allocations**. The
 reconciliation adds back the exercise cost to cash remaining because that cash
 was moved into shares rather than spent on living costs.
 
-The stored `total_savings_and_assets` combines remaining cash, personal saving,
-employer retirement, retained RSUs, and acquired shares at exercise-date value.
-It exceeds net saving by the option exercise spread. This accounting subtotal
-remains in annual calculation details, but is no longer the headline measure.
-Neither measure includes existing account balances or investment growth, and
-pretax retirement balances still have future tax obligations.
+Goal funding counts exercised shares at purchase cost, excluding exercise spread.
+It excludes existing balances and investment growth. Pretax retirement amounts
+still have future withdrawal taxes; assigning them to a goal does not remove those
+obligations.
 
 ## Supported tax facts
 

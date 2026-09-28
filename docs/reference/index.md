@@ -7,14 +7,19 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 
 | Type | Content |
 | --- | --- |
-| `PersonInputs` | Name, optional employer, explicit not-working flag, year-end age, annual cash pay/RSUs, employee 401(k), savings/employer rates, WA Cares exemption, ISO event, optional option award |
+| `PersonInputs` | Name, optional employer, explicit not-working flag, year-end age, annual cash pay/RSUs, employee 401(k), employer contribution rate, WA Cares exemption, ISO event, optional option award |
 | `OptionAward` | ISO/NSO, shares vesting this year, exercise price, optional assumed share value; informational only |
 | `ISOExercise` | Qualifying shares exercised and held, strike price, exercise-date fair market value |
 | `DependentInputs` | Qualifying child's year-end age |
 | `LivingCosts` | Monthly rent/childcare/other; annual eligible care expense; CA renter eligibility |
-| `Scenario` | Optional custom label (`name`), year, state, exactly two adults, children, costs, notes, confirmed household facts |
+| `Scenario` | Optional custom label (`name`), year, state, exactly two adults, children, costs, allocation plan, notes, confirmed household facts |
 | `TaxResult` | Federal/state income tax, employee payroll components, included AMT detail, coverage and engine versions |
-| `ScenarioResult` | Annual cash/savings/assets, monthly cash, tax result, input digest and calculation provenance |
+| `ScenarioResult` | Annual asset sources, goal allocations and funding gap, tax result, input digest and calculation provenance |
+| `Goal` | Shared UUID, editable name, revision |
+| `GoalAllocation` | Goal snapshot, fixed annual cash or `None` for remainder, RSU rate |
+| `AllocationPlan` | Goal rows and retirement/option destinations |
+| `GoalAddition` | One goal's cash, retirement, retained RSUs and option purchase cost |
+| `AllocationResult` | Planned goal additions and cash funding gap |
 | `SavedScenario` | Schema version, UUID, revision, update timestamp, inputs and matching result |
 
 ## Calculate a scenario
@@ -34,7 +39,7 @@ scenario = Scenario(
     assumptions_confirmed=True,
 )
 result = evaluate_scenario(scenario)
-print(result.monthly_remaining_cash)
+print(result.cash_added / 12)
 ```
 
 `evaluate_scenario(Scenario) -> ScenarioResult` needs neither Streamlit nor a
@@ -45,28 +50,24 @@ its keyword flags for excluding RSUs/ISO spread serve internal attribution.
 
 | Field | Meaning |
 | --- | --- |
-| `annual_remaining_cash` | Cash after taxes, personal saving, option purchases, and living costs |
-| `monthly_remaining_cash` | Annual remaining cash / 12, rounded to cents |
-| `cash_added` | Derived net cash retained: additional cash saving + annual remaining cash, including any deficit; excludes all shares and retirement |
-| `investments_added` | Employee and employer retirement + retained RSUs + option purchases at cost; excludes option gains and investment growth |
-| `extra_savings` | Personal savings goal beyond employee 401(k), funded from cash |
+| `cash_added` | Cash after taxes, employee 401(k), living costs and option purchases, before goal allocation |
+| `investments_added` | Employee/employer retirement, retained RSUs and option shares at cost |
+| `allocations.planned_total` | All requested goal additions, including unfunded cash |
+| `allocations.funding_gap` | Fixed cash allocations minus cash available, floored at zero |
+| `allocations.net_total` | Planned total less funding gap |
 | `rsu_tax_funding` | Incremental tax paid from vested RSUs |
 | `retained_rsus` | Gross vested RSUs less their tax funding |
-| `option_value` | Purchased shares at exercise-date FMV |
-| `total_savings_and_assets` | Remaining cash + personal/employer saving + retained RSUs + purchased shares |
-| `net_saved_from_income` | Shown as Total saved: `cash_added + investments_added`, or cash pay + RSUs + employer retirement − taxes − living costs; excludes option exercise spread |
+| `option_value` | Purchased shares at exercise-date FMV, shown separately from goal funding |
+| `net_saved_from_income` | Cash pay + RSUs + employer retirement − taxes − living costs; equals allocation net total |
 | `taxes.total` | Income taxes plus employee payroll taxes; AMT already included |
 | `effective_tax_rate` | Federal/state income and employee payroll taxes / gross cash and RSU wages; includes RSU-funded and ISO-related taxes; `None` for zero wages |
 
 See [calculation assumptions](../concepts/index.md) for formulas and coverage.
 
-**Cash left after saving** uses `monthly_remaining_cash` (or
-`annual_remaining_cash` in annual details). **Cash saved / month** uses
-`cash_added / 12`, including planned cash saving. Display rounding can cause
-small differences when multiplying visible monthly amounts by 12. Saving goals
-allocate cash between set-aside and remaining amounts; they do not change total
-cash retained. Negative cash retained reduces total saving even when investment
-contributions are positive.
+Monthly views divide annual amounts by 12. Display rounding can cause small
+visible differences. Goals require exactly one cash remainder and complete RSU
+percentages when RSUs are present. Result validation checks source conservation
+and verifies allocations against the stored plan.
 
 Effective tax rate uses gross wages before 401(k) deductions, excludes employer
 contributions and option values from its denominator, and may be negative when
@@ -104,12 +105,13 @@ transaction. Updates and deletions require the revision previously loaded and
 raise `RevisionConflictError` if the record changed or no longer exists. `import_backup(bytes) -> Scenario` validates a saved document and
 returns only the inputs for fresh calculation.
 
-Schema version 1 is the only accepted backup format. Unknown versions and
-unsupported facts fail validation. There is no general Excel import
-or revision-history API in this version.
+Schema and model version 2 replace individual saving rates with goal allocations.
+Version-one records require the explicit preview/apply migration; version-one
+backups require reviewed `legacy_destinations` in `import_backup`. Unknown versions
+and unsupported inputs fail validation. There is no general Excel importer.
 
-Absent `PersonInputs.option_award` and `PersonInputs.employer` values, and a false
-`not_working` flag, are omitted from JSON. Existing saved scenarios and backups
-therefore retain their original input digest without a data migration. The
-net-saving property derives from existing result fields; it is not a new stored
-calculation or tax rule.
+`list_goals`, `create_goal`, `update_goal`, and `delete_goal` manage the shared
+catalogue. Renames and deletions check revisions; referenced goals cannot be deleted.
+Snapshots retain their original names, while views prefer current catalogue names.
+`resolve_goal_conflicts` applies reviewed import choices and remaps destinations
+by UUID; equal names alone never merge identities.
