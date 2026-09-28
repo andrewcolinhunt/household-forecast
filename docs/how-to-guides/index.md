@@ -147,10 +147,17 @@ their assigned goals; they are not sold or withdrawn to cover cash shortfalls.
 
 ## Compare scenarios
 
-Open **Compare** in the top navigation and select two to four scenarios.
-Remove a selection with its × button; this does not delete the saved scenario.
-Selections stay in place when you switch pages. All selected scenarios must use
-the same tax year and current calculation rules.
+Open **Compare** in the top navigation and check two to four scenarios in the
+visible list. The order you check them sets the table's column order. Checked
+scenarios show **Column 1**, **Column 2**, and so on; the checklist itself stays
+in place. Use **Move left** or **Move right** under **Column order** to reorder
+the results without changing your selections.
+
+Unchecking removes only that comparison column; it does not delete the saved
+scenario. Checking it again adds it on the right. With four selected, uncheck
+one before adding another. Selections and column order stay in place when you
+switch pages. All selected scenarios must use the same tax year and current
+calculation rules.
 
 Choose **Monthly** or **Annual** once for all four views. Money amounts
 and vesting counts use that period; per-share prices and tax
