@@ -1,5 +1,10 @@
 # How the Annual Model Works
 
+The annual model is the first calculation step in
+[planning decisions and their future impact](#decision-planning). It compares
+the immediate consequences of a job or location choice. Carrying those
+consequences into future account balances and retirement is planned work.
+
 The model follows one household through one calendar year. It separates cash,
 retirement contributions, vested RSUs, and purchased option shares. Average
 monthly cash flow is annual cash flow divided by 12; it does not

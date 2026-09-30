@@ -1,9 +1,22 @@
 # financial-model
 
-A shared household planning app built with Streamlit. Compare annual income,
-living costs, taxes, cash savings, and retained equity across California and
-Washington scenarios. Pydantic validates inputs and saved results; a pinned
-PolicyEngine module calculates federal, state, and employee payroll taxes.
+A shared household decision-planning app built with Streamlit. Its purpose is
+to understand how choices such as moving, changing jobs, or changing spending
+affect cash available today, future wealth, and retirement options.
+
+Quicken Simplifi remains the source for tracking expenses and current accounts.
+This tool connects a proposed decision to changes in compensation, taxes,
+expenses, saving, and ultimately future outcomes. Imports can provide starting
+facts; transaction tracking is outside the product's purpose.
+
+The current version compares one year's income, living costs, taxes, cash
+savings, and retained equity across California and Washington scenarios.
+Multi-year and retirement projections are planned, not implemented. See
+[the planning objective](docs/concepts/decision-planning.md) and
+[the annual calculation model](docs/concepts/index.md).
+
+Pydantic validates inputs and saved results; a pinned PolicyEngine module
+calculates federal, state, and employee payroll taxes.
 
 ## Run locally
 

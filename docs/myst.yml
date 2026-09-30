@@ -25,6 +25,7 @@ project:
         - file: how-to-guides/index.md
     - title: Concepts
       children:
+        - file: concepts/decision-planning.md
         - file: concepts/index.md
     - title: Reference
       children:
