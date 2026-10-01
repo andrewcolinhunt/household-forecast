@@ -13,9 +13,7 @@ from uuid import uuid4
 import psycopg
 import streamlit as st
 from pydantic import ValidationError
-from streamlit.delta_generator import DeltaGenerator
 
-from financial_model.allocations import fund_cash_goals
 from financial_model.comparison import (
     Period,
     _number,
@@ -29,19 +27,16 @@ from financial_model.comparison import (
 )
 from financial_model.model import evaluate_scenario
 from financial_model.scenario_display import (
-    STATE_NAMES,
     ScenarioDisplay,
     scenario_displays,
 )
 from financial_model.schemas import (
     MODEL_REVISION,
-    AllocationPlan,
     Goal,
     SavedScenario,
     Scenario,
     ScenarioResult,
     default_allocation_plan,
-    dollars,
 )
 from financial_model.storage import (
     RevisionConflictError,
@@ -58,13 +53,15 @@ from financial_model.taxes import CORE_VERSION, CORRECTION_VERSION, ENGINE_VERSI
 
 PAGE_DIR = Path(__file__).with_name("pages")
 SCENARIOS_PAGE = PAGE_DIR / "scenarios.py"
-EDITOR_PAGE = PAGE_DIR / "editor.py"
 COMPARE_PAGE = PAGE_DIR / "compare.py"
-HOUSEHOLD_PAGE = PAGE_DIR / "household.py"
-GOALS_PAGE = PAGE_DIR / "goals.py"
-WEALTH_PAGE = PAGE_DIR / "wealth.py"
-WEALTH_EDITOR_PAGE = PAGE_DIR / "wealth_editor.py"
-DRAFT_FIELDS = ("draft_data", "draft_ages", "loaded_record", "document", "draft_id")
+DRAFT_FIELDS = (
+    "draft_data",
+    "draft_ages",
+    "loaded_record",
+    "document",
+    "draft_id",
+    "annual_children_buffer",
+)
 
 
 def _database_url() -> str | None:
@@ -102,6 +99,9 @@ def _set_editor(inputs: Scenario | None, record: SavedScenario | None = None) ->
     st.session_state["draft_ages"] = ", ".join(
         str(child["age"]) for child in data.get("dependents", ())
     )
+    st.session_state["annual_children_buffer"] = {
+        "text": st.session_state["draft_ages"]
+    }
     st.session_state["loaded_record"] = record
     st.session_state["document"] = record
     st.session_state["draft_id"] = record.id if record else uuid4()
@@ -125,6 +125,10 @@ def _household_defaults() -> dict[str, Any]:
 
 def _remember_draft() -> None:
     """Retain raw edits separately from widgets that disappear on page changes."""
+    if "annual_children_buffer" in st.session_state:
+        st.session_state["draft_ages"] = st.session_state["annual_children_buffer"][
+            "text"
+        ]
     drafts = st.session_state.setdefault("drafts", {})
     drafts[str(st.session_state["draft_id"])] = {
         key: st.session_state[key] for key in DRAFT_FIELDS
@@ -155,232 +159,9 @@ def _open_editor(
     else:
         inputs = record.inputs if record else None
         _set_editor(inputs, None if duplicate else record)
-    st.switch_page(str(EDITOR_PAGE))
+    from financial_model.scenario_pages import navigate
 
-
-def _key(name: str) -> str:
-    """Scope widget values to the current loaded draft."""
-    return f"{name}_{st.session_state['editor_epoch']}"
-
-
-def _money_input(
-    label: str, value: Any, key: str, *, help_text: str | None = None
-) -> float:
-    """Render a dollar input with explicit units and stable widget identity."""
-    return float(
-        st.number_input(
-            label,
-            min_value=0.0,
-            value=float(value or 0),
-            step=100.0,
-            format="%.2f",
-            key=_key(key),
-            help=help_text,
-        )
-    )
-
-
-def _adult_inputs(index: int, data: dict[str, Any], state: str) -> dict[str, Any]:
-    """Collect compensation and saving inputs for one of the two adults."""
-    prefix = f"adult_{index}"
-    name = st.text_input(
-        "Name", value=data.get("name", f"Adult {index + 1}"), key=_key(f"{prefix}_name")
-    )
-    not_working = st.checkbox(
-        "Not working in this scenario",
-        value=data.get("not_working", False),
-        key=_key(f"{prefix}_not_working"),
-        help="Does not change compensation amounts. Set those separately below.",
-    )
-    employer = st.text_input(
-        "Employer",
-        value=data.get("employer") or "",
-        max_chars=80,
-        disabled=not_working,
-        placeholder="Employer name",
-        key=_key(f"{prefix}_employer"),
-        help="Use a short name for scenario headings. Leave blank if unknown.",
-    )
-    age = st.number_input(
-        "Age at year end",
-        min_value=18,
-        max_value=64,
-        value=data.get("age"),
-        key=_key(f"{prefix}_age"),
-    )
-    amounts = {
-        field: _money_input(
-            label,
-            data.get(field),
-            f"{prefix}_{field}",
-            help_text={
-                "rsu_vesting": "Shares are delivered and taxed at vesting. Use the tax-payment toggle under Compensation to choose whether shares or cash pay their taxes. Retained shares stay separate from cash.",
-                "employee_401k": "Traditional pretax contributions. Roth contributions are not modeled.",
-            }.get(field),
-        )
-        for field, label in [
-            ("cash_pay", "Annual salary and bonus ($)"),
-            ("rsu_vesting", "Annual RSU value at vesting ($)"),
-            ("employee_401k", "Annual employee 401(k) contributions ($)"),
-        ]
-    }
-    rates = {}
-    for field, label, default in [
-        (
-            "employer_retirement_rate",
-            "Employer 401(k) contributions (% of salary and bonus)",
-            "0",
-        ),
-    ]:
-        percent = st.number_input(
-            label,
-            min_value=0.0,
-            max_value=100.0,
-            value=float(Decimal(data.get(field, default)) * 100),
-            step=1.0,
-            key=_key(f"{prefix}_{field}"),
-            help="Employer contribution as a percentage of cash salary and bonus.",
-        )
-        rates[field] = str(Decimal(str(percent)) / 100)
-    exempt = st.checkbox(
-        "Exempt from WA Cares",
-        value=data.get("wa_cares_exempt", False),
-        key=_key(f"{prefix}_wa_cares_exempt"),
-    )
-    return {
-        "name": name,
-        "employer": None if not_working else employer.strip() or None,
-        "not_working": not_working,
-        "age": age,
-        **amounts,
-        **rates,
-        "wa_cares_exempt": exempt if state == "WA" else False,
-        "options": _option_inputs(prefix, data.get("options", {})),
-        "option_award": _option_award_inputs(prefix, data.get("option_award")),
-    }
-
-
-def _option_award_inputs(
-    prefix: str, data: dict[str, Any] | None
-) -> dict[str, Any] | None:
-    """Record annual option vesting without treating it as cash or an exercise."""
-    with st.expander("Stock option award"):
-        if not st.checkbox(
-            "Include an option award",
-            value=data is not None,
-            key=_key(f"{prefix}_award_enabled"),
-        ):
-            return None
-        data = data or {}
-        st.caption(
-            "Record this year's vesting, not the full multiyear grant. Award estimates do not enter cash, tax, or saving totals."
-        )
-        kind = st.selectbox(
-            "Option type",
-            ["ISO", "NSO"],
-            index=["ISO", "NSO"].index(data.get("kind", "ISO")),
-            key=_key(f"{prefix}_award_kind"),
-        )
-        shares = st.number_input(
-            "Options vesting this year",
-            min_value=0,
-            value=data.get("vesting_shares", 0),
-            key=_key(f"{prefix}_award_shares"),
-        )
-        strike = st.number_input(
-            "Award exercise price ($/share)",
-            min_value=0.0,
-            value=float(data.get("strike", 0)),
-            format="%.6f",
-            key=_key(f"{prefix}_award_strike"),
-        )
-        value = st.number_input(
-            "Assumed share value ($/share)",
-            min_value=0.0,
-            value=float(data["assumed_share_value"])
-            if data.get("assumed_share_value") is not None
-            else None,
-            format="%.6f",
-            key=_key(f"{prefix}_award_value"),
-            help="Leave blank if unknown. An estimate does not mean shares can be sold at this price.",
-        )
-    return {
-        "kind": kind,
-        "vesting_shares": shares,
-        "strike": str(strike),
-        "assumed_share_value": str(value) if value is not None else None,
-    }
-
-
-def _option_inputs(prefix: str, data: dict[str, Any]) -> dict[str, Any]:
-    """Collect only the supported ISO exercise-and-hold event."""
-    with st.expander("ISO exercise and hold"):
-        st.caption(
-            "Qualifying ISOs exercised and held through year end. NSO exercises, share sales, and AMT credit carryforwards are not supported."
-        )
-        shares = st.number_input(
-            "Shares exercised",
-            min_value=0,
-            value=data.get("shares", 0),
-            key=_key(f"{prefix}_shares"),
-        )
-        strike = st.number_input(
-            "Exercise price ($/share)",
-            min_value=0.0,
-            value=float(data.get("strike", 0)),
-            format="%.6f",
-            key=_key(f"{prefix}_strike"),
-        )
-        value = st.number_input(
-            "FMV at exercise ($/share)",
-            min_value=0.0,
-            value=float(data.get("fair_market_value", 0)),
-            format="%.6f",
-            key=_key(f"{prefix}_fmv"),
-        )
-    return {"shares": shares, "strike": str(strike), "fair_market_value": str(value)}
-
-
-def _living_inputs(data: dict[str, Any], state: str) -> dict[str, Any]:
-    """Separate monthly spending from tax-credit eligibility facts."""
-    st.subheader("Living expenses")
-    columns = st.columns(3)
-    amounts = {}
-    for column, field, label in zip(
-        columns,
-        ["rent", "childcare", "other"],
-        [
-            "Monthly rent ($)",
-            "Monthly childcare ($)",
-            "Other monthly living expenses ($)",
-        ],
-        strict=True,
-    ):
-        with column:
-            amounts[field] = _money_input(
-                label,
-                data.get(field),
-                f"living_{field}",
-                help_text="Include insurance and other costs or payroll deductions not entered elsewhere, once. This expense input does not reduce taxable wages."
-                if field == "other"
-                else None,
-            )
-    amounts["eligible_care_expense"] = _money_input(
-        "Annual qualifying work-related childcare expense ($)",
-        data.get("eligible_care_expense"),
-        "eligible_care",
-        help_text="Enter only eligible care for children under 13. The tax module applies income and credit limits.",
-    )
-    eligible = st.checkbox(
-        "Qualifying California renter",
-        value=data.get("ca_renter_credit_eligible", False),
-        key=_key("ca_renter"),
-        help="Paid rent for at least six months on California property subject to property tax; not claimed as someone else's dependent or claiming a homeowner exemption.",
-    )
-    return {
-        **amounts,
-        "ca_renter_credit_eligible": eligible if state == "CA" else False,
-    }
+    navigate("Plans", target="annual")
 
 
 def _read_goal_catalogue(dsn: str | None) -> None:
@@ -392,299 +173,6 @@ def _read_goal_catalogue(dsn: str | None) -> None:
             st.session_state.setdefault("goals", ())
     else:
         st.session_state.setdefault("goals", ())
-
-
-def _allocation_inputs(
-    raw: dict[str, Any] | None, adults: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Collect fixed cash, remainder, and share destinations without asset trading."""
-    st.subheader("Savings goals")
-    data = raw or default_allocation_plan().model_dump(mode="json")
-    catalogue = {str(g.id): g for g in st.session_state.get("goals", ())}
-    rows = sorted(data["rows"], key=lambda row: row["cash_amount"] is None)
-    names = {
-        r["goal"]["id"]: catalogue.get(
-            r["goal"]["id"], Goal.model_validate(r["goal"])
-        ).name
-        for r in rows
-    }
-    result = st.session_state.get("document")
-    unit = st.radio(
-        "Savings amounts",
-        ["Monthly", "Annual"],
-        horizontal=True,
-        key=_key("allocation_unit"),
-    )
-    factor = 12 if unit == "Monthly" else 1
-    period_label = "month" if unit == "Monthly" else "year"
-    if result and _current(result.result):
-        st.caption(
-            f"Last calculated, {unit.lower()}: {_number(cash_surplus(result.result) / factor)} cash surplus / deficit · {_number(result.result.retained_rsus / factor)} shares retained from RSUs".replace(
-                "$", r"\$"
-            )
-        )
-    ids = list(names)
-    remainder = next(r["goal"]["id"] for r in rows if r["cash_amount"] is None)
-    names[remainder] = "Spending"
-    st.caption(
-        "Cash goals are funded from top to bottom. Leftover cash is available for spending."
-    )
-    period_key = unit.lower()
-    updated = []
-    remove_id = None
-    move_id = None
-    fixed_ids = [r["goal"]["id"] for r in rows if r["cash_amount"] is not None]
-    remove_controls = []
-    for row in rows:
-        goal_id = row["goal"]["id"]
-        goal = catalogue.get(goal_id, Goal.model_validate(row["goal"]))
-        label, cash, shares, remove = st.columns([2, 1, 1, 1])
-        if goal_id == remainder:
-            label.markdown("**Spending**")
-        else:
-            priority = fixed_ids.index(goal_id)
-            label.markdown(f"**{priority + 1}. {goal.name}**")
-            if label.button(
-                "Move up", key=_key(f"priority_up_{goal_id}"), disabled=priority == 0
-            ):
-                move_id = goal_id
-        original = Decimal(str(row["cash_amount"] or 0))
-        # Changing the unit recreates the widget from exact annual draft values.
-        value = cash.number_input(
-            f"Additional savings / {period_label}",
-            min_value=0.0,
-            value=float(original / factor),
-            format="%.2f",
-            disabled=goal_id == remainder,
-            key=_key(f"allocation_cash_{goal_id}_{period_key}"),
-        )
-        if goal_id == remainder:
-            cash.caption("Leftover cash after funding goals")
-        rate = shares.number_input(
-            "Retained RSU shares (%)",
-            min_value=0.0,
-            max_value=100.0,
-            value=float(Decimal(str(row["rsu_rate"])) * 100),
-            format="%.2f",
-            key=_key(f"allocation_rsu_{goal_id}"),
-        )
-        remove_controls.append((remove, goal_id, value, rate))
-        updated.append(
-            {
-                "goal": goal.model_dump(mode="json"),
-                "cash_amount": None
-                if goal_id == remainder
-                else str(
-                    original
-                    if value == float(original / factor)
-                    else dollars(Decimal(str(value)) * factor)
-                ),
-                "rsu_rate": str(Decimal(str(rate)) / 100),
-            }
-        )
-    total_rate = sum(Decimal(r["rsu_rate"]) for r in updated)
-    if any(Decimal(str(a["rsu_vesting"])) for a in adults) and total_rate != 1:
-        st.warning(
-            f"Retained RSU shares total {total_rate:.0%}; designate 100% before calculating."
-        )
-    retirement = st.selectbox(
-        "Retirement contributions designated for",
-        ids,
-        index=ids.index(data["retirement_goal_id"]),
-        format_func=names.__getitem__,
-        key=_key("allocation_retirement"),
-    )
-    options = data["option_goal_id"]
-    with st.expander(
-        "Savings goal for exercised options",
-        expanded=any(a["options"]["shares"] for a in adults),
-    ):
-        options = st.selectbox(
-            "Shares from option exercises designated for",
-            ids,
-            index=ids.index(options),
-            format_func=names.__getitem__,
-            key=_key("allocation_options"),
-        )
-    for remove, goal_id, value, rate in remove_controls:
-        removable = (
-            goal_id != remainder
-            and not value
-            and not rate
-            and goal_id not in (retirement, options)
-        )
-        if remove.button(
-            "Remove",
-            key=_key(f"remove_allocation_{goal_id}"),
-            disabled=not removable,
-            help="Reassign this goal's amounts and destinations before removing it from this scenario.",
-        ):
-            remove_id = goal_id
-    present = set(ids)
-    unused = {
-        str(goal.id): goal
-        for goal in st.session_state.get("goals", ())
-        if str(goal.id) not in present
-    }
-    if unused:
-        selected = st.selectbox(
-            "Goal to add",
-            list(unused),
-            format_func=lambda key: unused[key].name,
-            key=_key("allocation_add"),
-        )
-        if st.button("Add goal to scenario"):
-            updated.append(
-                {
-                    "goal": unused[selected].model_dump(mode="json"),
-                    "cash_amount": "0",
-                    "rsu_rate": "0",
-                }
-            )
-            st.session_state["allocation_structure_changed"] = True
-    st.page_link(
-        str(GOALS_PAGE), label="Manage household goals", icon=":material/arrow_forward:"
-    )
-    if remove_id:
-        updated = [row for row in updated if row["goal"]["id"] != remove_id]
-        st.session_state["allocation_structure_changed"] = True
-    updated.sort(key=lambda row: row["cash_amount"] is None)
-    if move_id:
-        index = next(i for i, row in enumerate(updated) if row["goal"]["id"] == move_id)
-        updated[index - 1], updated[index] = updated[index], updated[index - 1]
-        st.session_state["allocation_structure_changed"] = True
-    updated_plan = {
-        "rows": updated,
-        "retirement_goal_id": retirement,
-        "option_goal_id": options,
-    }
-    if result and _current(result.result):
-        try:
-            plan = AllocationPlan.model_validate(updated_plan)
-        except ValueError:
-            pass  # Calculate reports invalid allocations with the other input errors.
-        else:
-            st.caption(
-                "Using last calculated income, taxes, expenses, and option exercises."
-            )
-            st.metric(
-                f"Spending per {period_label}",
-                _number(
-                    fund_cash_goals(plan, result.result.cash_added).remaining / factor
-                ),
-                help="Cash left after funding goals in priority order, or an expense deficit.",
-            )
-    return updated_plan
-
-
-def _form(
-    dsn: str | None, assumptions: DeltaGenerator, allocations: DeltaGenerator
-) -> None:
-    """Retain edits on each rerun; calculate and save only on explicit actions."""
-    data = st.session_state["draft_data"]
-    with assumptions:
-        name = st.text_input(
-            "Custom label (optional)",
-            value=data.get("name", ""),
-            max_chars=80,
-            key=_key("name"),
-            placeholder="For example, New job or Higher rent",
-            help="Describe the decision if useful. Leave blank to show the state. "
-            "Labels do not need to be unique.",
-        )
-        left, right = st.columns(2)
-        year = left.selectbox(
-            "Tax year",
-            [2025, 2026],
-            index=[2025, 2026].index(data.get("tax_year", 2026)),
-            key=_key("year"),
-        )
-        state = right.selectbox(
-            "Full-year state",
-            ["WA", "CA"],
-            index=["WA", "CA"].index(data.get("state", "WA")),
-            key=_key("state"),
-            format_func=STATE_NAMES.__getitem__,
-        )
-        ages = st.text_input(
-            "Qualifying children's ages",
-            value=st.session_state["draft_ages"],
-            key=_key("children"),
-            help="Ages at year end, separated by commas. Leave blank for none. Supported ages: 0-17.",
-        )
-        st.subheader("Compensation")
-        rsu_taxes_from_shares = st.toggle(
-            "Use vested shares to pay their taxes",
-            value=data.get("rsu_taxes_from_shares", True),
-            key=_key("rsu_taxes_from_shares"),
-            help="On: sell enough vested RSUs to cover the taxes attributed to them. "
-            "Off: cash pays all taxes and all vested RSUs are retained. "
-            "Applies to both adults; total taxes are unchanged.",
-        )
-        adults = []
-        for index, column in enumerate(st.columns(2)):
-            with column:
-                st.markdown(f"**Adult {index + 1}**")
-                existing = data.get("adults", [{}, {}])[index]
-                adults.append(_adult_inputs(index, existing, state))
-        living = _living_inputs(data.get("living_costs", {}), state)
-        notes = st.text_area(
-            "Scenario notes",
-            value=data.get("notes", ""),
-            max_chars=2000,
-            key=_key("notes"),
-        )
-        confirmed = st.checkbox(
-            "My household fits the supported assumptions",
-            value=data.get("assumptions_confirmed", False),
-            key=_key("confirmed"),
-        )
-        _assumptions()
-    with allocations:
-        allocation_plan = _allocation_inputs(data.get("allocation_plan"), adults)
-    data = {
-        "name": name,
-        "tax_year": year,
-        "state": state,
-        "adults": adults,
-        "living_costs": living,
-        "allocation_plan": allocation_plan,
-        "rsu_taxes_from_shares": rsu_taxes_from_shares,
-        "notes": notes,
-        "assumptions_confirmed": confirmed,
-    }
-    st.session_state["draft_data"] = data
-    st.session_state["draft_ages"] = ages
-    _remember_draft()
-    if st.session_state.pop("allocation_structure_changed", False):
-        st.session_state["editor_epoch"] += 1
-        st.session_state["editor_target"] = "Savings goals"
-        st.rerun()
-    loaded = st.session_state.get("loaded_record")
-    missing = loaded is not None and all(
-        record.id != loaded.id for record in st.session_state["records"]
-    )
-    if missing and st.session_state["store_available"]:
-        st.warning(
-            "This scenario was deleted. Save as new scenario to keep this draft."
-        )
-    with st.container(horizontal=True):
-        calculate = st.button("Calculate")
-        save = st.button(
-            "Save",
-            type="primary",
-            disabled=not st.session_state["store_available"] or missing,
-            help="Calculate and save the current inputs.",
-        )
-        copy = (
-            st.button(
-                "Save as new scenario", disabled=not st.session_state["store_available"]
-            )
-            if loaded
-            else False
-        )
-    if calculate or save or copy:
-        _submit(data, ages, "copy" if copy else "save" if save else "calculate", dsn)
 
 
 def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> None:
@@ -705,7 +193,6 @@ def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> No
     )
     st.session_state["document"] = document
     _remember_draft()
-    st.session_state["editor_target"] = "Results"
     if action != "calculate" and dsn:
         _save(dsn, document, new=action == "copy" or loaded is None)
     elif action == "calculate":
@@ -868,6 +355,8 @@ def _tax_detail(result: ScenarioResult, period: Period) -> None:
 def compare_page() -> None:
     """Compare two to four saved scenarios or explicitly calculated session results."""
     st.title("Compare annual plans")
+    st.session_state["records"] = _read_store(_database_url())
+    _read_goal_catalogue(_database_url())
     records = st.session_state["records"]
     choices = {str(record.id): record for record in records}
     document = st.session_state.get("document")
@@ -1098,7 +587,9 @@ def _backups(document: SavedScenario | None) -> None:
                 st.error("This backup could not be read. Check its format and version.")
         if st.button("Load backup as new draft", disabled=not ready) and inputs:
             _set_editor(inputs)
-            st.switch_page(str(EDITOR_PAGE))
+            from financial_model.scenario_pages import navigate
+
+            navigate("Plans", target="annual")
         st.caption(
             "Backups contain your financial inputs. Imported results are recalculated before saving a new copy."
         )
@@ -1147,63 +638,6 @@ def _draft_status() -> tuple[bool, bool]:
         loaded is None or inputs != loaded.inputs,
         document is None or inputs != document.inputs,
     )
-
-
-def editor_page() -> None:
-    """Edit a session draft beside its last calculated result."""
-    if "editor_epoch" not in st.session_state:
-        _set_editor(None)
-    st.page_link(
-        str(SCENARIOS_PAGE), label="All scenarios", icon=":material/arrow_back:"
-    )
-    st.title(
-        "Edit scenario" if st.session_state.get("loaded_record") else "New scenario"
-    )
-    status = st.container()
-    section_key = _key("editor_section")
-    if target := st.session_state.pop("editor_target", None):
-        st.session_state[section_key] = target
-    assumptions, allocations, results = st.tabs(
-        ["Assumptions", "Savings goals", "Results"], key=section_key, on_change="rerun"
-    )
-    _form(_database_url(), assumptions, allocations)
-    loaded = st.session_state.get("loaded_record")
-    latest = next(
-        (
-            record
-            for record in st.session_state["records"]
-            if loaded and record.id == loaded.id
-        ),
-        None,
-    )
-    unsaved, stale = _draft_status()
-    with status:
-        st.caption("Unsaved changes" if unsaved else "Saved")
-        if loaded and latest and loaded.revision != latest.revision:
-            st.warning(
-                "This scenario has a newer saved version. Save your edits as a new scenario, or reload the saved version."
-            )
-    with assumptions:
-        if latest:
-            with st.expander("Reload saved version"):
-                st.caption(
-                    "Discard edits to this scenario and load its latest saved version."
-                )
-                if st.button(
-                    "Discard edits and reload",
-                    disabled=not st.session_state["store_available"],
-                ):
-                    _set_editor(latest.inputs, latest)
-                    st.rerun()
-    with results:
-        document = st.session_state.get("document")
-        if document:
-            if stale:
-                st.info("Inputs changed. Calculate to update these results.")
-            _results(document)
-        else:
-            st.caption("Calculate to see results.")
-        _backups(document)
 
 
 @st.dialog("Delete scenario?", dismissible=False)
@@ -1294,11 +728,11 @@ def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
 
 def scenarios_page() -> None:
     """List saved household scenarios and provide entry points to their drafts."""
-    st.title("Annual plans")
+    st.subheader("Annual plans")
     with st.container(horizontal=True):
         if st.button("New scenario", type="primary"):
             _open_editor()
-        st.button("Refresh", help="Read the latest saved scenarios.")
+        st.button("Refresh annual plans", help="Read the latest saved scenarios.")
     records = st.session_state["records"]
     if not records:
         st.info("No saved scenarios yet. Create one to get started.")
@@ -1323,7 +757,9 @@ def scenarios_page() -> None:
                     st.session_state["editor_epoch"] = (
                         st.session_state.get("editor_epoch", 0) + 1
                     )
-                    st.switch_page(str(EDITOR_PAGE))
+                    from financial_model.scenario_pages import navigate
+
+                    navigate("Plans", target="annual")
     if any(
         record.result.taxes.rules_status == "projected_ca_parameters"
         for record in records
@@ -1341,24 +777,9 @@ def main() -> None:
     )
     page = st.navigation(
         [
-            st.Page(str(HOUSEHOLD_PAGE), title="Household", url_path="household"),
-            st.Page(str(GOALS_PAGE), title="Goals", url_path="goals"),
-            st.Page(str(WEALTH_PAGE), title="Wealth", url_path="wealth"),
-            st.Page(str(SCENARIOS_PAGE), title="Annual plans", default=True),
+            st.Page(str(SCENARIOS_PAGE), title="Scenarios", default=True),
             st.Page(
                 str(COMPARE_PAGE), title="Compare annual plans", url_path="compare"
-            ),
-            st.Page(
-                str(EDITOR_PAGE),
-                title="Scenario editor",
-                url_path="editor",
-                visibility="hidden",
-            ),
-            st.Page(
-                str(WEALTH_EDITOR_PAGE),
-                title="Wealth snapshot editor",
-                url_path="wealth-editor",
-                visibility="hidden",
             ),
         ],
         position="top",
@@ -1368,15 +789,15 @@ def main() -> None:
         st.info(
             "Local preview: drafts last for this session. Download a backup to keep them."
         )
-    st.session_state["records"] = _read_store(dsn)
-    _read_goal_catalogue(dsn)
     if notice := st.session_state.pop("notice", None):
         st.success(notice)
     if imported := st.session_state.pop("pending_inputs", None):
         _set_editor(imported)
-        st.switch_page(str(EDITOR_PAGE))
+        st.session_state["workspace_target"] = "annual"
+        st.session_state["pending_category"] = "Plans"
     # Page widgets are transient; persist comparison choices between visits.
     for key in (
+        "scenario_category",
         "comparison_selection",
         "display_period",
     ):

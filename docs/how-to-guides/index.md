@@ -1,8 +1,89 @@
 # Using and Hosting the App
 
+## Organize assumptions and combine plans
+
+**Scenarios** is the input workspace. Each sub-tab owns a distinct concern:
+
+| Sub-tab | What you enter |
+| --- | --- |
+| Plans | Named combinations and existing annual cases; annual calculation actions |
+| Household | Names, ages, children, residence and personal tax elections |
+| Wealth | Dated account balances, holdings, assets and debts |
+| Work | Compensation, work phases, retirement timing and salary growth |
+| Spending | Household consumption, replacement budgets and additional expenses |
+| Investments | Saving instructions, portfolio targets and rebalancing intentions |
+| Economy | Inflation, returns, fees and optional statistical inputs |
+| Longevity | Planning ages or a request to sample lifespans later |
+| Goals | Shared names for saving purposes |
+
+Create a profile in a category, enter a name and known values, and choose **Save
+inputs**. Leave unknown amounts blank; zero means a known zero. Money uses USD
+purchasing power at the profile's **Money reference year**, except fields explicitly
+labeled nominal. Names need not be unique. **Duplicate** and imports open independent
+unsaved drafts. **Save as new inputs** keeps a separate library record.
+
+Work phases use an inclusive start year and exclusive end year. Enter each person's
+retirement as the first year without employment. A gap between phases remains
+unknown unless you enter a not-working phase. Salary growth is above inflation;
+new phases visibly start at editable 0% real growth. Vesting uses its own dollar or
+share basis and dates. Option exercises are dated events, not recurring salary.
+
+In Spending, a replacement budget changes the baseline. Dated additional expenses
+continue until their own end dates. Enter childcare phases as additional rows only
+when they are not already included in the baseline. Moving can use a replacement
+budget plus a one-time expense. Enter survivor spending explicitly when known.
+
+In Investments, **Saving instructions** assigns additions to goals; **Portfolio
+strategy** records target equities, fixed income and cash. Targets total 100%.
+Choose a constant target or a gradual transition with increasing checkpoints.
+Checkpoints can refer to a calendar year, either household adult's retirement, or
+the later retirement date. Gradual transitions record linear changes between
+checkpoints and hold the last target. They do not alter actual Wealth holdings.
+
+Economy records nominal annualized compound returns before fees and taxes. Record
+the source and forecast horizon. Optional exploration ranges need both lower and
+upper values around the central assumption. They are alternatives, not probabilities
+or limits on one-year market movements. Advanced variability and a complete
+correlation matrix are optional; blank correlations do not mean independence.
+
+Longevity supports specified planning ages for both adults or a request to sample
+lifespans later. For sampling intent, record the life-table source, version, basis,
+and adult classifications when known. No mortality samples are generated here.
+
+After saving profiles, choose **Plans → New combined plan**. Choose each component
+from its library and a starting Wealth snapshot. Use **Edit plan Household** for
+copied family facts and explicit adult alignment. Use **Map plan Wealth** to review
+owner mappings, select the accounts covered by the portfolio strategy, and enter
+reserved cash. Return to Plans and save.
+
+Each selection embeds the reviewed source contents. Editing or deleting a source
+cannot change a saved Plan. **Replace from library** is explicit; changing Work or
+Longevity clears the corresponding adult alignment, and replacing Wealth clears
+account/owner bindings and reserved cash for review. **Newer version available**
+and **Source no longer in library** describe provenance, not a changed Plan.
+
+**Needs input** identifies missing values, timing conflicts, inconsistent reference
+years and unresolved mappings. **Inputs entered** means the capture fields are
+present and consistent; it does not mean the plan is ready for a projection. These
+libraries do not run OWL, Monte Carlo simulations, future taxes, withdrawals or
+retirement-readiness calculations.
+
+Raw drafts, including invalid text, survive category changes and visits to Compare
+within a session. Each category has its own drafts. **Refresh** reads current saved
+records; **Discard edits and reload inputs** explicitly replaces a draft. Concurrent
+saves or deletes cannot overwrite a newer revision. Category backups export current
+valid inputs; imports create new outer identities and retain embedded provenance,
+without populating other libraries. The import limit is 1 MB.
+
+An annual plan's **Create assumption profiles from this annual plan** section
+previews Work, Spending and saving instructions. Calculate current annual edits
+first, then create three unsaved drafts for separate review. The conversion uses
+inputs only: monthly consumption is multiplied by 12, care-credit eligibility is
+not added again, and calculated taxes or cash surplus are not copied as pay.
+
 ## Household and goals
 
-**Household** holds names and ages for a specified year end, qualifying children's
+Under Scenarios, **Household → Shared Household defaults** holds names and ages for a specified year end, qualifying children's
 ages, and the supported filing status. Save these defaults once. New scenarios copy
 them; existing scenarios, duplicates, imports, and open drafts keep their own facts.
 Changing defaults does not update a saved financial calculation.
@@ -70,25 +151,26 @@ it for both users and clears its draft in the current session. A changed revisio
 cannot be deleted until you refresh and review it again. Revisions detect
 competing edits; they do not provide an archive of every previous edit.
 
-Wealth snapshots currently serve as a saved inventory. Annual scenarios and goal
-allocations remain independent. Applying scenarios to starting wealth, assigning
+Wealth snapshots serve as a saved inventory and can be copied into combined Plans.
+Annual scenarios and goal allocations remain independent. Projecting from starting wealth, assigning
 existing assets to goals, investment growth, and retirement projections are future
 work. Unvested awards, tax lots, and detailed tax splits can be described in notes;
 do not include future vesting again in opening account balances.
 
-## Create and edit scenarios
+## Create and edit annual plans
 
-**Annual plans** is the home page. Each saved scenario shows its title,
+Open **Scenarios → Plans → Annual plans**. Each saved scenario shows its title,
 location, tax year, each person's employer, annual cash surplus or deficit,
 and cash available for spending after funding goals.
 
 - Choose **New scenario** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
-- Choose **Edit** to open a scenario. **Assumptions** contains the year, state,
-  family facts, employment, compensation, and expenses. **Savings goals** sets
-  additional savings and the intended use of retained shares and contributions. **Results** shows its calculated views.
-- **Calculate** opens Results without saving. **Save** calculates and saves the
-  current inputs and matching results, then opens Results.
+- Choose **Edit** to open an annual plan. Plans owns its label, year and calculation
+  actions. Edit family and residence facts in Household, compensation in Work,
+  expenses in Spending, and saving instructions in Investments. The persistent
+  banner identifies the annual case; these edits do not change shared defaults.
+- Return to **Plans** for **Calculate**, which shows results without saving.
+  **Save** calculates and saves the current inputs and matching results.
 - **Unsaved changes** identifies edits that are not in the shared database.
   A separate notice identifies results that need recalculation.
 
@@ -133,7 +215,7 @@ exists. **Refresh** updates the library without replacing your drafts.
 
 ## Set savings goals
 
-In the editor's **Savings goals** section:
+While editing an annual plan, open **Investments → Saving instructions**:
 
 1. Choose monthly or annual entry and enter planned cash amounts. Use **Move up**
    to set the funding order. The app stores exact annual amounts and that order.
@@ -257,7 +339,7 @@ through year end. NSO exercises and share sales are not supported.
 
 ## Delete a scenario
 
-In **Annual plans**, choose **Delete** on the scenario's card. Check the name
+In **Scenarios → Plans → Annual plans**, choose **Delete** on the scenario's card. Check the name
 in the confirmation dialog, then choose **Delete scenario** or **Cancel**.
 Deletion removes the shared record for both people and its draft in your current
 session. It cannot be undone. Download a backup first if you want to keep a copy.
@@ -268,7 +350,7 @@ An open draft in another session can only be saved as a new scenario.
 
 ## Back up and recover
 
-In the editor's **Results → Backups** section, download the last calculated scenario as
+In the annual plan's **Plans → Backups** section, download the last calculated scenario as
 JSON. To restore it, upload the file under **Backups** in Annual plans or the editor and choose
 **Load backup as new draft**, then calculate and save. Imports are limited to
 1 MB and the supported schema. Keep these files private: they contain household
@@ -295,7 +377,7 @@ again. Keep the named volume when recreating the container.
 
 Local credentials are in the ignored `.env` and `.streamlit/secrets.toml` files.
 The app uses a separate account with read/create/update/delete access to scenarios,
-goals, scenario-goal references, household defaults, and wealth snapshots.
+goals, scenario-goal references, household defaults, wealth snapshots, and planning inputs.
 These files and the volume belong to this computer; cloning the repository does
 not copy the database. Local access does not provide a shared hosted URL.
 
@@ -315,7 +397,8 @@ JSON backups are also available in the app.
 Create a dedicated database, then apply `scripts/schema.sql` using its SQL
 console or a PostgreSQL client. The app never creates or migrates tables on
 startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on
-`scenarios`, `goals`, `scenario_goals`, `household`, and `wealth_snapshots`,
+`scenarios`, `goals`, `scenario_goals`, `household`, `wealth_snapshots`, and
+`planning_documents`,
 plus schema usage and database connection rights. Use a separate owner for
 schema changes.
 
@@ -330,10 +413,11 @@ verify that it can load it. Use a separate test database for automated tests;
 never use the family database for testing.
 
 For an existing version-two database, reapply `scripts/schema.sql` as its owner
-to add `wealth_snapshots`, then grant those four privileges on the new table to
+to add missing `wealth_snapshots` and `planning_documents` tables, then grant those
+four privileges on the new tables to
 the runtime role. This is an additive setup step; it does not rewrite scenarios,
-household defaults, or goals. If the new table or permissions are missing, Wealth
-reports that it cannot read saved snapshots and retains session drafts. The app
+household defaults, or goals. If a new table or its permissions are missing, that category reports the read
+failure and retains session drafts; other categories remain available. The app
 does not apply schema changes automatically.
 
 ## Migrate a version-one database

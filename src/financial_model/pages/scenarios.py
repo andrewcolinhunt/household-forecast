@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from financial_model.app import scenarios_page
+from financial_model.scenario_pages import workspace
 
-scenarios_page()
+workspace()

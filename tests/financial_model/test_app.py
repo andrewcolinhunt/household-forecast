@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import psycopg
@@ -22,34 +23,84 @@ from financial_model.storage import (
 ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
 
 
+def go(page: AppTest, target: str) -> AppTest:
+    """Exercise the workspace's active category/view and normal rerun lifecycle."""
+    page.run()  # Flush pending widget changes before navigation.
+    if target == "compare":
+        return page.switch_page("src/financial_model/pages/compare.py").run()
+    category = {
+        "editor": "Plans",
+        "scenarios": "Plans",
+        "household": "Household",
+        "goals": "Goals",
+    }.get(target, target)
+    page.session_state["scenario_category"] = category
+    if target == "scenarios":
+        page.session_state["workspace_target"] = "library"
+        page.session_state["workspace_views"] = {"Plans": "library"}
+    elif target == "editor":
+        page.session_state["workspace_target"] = "annual"
+    elif target == "household":
+        page.session_state["workspace_target"] = "library"
+    return page.switch_page("src/financial_model/pages/scenarios.py").run()
+
+
 def editor(scenario: Scenario | None = None) -> AppTest:
-    """Start a distinct browser session, optionally loading imported input facts."""
+    """Start a distinct annual draft in the Plans assembly view."""
     page = AppTest.from_file(str(ENTRY), default_timeout=60)
     if scenario:
         page.session_state["pending_inputs"] = scenario
     page.run()
     if not scenario:
         press(page, "New scenario")
-    page.switch_page("src/financial_model/pages/editor.py")
     assert not page.exception
     return page
 
 
 def press(page: AppTest, label: str) -> AppTest:
+    """Use explicit owner navigation before actions formerly on one mixed form."""
+    if label in {
+        "Calculate",
+        "Save",
+        "Save as new scenario",
+        "Keep snapshot",
+        "Compare results",
+        "Discard edits and reload",
+    }:
+        go(page, "editor")
+    elif label == "Add goal to scenario":
+        go(page, "Investments")
     next(button for button in page.button if button.label == label).click().run()
     assert not page.exception
-    # AppTest does not retain the destination of an in-app st.switch_page call.
-    target = {
-        "Annual plans": "scenarios",
-        "Compare annual plans": "compare",
-        "Household": "household",
-        "Goals": "goals",
-    }.get(page.title[0].value, "editor")
-    page.switch_page(f"src/financial_model/pages/{target}.py")
+    if page.title and page.title[0].value == "Compare annual plans":
+        page.switch_page("src/financial_model/pages/compare.py")
     return page
 
 
 def widget(page: AppTest, kind: str, prefix: str):
+    """Locate existing annual controls in their new owning category."""
+    category = None
+    match = re.match(r"adult_(\d)_(.*)", prefix)
+    if match:
+        adult, field = match.groups()
+        category = "Household" if field in {"name", "age", "wa_cares"} else "Work"
+        prefix = f"{field}_adult_{adult}_"
+    elif prefix.startswith(("living_", "eligible_care", "ca_renter")):
+        category = "Spending"
+    elif prefix.startswith(("allocation_", "priority_", "remove_allocation_")):
+        category = "Investments"
+    elif prefix.startswith(("state_", "children_")):
+        category = "Household"
+    elif prefix.startswith("rsu_taxes_from_shares"):
+        category = "Work"
+    elif prefix.startswith(("name_", "year_")):
+        category = "Plans"
+    if category and (
+        page.session_state["scenario_category"] != category
+        or page.session_state["workspace_target"] != "annual"
+    ):
+        page.session_state["workspace_target"] = "annual"
+        go(page, category)
     return next(
         item for item in getattr(page, kind) if (item.key or "").startswith(prefix)
     )
@@ -85,7 +136,7 @@ def test_rsu_tax_toggle_preserves_drafts_saves_and_comparison(
     assert original.result.rsu_tax_funding > 0
     widget(page, "toggle", "rsu_taxes_from_shares").set_value(False).run()
     for target in ("household", "editor"):
-        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+        go(page, target)
     assert not widget(page, "toggle", "rsu_taxes_from_shares").value
     assert page.session_state["document"] == original
     assert load_scenario(database_url, original.id) == original
@@ -110,14 +161,14 @@ def test_rsu_tax_toggle_preserves_drafts_saves_and_comparison(
     second = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     press(second, "Edit")
     assert not widget(second, "toggle", "rsu_taxes_from_shares").value
-    second.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(second, "scenarios")
     press(second, "Duplicate")
     assert not widget(second, "toggle", "rsu_taxes_from_shares").value
     widget(second, "toggle", "rsu_taxes_from_shares").set_value(True).run()
     press(second, "Save")
     assert len(list_scenarios(database_url)) == 2
     assert load_scenario(database_url, original.id) == saved
-    second.switch_page("src/financial_model/pages/compare.py").run()
+    go(second, "compare")
     assert not second.exception
     assert any(
         "RSU taxes paid from: Cash" in choice.label for choice in second.checkbox
@@ -144,7 +195,7 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     press(page, "Keep snapshot")
     widget(page, "number_input", "adult_0_cash_pay").set_value(120000.0)
     press(page, "Calculate")
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     select_comparison(page, ["snapshot", "draft"])
     assert not page.exception
     assert not page.error
@@ -173,8 +224,8 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert "$220,000</span>" in rendered
     assert "+$1,667</span>" not in rendered
     assert page.session_state["document"] == calculated
-    page.switch_page("src/financial_model/pages/household.py").run()
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "household")
+    go(page, "compare")
     assert page.radio(key="display_period").value == "Annual"
     assert not page.exception
 
@@ -194,7 +245,7 @@ def test_main_comparison_rejects_mismatched_snapshots(
     else:
         widget(page, "selectbox", "year_").select(2026)
         press(page, "Calculate")
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     select_comparison(page, ["snapshot", "draft"])
     assert not page.exception
     assert not page.tabs
@@ -247,7 +298,7 @@ def test_main_duplicate_gets_new_identity(
     page = editor(scenario)
     press(page, "Save")
     original = list_scenarios(database_url)[0]
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     press(page, "Duplicate")
     assert len(list_scenarios(database_url)) == 1
     press(page, "Save")
@@ -270,9 +321,9 @@ def test_main_two_sessions_conflict_keeps_draft(
     )
     first, second = editor(), editor()
     for page in [first, second]:
-        page.switch_page("src/financial_model/pages/scenarios.py").run()
+        go(page, "scenarios")
         page.button(key=f"edit_{saved.id}").click().run()
-        page.switch_page("src/financial_model/pages/editor.py")
+        go(page, "editor")
     widget(first, "number_input", "adult_0_cash_pay").set_value(120000.0)
     press(first, "Save")
     widget(second, "number_input", "adult_0_cash_pay").set_value(130000.0)
@@ -303,7 +354,7 @@ def test_reopening_updated_scenario_refreshes_only_unchanged_drafts(
         widget(page, "text_input", "adult_0_employer").set_value("New employer").run()
     elif edit == "invalid":
         widget(page, "text_input", "children_").set_value("not an age").run()
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     inputs = Scenario.model_validate(scenario.model_dump() | {"name": "New label"})
     latest = update_scenario(
         database_url,
@@ -332,7 +383,7 @@ def test_reopening_updated_scenario_refreshes_only_unchanged_drafts(
         updated = load_scenario(database_url, saved.id)
         assert updated.inputs.name == "New label"
         assert updated.inputs.adults[0].employer == "New employer"
-        page.switch_page("src/financial_model/pages/scenarios.py").run()
+        go(page, "scenarios")
         assert "Adult A: New employer" in "\n".join(
             e.proto.body for e in page.get("html")
         )
@@ -366,9 +417,9 @@ def test_main_old_result_is_labeled_and_recalculated(
     result = evaluate_scenario(scenario).model_copy(update={"model_revision": "old"})
     saved = create_scenario(database_url, SavedScenario(inputs=scenario, result=result))
     page = editor()
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     page.button(key=f"edit_{saved.id}").click().run()
-    page.switch_page("src/financial_model/pages/editor.py")
+    go(page, "editor")
     assert any("older calculation rules" in warning.value for warning in page.warning)
     press(page, "Calculate")
     assert not page.warning
@@ -417,9 +468,9 @@ def test_main_invalid_backup_keeps_existing_results(
 def test_main_starts_with_library() -> None:
     page = AppTest.from_file(str(ENTRY)).run()
     assert not page.exception
-    assert page.title[0].value == "Annual plans"
+    assert page.subheader[0].value == "Combined plans"
     assert not page.number_input
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     assert page.title[0].value == "Compare annual plans"
     assert not page.number_input
 
@@ -430,9 +481,10 @@ def test_editor_preserves_unsubmitted_inputs_across_pages(scenario: Scenario) ->
     original = page.session_state["document"]
     widget(page, "number_input", "adult_0_cash_pay").set_value(130000.0).run()
     widget(page, "text_input", "children_").set_value("not an age").run()
+    go(page, "editor")
     assert any("Inputs changed" in item.value for item in page.info)
     for target in ("compare", "scenarios", "editor"):
-        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+        go(page, target)
         assert not page.exception
     assert widget(page, "number_input", "adult_0_cash_pay").value == 130000
     assert widget(page, "text_input", "children_").value == "not an age"
@@ -455,7 +507,7 @@ def test_compare_saved_scenarios_without_opening_editor(
         database_url, SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
     )
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     select_comparison(page, [str(first.id), str(second.id)])
     assert not page.exception
     assert [tab.label for tab in page.tabs] == [
@@ -464,8 +516,8 @@ def test_compare_saved_scenarios_without_opening_editor(
         "Tax breakdown",
         "Goal breakdown",
     ]
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "scenarios")
+    go(page, "compare")
     assert page.session_state["comparison_selection"] == [
         str(first.id),
         str(second.id),
@@ -490,15 +542,15 @@ def test_editor_keeps_separate_drafts_for_saved_scenarios(
     )
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     page.button(key=f"edit_{first.id}").click().run()
-    page.switch_page("src/financial_model/pages/editor.py")
+    go(page, "editor")
     widget(page, "number_input", "adult_0_cash_pay").set_value(150000.0).run()
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     page.button(key=f"edit_{second.id}").click().run()
-    page.switch_page("src/financial_model/pages/editor.py")
+    go(page, "editor")
     assert widget(page, "number_input", "adult_0_cash_pay").value == 100000
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     page.button(key=f"edit_{first.id}").click().run()
-    page.switch_page("src/financial_model/pages/editor.py")
+    go(page, "editor")
     assert widget(page, "number_input", "adult_0_cash_pay").value == 150000
     assert load_scenario(database_url, first.id).inputs.adults[0].cash_pay == 100000
 
@@ -513,7 +565,7 @@ def test_delete_requires_confirmation_and_cleans_session(
     saved = list_scenarios(database_url)[0]
     press(page, "Keep snapshot")
     page.session_state["comparison_selection"] = [str(saved.id)]
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     press(page, "Delete")
     assert load_scenario(database_url, saved.id) is not None
     press(page, "Cancel")
@@ -570,6 +622,7 @@ def test_deleted_scenario_cannot_be_saved_back_by_another_session(
     delete_scenario(database_url, saved.id, saved.revision)
     page.run()
     assert any("was deleted" in warning.value for warning in page.warning)
+    go(page, "editor")
     assert next(button for button in page.button if button.label == "Save").disabled
     press(page, "Save as new scenario")
     assert list_scenarios(database_url)[0].id != saved.id
@@ -596,7 +649,7 @@ def test_compare_multiple_scenarios_retains_selection(
     monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: records)
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     ids = [str(record.id) for record in records[:count]]
     select_comparison(page, ids)
     assert not page.exception
@@ -637,7 +690,7 @@ def test_compare_multiple_scenarios_retains_selection(
     assert page.session_state["comparison_selection"] == ids
     assert [checkbox.key for checkbox in page.checkbox] == checklist_order
     for target in ("scenarios", "compare"):
-        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+        go(page, target)
     assert page.session_state["comparison_selection"] == ids
     assert not page.toggle
     assert not page.selectbox
@@ -653,8 +706,8 @@ def test_compare_multiple_scenarios_retains_selection(
     assert not page.tabs
     assert not any(b.key.startswith("compare_move_") for b in page.button)
     assert any("Select at least two" in info.value for info in page.info)
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "scenarios")
+    go(page, "compare")
     assert page.session_state["comparison_selection"] == []
     assert all(not checkbox.value for checkbox in page.checkbox)
     assert len(records) == 5
@@ -673,7 +726,7 @@ def test_compare_pending_scenario_respects_order_and_limit(
     ids = [str(document.id) for document in documents]
     page.session_state["comparison_selection"] = ids[:4][::-1]
     page.session_state["pending_comparison"] = ids[4]
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     assert not page.exception
     assert page.session_state["comparison_selection"] == ids[:4][::-1]
     assert page.checkbox(key=f"compare_check_{ids[4]}").disabled
@@ -758,15 +811,14 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     assert "Spending" in rendered
     assert 'class="fm-deficit"' in rendered
     assert [tab.label for tab in page.tabs] == [
-        "Assumptions",
-        "Savings goals",
-        "Results",
+        "Plans",
         "Cash overview",
         "Equity overview",
         "Tax breakdown",
         "Goal breakdown",
+        *app_categories()[1:],
     ]
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     assert not page.warning
     rendered = "\n".join(e.proto.body for e in page.get("html"))
     assert "Spending" in rendered
@@ -786,7 +838,7 @@ def test_employer_metadata_survives_navigation_save_reload_and_copy(
     widget(page, "checkbox", "adult_1_not_working").check().run()
     assert widget(page, "text_input", "adult_1_employer").disabled
     for target in ("scenarios", "editor"):
-        page.switch_page(f"src/financial_model/pages/{target}.py").run()
+        go(page, target)
     assert (
         widget(page, "text_input", "adult_0_employer").value.strip() == "Example & Co"
     )
@@ -810,7 +862,7 @@ def test_employer_metadata_survives_navigation_save_reload_and_copy(
     assert widget(second, "text_input", "adult_0_employer").value == "Example & Co"
     assert widget(second, "checkbox", "adult_1_not_working").value
     assert not any("Unsaved changes" in c.value for c in second.caption)
-    second.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(second, "scenarios")
     press(second, "Duplicate")
     assert widget(second, "text_input", "name_").value == "Synthetic baseline"
     assert widget(second, "text_input", "adult_0_employer").value == "Example & Co"
@@ -831,7 +883,7 @@ def test_employer_changes_refresh_labels_without_changing_selection(
     monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: tuple(records))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     ids = [str(record.id) for record in records]
     assert page.session_state["comparison_selection"] == ids
     assert "Acme" in page.checkbox[0].label
@@ -885,7 +937,7 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     press(page, "Save")
     original = list_scenarios(database_url)[0]
     assert original.inputs.name == ""
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     html = "\n".join(e.proto.body for e in page.get("html"))
     assert '<h3 class="fm-scenario-name">California</h3>' in html
     press(page, "Duplicate")
@@ -893,11 +945,11 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     widget(page, "number_input", "living_rent").set_value(4000.0)
     press(page, "Save")
     assert len(list_scenarios(database_url)) == 2
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     assert "Rent: $4,000/mo" in page.checkbox[0].label
     assert "Rent: $0/mo" in page.checkbox[1].label
     selected = page.session_state["comparison_selection"]
-    page.switch_page("src/financial_model/pages/editor.py").run()
+    go(page, "editor")
     widget(page, "text_input", "name_").set_value("Higher rent")
     press(page, "Save")
     widget(page, "selectbox", "state_").select("WA").run()
@@ -910,7 +962,7 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     press(page, "Save as new scenario")
     assert len(list_scenarios(database_url)) == 3
     assert page.session_state["document"].inputs.name == ""
-    page.switch_page("src/financial_model/pages/compare.py").run()
+    go(page, "compare")
     assert page.session_state["comparison_selection"] == selected
     assert any("Same assumptions" in checkbox.label for checkbox in page.checkbox)
     assert load_scenario(database_url, original.id) == original
@@ -935,8 +987,8 @@ def test_allocation_units_preserve_cents_and_edits_across_navigation(scenario):
         str(page.session_state["document"].inputs.allocation_plan.fixed_cash)
         == "1200.01"
     )
-    page.switch_page("src/financial_model/pages/compare.py").run()
-    page.switch_page("src/financial_model/pages/editor.py").run()
+    go(page, "compare")
+    go(page, "editor")
     assert (
         str(
             page.session_state["draft_data"]["allocation_plan"]["rows"][0][
@@ -954,11 +1006,11 @@ def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     page = editor(scenario)
     widget(page, "number_input", "adult_0_cash_pay").set_value(120000).run()
-    page.switch_page("src/financial_model/pages/goals.py").run()
+    go(page, "goals")
     next(w for w in page.text_input if w.label == "New goal name").set_value("House")
     press(page, "Add goal")
     house = str(list_goals(database_url)[0].id)
-    page.switch_page("src/financial_model/pages/editor.py").run()
+    go(page, "editor")
     assert widget(page, "number_input", "adult_0_cash_pay").value == 120000
     assert not any(b.label == "Edit goals" for b in page.button)
     press(page, "Add goal to scenario")
@@ -971,13 +1023,13 @@ def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
         ).cash_amount
         == 6000
     )
-    page.switch_page("src/financial_model/pages/goals.py").run()
+    go(page, "goals")
     widget(page, "text_input", f"goal_name_{house}").set_value("Home deposit")
     next(b for b in page.button if b.key == f"rename_goal_{house}").click().run()
     assert not page.error
     # Goal names change globally; the saved snapshot and financial facts do not.
     assert list_scenarios(database_url) == (saved,)
-    page.switch_page("src/financial_model/pages/editor.py").run()
+    go(page, "editor")
     assert (
         next(
             r
@@ -1027,37 +1079,35 @@ def test_household_defaults_apply_only_to_new_scenarios(
     page = editor()
     assert widget(page, "text_input", "adult_0_name").value == "Alex"
     widget(page, "number_input", "adult_0_cash_pay").set_value(123456).run()
-    page.switch_page("src/financial_model/pages/household.py").run()
+    go(page, "household")
     widget(page, "text_input", "household_name_0").set_value("Alexandra").run()
     press(page, "Save household")
     assert load_household(database_url).revision == profile.revision + 1
     assert load_scenario(database_url, original.id) == original
-    page.switch_page("src/financial_model/pages/editor.py").run()
+    go(page, "editor")
     assert widget(page, "text_input", "adult_0_name").value == "Alex"
     assert widget(page, "number_input", "adult_0_cash_pay").value == 123456
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
+    go(page, "scenarios")
     press(page, "New scenario")
     assert widget(page, "text_input", "adult_0_name").value == "Alexandra"
     assert widget(page, "selectbox", "year_").value == 2026
 
 
+def app_categories():
+    from financial_model.scenario_pages import CATEGORIES
+
+    return list(CATEGORIES)
+
+
 def test_editor_sections_keep_drafts_and_switch_to_results(scenario):
     page = editor(scenario)
-    assert [t.label for t in page.tabs] == ["Assumptions", "Savings goals", "Results"]
+    assert [t.label for t in page.tabs] == app_categories()
     widget(page, "number_input", "adult_0_cash_pay").set_value(123456).run()
-    # Tracking the section must not reset inputs in the other tab.
-    page.session_state[f"editor_section_{page.session_state['editor_epoch']}"] = (
-        "Savings goals"
-    )
-    page.run()
     widget(page, "number_input", "allocation_cash_").set_value(500).run()
     press(page, "Calculate")
     assert page.session_state["document"].inputs.adults[0].cash_pay == 123456
     assert page.session_state["document"].inputs.allocation_plan.fixed_cash == 6000
-    assert (
-        page.session_state[f"editor_section_{page.session_state['editor_epoch']}"]
-        == "Results"
-    )
+    assert page.session_state["scenario_category"] == "Plans"
 
 
 @pytest.mark.integration
@@ -1082,11 +1132,11 @@ def test_removing_allocation_does_not_delete_shared_goal(
 
 def test_household_draft_survives_page_changes_and_reports_invalid_ages():
     page = editor()
-    page.switch_page("src/financial_model/pages/household.py").run()
+    go(page, "household")
     widget(page, "text_input", "household_name_0").set_value("Alex").run()
     widget(page, "number_input", "household_age_0").set_value(32).run()
-    page.switch_page("src/financial_model/pages/scenarios.py").run()
-    page.switch_page("src/financial_model/pages/household.py").run()
+    go(page, "scenarios")
+    go(page, "household")
     assert widget(page, "text_input", "household_name_0").value == "Alex"
     assert widget(page, "number_input", "household_age_0").value == 32
     press(page, "Save household")
@@ -1120,8 +1170,8 @@ def test_goal_priority_edit_preserves_amounts_and_survives_navigation(scenario):
     assert updated[0]["goal"]["id"] == str(travel.id)
     assert Decimal(updated[0]["cash_amount"]) == 132000
     assert updated[-1]["cash_amount"] is None
-    page.switch_page("src/financial_model/pages/compare.py").run()
-    page.switch_page("src/financial_model/pages/editor.py").run()
+    go(page, "compare")
+    go(page, "editor")
     press(page, "Calculate")
     document = page.session_state["document"]
     assert document.inputs.allocation_plan.rows[0].goal.id == travel.id
@@ -1166,7 +1216,7 @@ def test_cash_priority_saves_and_loads_in_another_session(
     press(fresh, "Edit")
     assert widget(fresh, "button", f"priority_up_{travel.id}").disabled
     assert not widget(fresh, "button", f"priority_up_{base.rows[0].goal.id}").disabled
-    fresh.switch_page("src/financial_model/pages/goals.py").run()
+    go(fresh, "goals")
     assert not any(
         (item.key or "").startswith(f"goal_name_{base.rows[1].goal.id}")
         for item in fresh.text_input

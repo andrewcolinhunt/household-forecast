@@ -30,9 +30,19 @@ def local_preview(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app, "_database_url", lambda: None)
 
 
+def go(page: AppTest, target: str) -> AppTest:
+    page.run()
+    page.session_state["scenario_category"] = (
+        "Plans" if target == "scenarios" else "Wealth"
+    )
+    page.session_state["workspace_target"] = "library"
+    page.session_state["workspace_views"] = {"Wealth": "library", "Plans": "library"}
+    return page.switch_page(PAGES + "scenarios.py").run()
+
+
 def library() -> AppTest:
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    page.switch_page(PAGES + "wealth.py").run()
+    go(page, "wealth")
     assert not page.exception
     return page
 
@@ -40,9 +50,6 @@ def library() -> AppTest:
 def press(page: AppTest, label: str) -> AppTest:
     next(b for b in page.button if b.label == label).click().run()
     assert not page.exception
-    # AppTest needs the destination pinned after the app's switch_page call.
-    target = "wealth" if page.title[0].value == "Wealth" else "wealth_editor"
-    page.switch_page(PAGES + target + ".py")
     return page
 
 
@@ -95,8 +102,8 @@ def test_wealth_local_collection_retains_invalid_edits_and_separate_types(
     assert raw(page)["accounts"][0]["holdings"][0]["asset_class"] == "fixed_income"
     field(page, "text_input", "Asset value ($)").set_value("bad amount").run()
     assert page.error
-    page.switch_page(PAGES + "scenarios.py").run()
-    page.switch_page(PAGES + "wealth.py").run()
+    go(page, "scenarios")
+    go(page, "wealth")
     resume = next(b.label for b in page.button if b.label.startswith("Resume"))
     press(page, resume)
     assert field(page, "text_input", "Asset value ($)").value == "bad amount"
@@ -256,7 +263,7 @@ def test_wealth_reopen_refreshes_only_unchanged_drafts(
         field(page, "text_input", "Reported account value ($)").set_value(
             "invalid"
         ).run()
-    page.switch_page(PAGES + "wealth.py").run()
+    go(page, "wealth")
     changed = WealthSnapshot.model_validate(
         saved.snapshot.model_dump() | {"name": "Renamed elsewhere"}
     )
@@ -300,7 +307,7 @@ def test_wealth_delete_confirmation_and_stale_revision(
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     original = saved_example(database_url)
     page = press(library(), "Edit")
-    page.switch_page(PAGES + "wealth.py").run()
+    go(page, "wealth")
     press(page, "Delete")
     press(page, "Cancel")
     assert load_wealth_snapshot(database_url, original.id) == original

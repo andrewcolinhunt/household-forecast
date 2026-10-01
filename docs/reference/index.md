@@ -64,6 +64,78 @@ separate controlled values. Mixed or unknown retirement tax treatment remains
 unresolved; dollar-level tax splits and cost basis are not part of this inventory
 schema. Owners are copied labels, not live references to household names or goals.
 
+## Planning input models
+
+`financial_model.planning` contains immutable inputs for future planning. None of
+these models calculates financial outcomes or calls the annual tax engine.
+
+| Type | Content |
+| --- | --- |
+| `Exploration[T]` | Nullable central value, optional paired lower/upper alternatives, notes |
+| `TimeAnchor` | Calendar year, or offset from household adult 1, adult 2 or both retirements |
+| `WorkAssumptions` | Money year, two ordered adult work slots, retirement choices, employment phases, vesting, dated option events and RSU tax funding |
+| `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions and optional survivor budget |
+| `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and employer-stock intention |
+| `EconomicAssumptions` | Inflation and nominal compound return outlooks, fees, forecast horizon, optional annual volatility and correlation |
+| `LongevityAssumptions` | Two adult slots with planning ages, or mortality-sampling intent and table metadata |
+| `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
+| `ProfileSelection` | Source UUID/revision/name plus an exact validated copy of a profile |
+| `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed adult/owner mappings and portfolio account IDs |
+| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 1, UUID, revision, aware timestamp and discriminated `inputs` |
+
+The six input kinds are `work`, `spending`, `investments`, `economy`, `longevity`,
+and `plan`. Household is embedded, not a seventh library. Nested Plans and duplicate
+component kinds are rejected. Existing annual and Wealth document schemas stay
+unchanged.
+
+Money uses finite decimal strings in USD, with at most two decimal places. Blank
+is `null`. A money reference year identifies purchasing power; it does not establish
+a snapshot date, age reference year or tax year. Nominal vesting and contribution
+fields retain their explicit convention. Planning years extend beyond 2026, and
+planning ages extend beyond the annual calculator's age-64 boundary.
+
+Growth is a finite fraction greater than -1; allocation fractions stay within
+0–1. Ranges require either no bounds or both bounds satisfying lower ≤ central ≤
+upper. A range has no probability distribution or weight. Combination checks use
+central values; a future analyzer must recheck each explored configuration.
+
+Work and recurring spending intervals are start-inclusive, end-exclusive.
+`TimeAnchor.resolve()` performs date resolution only. The `both` anchor uses the
+later retirement year; missing required dates remain unresolved. Spending checks
+inspect entered change boundaries for negative consumption without creating a
+financial projection. Replacements affect only the baseline.
+
+Portfolio mixes use equities, fixed income and cash, totaling exactly 1. A gradual
+policy records `linear_then_hold` interpolation intent; no portfolio path is
+computed. Economy returns use `nominal_compound_before_fees_and_taxes`, distinct
+from arithmetic means of annual random returns. Volatility and correlation order
+is equities, fixed income, cash, inflation. Entered correlation matrices must be
+4×4, finite, symmetric, diagonal 1, bounded by [-1, 1], and positive semidefinite.
+A missing matrix remains unknown.
+
+`missing_details(inputs)` reports capture omissions and combination conflicts.
+`select_profile()` and `replace_profile()` copy validated contents. Replacing Work
+or Longevity clears adult alignment. `replace_wealth()` clears portfolio membership,
+owner mappings and reserved cash. Row IDs must belong to the embedded snapshot;
+names and positions are never used as automatic identity matches.
+
+`copy_annual_inputs()` returns unsaved Work, Spending and Investments profiles with
+annual ID, revision, year and input digest as provenance. It copies one year of
+compensation and vesting, multiplies monthly consumption by 12, and copies saving
+instructions. Annual calculated taxes, surplus and saving totals are excluded.
+
+`financial_model.planning_storage` provides category-filtered
+`list_planning_documents`, `load_planning_document`, `create_planning_document`,
+`update_planning_document`, and `delete_planning_document`. The `planning_documents`
+table stores canonical JSONB documents. Updates require a matching ID, revision and
+kind; deleted records cannot be recreated by update. Embedded source and goal
+identities are provenance, not foreign-key dependencies or permission to recreate
+catalogue records.
+
+`import_planning_backup(bytes) -> PlanningInputs` validates the declared envelope,
+version, payload and 1 MB limit, then discards the outer identity/revision. Embedded
+copies and their provenance survive; the import does not populate source libraries.
+
 ## Calculate a scenario
 
 ```python

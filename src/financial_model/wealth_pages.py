@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 from typing import Any, get_args
 from uuid import uuid4
 
 import psycopg
 import streamlit as st
 
+from financial_model import input_forms as forms
+from financial_model.scenario_pages import category_link, navigate
 from financial_model.schemas import Household
 from financial_model.setup_pages import _setup_error
 from financial_model.storage import (
@@ -36,9 +37,6 @@ from financial_model.wealth import (
     WealthSnapshot,
 )
 
-PAGE_DIR = Path(__file__).with_name("pages")
-WEALTH_PAGE = PAGE_DIR / "wealth.py"
-WEALTH_EDITOR = PAGE_DIR / "wealth_editor.py"
 LABELS = {
     "401k": "401(k)",
     "403b": "403(b)",
@@ -107,7 +105,7 @@ def _open(
         _activate(str(record.id))
     else:
         _new_draft(record.snapshot if record else None, None if duplicate else record)
-    st.switch_page(str(WEALTH_EDITOR))
+    navigate("Wealth", target="library", view="editor")
 
 
 def _read(dsn: str | None) -> tuple[SavedWealthSnapshot, ...]:
@@ -146,31 +144,18 @@ def _owners(dsn: str | None) -> list[str]:
 def _text(
     row: dict[str, Any], field: str, label: str, *, optional: bool = False
 ) -> None:
-    """Collect a short label while preserving blank optional values as unknown."""
-    value = st.text_input(
-        label, value=row.get(field) or "", max_chars=80, key=_key(row, field)
-    )
-    row[field] = value.strip() or None if optional else value
+    """Capture labels before a sub-tab switch removes the field."""
+    forms.text(row, field, label, _key(row, field), optional=optional)
 
 
 def _notes(row: dict[str, Any], field: str, label: str) -> None:
-    """Keep source and coverage explanations in the raw draft."""
-    row[field] = st.text_area(
-        label, value=row.get(field, ""), max_chars=4000, key=_key(row, field)
-    )
+    """Keep raw source notes independently of widget lifetime."""
+    forms.text(row, field, label, _key(row, field), multiline=True)
 
 
 def _amount(row: dict[str, Any], field: str, label: str) -> None:
-    """Preserve decimal text and invalid edits without rounding through a float."""
-    value = row.get(field)
-    entered = st.text_input(
-        label,
-        value="" if value is None else str(value),
-        key=_key(row, field),
-        placeholder="Unknown",
-        help="USD, for example 1250.00. No commas or currency symbol. Leave blank if unknown; enter 0 for zero.",
-    )
-    row[field] = entered.strip() or None
+    """Retain unknown and invalid money text across navigation."""
+    forms.money(row, field, label, _key(row, field))
 
 
 def _choice(
@@ -183,7 +168,14 @@ def _choice(
         index=options.index(row[field]),
         format_func=_label,
         key=_key(row, field),
+        on_change=forms.capture,
+        args=(row, field, _key(row, field)),
     )
+
+
+def _date_text(value: date | None) -> str | None:
+    """Serialize a selected optional date into the durable raw buffer."""
+    return value.isoformat() if value else None
 
 
 def _date(
@@ -198,6 +190,8 @@ def _date(
         max_value=date(9999, 12, 31),
         key=_key(row, field),
         disabled=disabled,
+        on_change=forms.capture,
+        args=(row, field, _key(row, field), _date_text),
     )
     row[field] = selected.isoformat() if selected else None
 
@@ -212,6 +206,8 @@ def _owner(row: dict[str, Any], owners: list[str]) -> None:
         format_func=lambda v: v or "Unknown",
         accept_new_options=True,
         key=_key(row, "owner"),
+        on_change=forms.capture,
+        args=(row, "owner", _key(row, "owner")),
     )
 
 
@@ -267,6 +263,8 @@ def _account_fields(row: dict[str, Any], owners: list[str]) -> bool:
         "Combined accounts, not yet itemized",
         value=row["is_combined"],
         key=_key(row, "is_combined"),
+        on_change=forms.capture,
+        args=(row, "is_combined", _key(row, "is_combined")),
     )
     _notes(row, "source_notes", "Account source / notes")
     return _holdings(row)
@@ -291,6 +289,8 @@ def _debt_fields(row: dict[str, Any], owners: list[str]) -> None:
         "Combined debts, not yet itemized",
         value=row["is_combined"],
         key=_key(row, "is_combined"),
+        on_change=forms.capture,
+        args=(row, "is_combined", _key(row, "is_combined")),
     )
     _notes(row, "source_notes", "Debt source / notes")
 
@@ -442,7 +442,7 @@ def _backups(
                 )
         if st.button("Load wealth backup as new draft", disabled=imported is None):
             _new_draft(imported)
-            st.switch_page(str(WEALTH_EDITOR))
+            navigate("Wealth", target="library", view="editor")
         st.caption(
             "Exports include current valid edits, even in local preview. Imports do not overwrite saved snapshots."
         )
@@ -455,9 +455,7 @@ def wealth_editor_page(dsn: str | None) -> None:
         _new_draft()
     draft = st.session_state["wealth_drafts"][st.session_state["wealth_active"]]
     data, loaded = draft["data"], draft["loaded"]
-    st.page_link(
-        str(WEALTH_PAGE), label="All wealth snapshots", icon=":material/arrow_back:"
-    )
+    category_link("All wealth snapshots", "Wealth", target="library", view="library")
     st.title("Edit wealth snapshot" if loaded else "New wealth snapshot")
     _metadata(data, saved=loaded is not None)
     changed = _contents(data, _owners(dsn))
@@ -583,7 +581,7 @@ def wealth_page(dsn: str | None) -> None:
                     f"Resume {name} · {draft_id[:8]}", key=f"wealth_resume_{draft_id}"
                 ):
                     _activate(draft_id)
-                    st.switch_page(str(WEALTH_EDITOR))
+                    navigate("Wealth", target="library", view="editor")
     _backups(None)
     if pending := st.session_state.get("wealth_pending_delete"):
         _confirm_delete(dsn, pending)

@@ -9,6 +9,7 @@ import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
+from financial_model import input_forms as forms
 from financial_model.schemas import Goal, Household, SavedScenario
 from financial_model.storage import (
     RevisionConflictError,
@@ -35,7 +36,7 @@ def _setup_error(error: Exception) -> None:
 
 def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     """Edit the family defaults that new scenarios copy, retaining an editing buffer."""
-    st.title("Household")
+    st.title("Shared Household defaults")
     st.caption(
         "Defaults for new scenarios. Saved scenarios keep their own assumptions."
     )
@@ -79,42 +80,38 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
             )
             st.rerun()
     epoch = st.session_state.get("household_epoch", 0)
-    year = st.selectbox(
+    forms.choice(
+        raw,
+        "tax_year",
         "Ages at year end",
         [2025, 2026],
-        index=[2025, 2026].index(raw["tax_year"]),
-        key=f"household_year_{epoch}",
+        f"household_year_{epoch}",
+        labels={2025: "2025", 2026: "2026"},
     )
-    people = []
     for index, column in enumerate(st.columns(2)):
         person = raw["adults"][index]
         with column:
             st.subheader(f"Adult {index + 1}")
-            name = st.text_input(
-                "Name",
-                value=person.get("name", ""),
-                max_chars=80,
-                key=f"household_name_{index}_{epoch}",
-            )
-            age = st.number_input(
+            forms.text(person, "name", "Name", f"household_name_{index}_{epoch}")
+            forms.number(
+                person,
+                "age",
                 "Age at year end",
-                min_value=18,
-                max_value=64,
-                value=person.get("age"),
-                key=f"household_age_{index}_{epoch}",
+                f"household_age_{index}_{epoch}",
+                integer=True,
+                minimum=18,
+                maximum=64,
+                optional=True,
             )
-            people.append({"name": name, "age": age})
-    ages = st.text_input(
+    raw.setdefault("children_text", ", ".join(str(d["age"]) for d in raw["dependents"]))
+    forms.text(
+        raw,
+        "children_text",
         "Qualifying children's ages",
-        value=raw.get(
-            "children_text", ", ".join(str(d["age"]) for d in raw["dependents"])
-        ),
-        key=f"household_children_{epoch}",
-        help="Ages at year end, separated by commas. Leave blank for none.",
+        f"household_children_{epoch}",
+        help_text="Ages at year end, separated by commas. Leave blank for none.",
     )
     st.caption("Filing status: married filing jointly.")
-    raw = dict(raw, tax_year=year, adults=people, children_text=ages)
-    st.session_state["household_draft"] = raw
     save, reload = st.columns(2)
     if save.button("Save household", type="primary"):
         _save_household_inputs(dsn, raw)
@@ -155,7 +152,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     """Manage shared goal definitions without changing scenario allocations."""
     st.title("Goals")
     st.caption(
-        "Shared savings goals. Set amounts and funding priority in each scenario's Savings goals tab."
+        "Shared savings goals. Set amounts and funding priority in Investments → Saving instructions."
     )
     with st.form("new_goal", clear_on_submit=True):
         name = st.text_input("New goal name", max_chars=80)

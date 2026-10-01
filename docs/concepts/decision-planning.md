@@ -12,7 +12,8 @@ The intended calculation follows this sequence:
 type → future balances → retirement options.**
 
 The current app implements the annual comparison at the beginning of this
-sequence. Multi-year balances and retirement outcomes remain planned work.
+sequence. It also saves reusable assumptions and named combinations in Scenarios.
+Multi-year balances and retirement outcomes remain planned work.
 
 ## Compare decisions from the same starting point
 
@@ -58,7 +59,8 @@ income, expense, tax, or asset assumption.
 | Planning question | Status |
 | --- | --- |
 | How do supported job and full-year CA/WA alternatives change annual cash, taxes, saving, and equity? | Implemented in the annual model. |
-| How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Planned: starting balances, dated changes, growth assumptions, and multi-year tax treatment. |
+| Can we save and mix work, spending, portfolio, economic and longevity assumptions from a chosen Wealth snapshot? | Implemented as input collection and saved combinations; no projection is calculated. |
+| How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Planned: projecting from captured balances, dated changes and growth assumptions, with multi-year tax treatment. |
 | Can each scenario fund a specified retirement lifestyle, and for how long? | Planned: retirement income, account withdrawals, taxes, and spending over time. |
 | How sensitive is the comparison to returns, inflation, employment changes, or employer-share values? | Planned: comparable alternative assumptions, followed by simulations where useful. |
 
@@ -80,6 +82,18 @@ requires a spending target, income and withdrawal assumptions, and a planning
 horizon; reaching an asset total alone does not establish that someone can
 retire.
 
-The next useful capability is a reconciled projection from today's balances and
+A combined Plan embeds its selected inputs. A later library edit does not change
+that plan; replacing a selection is explicit. This makes alternatives reproducible
+while allowing the same source assumptions to be reused. Household, Work, Spending,
+Investments, Economy and Longevity retain separate meanings. Saving instructions
+allocate additions to goals; portfolio targets describe asset mix; Wealth describes
+what is already owned.
+
+Missing values remain unknown. Input completeness does not establish retirement
+feasibility. Captured lifespan assumptions are different from a future calculated
+age of funding exhaustion, and exploratory ranges are different from calibrated
+probability distributions.
+
+The next calculation capability is a reconciled projection from today's balances and
 the existing annual scenarios. Detailed implementation choices and the proposed
 sequence belong in the private development notes under `_dev`.
