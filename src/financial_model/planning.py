@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import itertools
+import math
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self, TypeVar
@@ -29,7 +31,16 @@ Age = Annotated[int, Field(strict=True, ge=18, le=130)]
 Growth = Annotated[Decimal, Field(gt=-1, allow_inf_nan=False)]
 Nonnegative = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
 Slot = Literal[1, 2]
-Kind = Literal["work", "spending", "investments", "economy", "longevity", "plan"]
+Kind = Literal["work", "spending", "retirement", "investments", "economy", "plan"]
+PROFILE_KINDS: tuple[
+    Literal["work", "spending", "retirement", "investments", "economy"], ...
+] = (
+    "work",
+    "spending",
+    "retirement",
+    "investments",
+    "economy",
+)
 T = TypeVar("T", int, Decimal)
 
 
@@ -39,7 +50,6 @@ class Exploration[T: (int, Decimal)](ValueModel):
     central: T | None = None
     lower: T | None = None
     upper: T | None = None
-    notes: Notes = ""
 
     @model_validator(mode="after")
     def validate_bounds(self) -> Self:
@@ -200,43 +210,25 @@ class OptionEvent(ValueModel):
 
 
 class AdultWork(ValueModel):
-    """A copied adult label, chosen retirement timing, and explicit work phases."""
+    """One adult's compensation schedule, reusable with different retirement dates."""
 
     slot: Slot
     name: Label
-    retirement: Exploration[PlanningYear] = Field(
-        default_factory=Exploration[PlanningYear]
-    )
     phases: tuple[WorkPhase, ...] = ()
     vesting: tuple[Vesting, ...] = ()
     options: tuple[OptionEvent, ...] = ()
 
     @model_validator(mode="after")
     def validate_timeline(self) -> Self:
-        """Reject known overlap and employment continuing past retirement."""
+        """Reject overlapping employment phases."""
         phases = sorted(
             (p for p in self.phases if p.start is not None), key=lambda p: p.start or 0
         )
         for previous, following in itertools.pairwise(phases):
-            end = previous.end or self.retirement.central
+            end = previous.end
             if following.start is not None and (end is None or end > following.start):
                 msg = "Employment phases must not overlap; close the earlier phase."
                 raise ValueError(msg)
-        if self.retirement.central is not None:
-            for phase in phases:
-                if (
-                    phase.status == "working"
-                    and phase.start is not None
-                    and (
-                        phase.start >= self.retirement.central
-                        or (
-                            phase.end is not None
-                            and phase.end > self.retirement.central
-                        )
-                    )
-                ):
-                    msg = "Working phases must finish by the retirement year."
-                    raise ValueError(msg)
         return self
 
 
@@ -319,7 +311,6 @@ class SpendingAssumptions(MonetaryAssumptions):
     baseline: Budget = Field(default_factory=Budget)
     replacements: tuple[BudgetReplacement, ...] = ()
     adjustments: tuple[SpendingAdjustment, ...] = ()
-    survivor: Budget | None = None
 
     @model_validator(mode="after")
     def validate_replacements(self) -> Self:
@@ -410,11 +401,9 @@ class EconomicAssumptions(Assumptions):
     equities: Exploration[Growth] = Field(default_factory=Exploration[Growth])
     fixed_income: Exploration[Growth] = Field(default_factory=Exploration[Growth])
     cash: Exploration[Growth] = Field(default_factory=Exploration[Growth])
-    return_basis: Literal["nominal_compound_before_fees_and_taxes"] = (
-        "nominal_compound_before_fees_and_taxes"
+    return_basis: Literal["nominal_compound_after_fees_before_tax"] = (
+        "nominal_compound_after_fees_before_tax"
     )
-    forecast_years: Annotated[int, Field(strict=True, ge=1, le=150)] | None = None
-    fees: Rate | None = None
     # Order is equities, fixed income, cash, inflation throughout.
     volatility: tuple[
         Nonnegative | None, Nonnegative | None, Nonnegative | None, Nonnegative | None
@@ -448,24 +437,46 @@ class EconomicAssumptions(Assumptions):
         return self
 
 
-class AdultLongevity(ValueModel):
-    """One adult's horizon or classification for a later mortality model."""
+class AdultRetirement(ValueModel):
+    """One adult's retirement timing and lifespan assumptions."""
 
     slot: Slot
     name: Label
+    retirement: Exploration[PlanningYear] = Field(
+        default_factory=Exploration[PlanningYear]
+    )
     age: Exploration[Age] = Field(default_factory=Exploration[Age])
     table_classification: Annotated[str, Field(max_length=120)] = ""
 
 
-class LongevityAssumptions(Assumptions):
-    """Specified planning ages or a request to sample lifespans later."""
+class RetirementBudget(ValueModel):
+    """Continue regular living costs or enter a replacement household total."""
 
-    kind: Literal["longevity"] = "longevity"
+    mode: Literal["unknown", "continue", "replace"] = "unknown"
+    budget: Budget | None = None
+
+    @model_validator(mode="after")
+    def validate_budget(self) -> Self:
+        """Keep continuing costs distinct from unknown or replacement amounts."""
+        if (self.mode == "replace") != (self.budget is not None):
+            msg = "A replacement needs a budget; continuing regular costs does not."
+            raise ValueError(msg)
+        return self
+
+
+class RetirementAssumptions(MonetaryAssumptions):
+    """Retirement timing, household spending, and lifespans in one scenario."""
+
+    kind: Literal["retirement"] = "retirement"
     mode: Literal["ages", "sample"] = "ages"
-    adults: tuple[AdultLongevity, AdultLongevity] = (
-        AdultLongevity(slot=1, name="Adult 1"),
-        AdultLongevity(slot=2, name="Adult 2"),
+    adults: tuple[AdultRetirement, AdultRetirement] = (
+        AdultRetirement(slot=1, name="Adult 1"),
+        AdultRetirement(slot=2, name="Adult 2"),
     )
+    only_adult_1: RetirementBudget = Field(default_factory=RetirementBudget)
+    only_adult_2: RetirementBudget = Field(default_factory=RetirementBudget)
+    both_retired: Budget = Field(default_factory=Budget)
+    survivor: Budget | None = None
     table_basis: Literal["period", "cohort", "unknown"] = "unknown"
 
     @model_validator(mode="after")
@@ -531,7 +542,7 @@ Profile = Annotated[
     | SpendingAssumptions
     | InvestmentAssumptions
     | EconomicAssumptions
-    | LongevityAssumptions,
+    | RetirementAssumptions,
     Field(discriminator="kind"),
 ]
 
@@ -543,6 +554,18 @@ class ProfileSelection(ValueModel):
     source_revision: Annotated[int, Field(strict=True, ge=1)]
     source_name: Label
     inputs: Profile
+    adult_mapping: tuple[Slot, Slot] | None = None
+
+    @model_validator(mode="after")
+    def validate_mapping(self) -> Self:
+        """Require a distinct household person for each scenario adult."""
+        if self.adult_mapping is not None and (
+            set(self.adult_mapping) != {1, 2}
+            or self.inputs.kind not in {"work", "retirement"}
+        ):
+            msg = "Map each Work or Retirement adult to a different household adult."
+            raise ValueError(msg)
+        return self
 
 
 class OwnerBinding(ValueModel):
@@ -559,23 +582,17 @@ class PlanningScenario(Assumptions):
     household: PlanningHousehold = Field(default_factory=PlanningHousehold)
     wealth: SavedWealthSnapshot | None = None
     components: tuple[ProfileSelection, ...] = ()
-    work_adults: tuple[Slot, Slot] | None = None
-    longevity_adults: tuple[Slot, Slot] | None = None
     owners: tuple[OwnerBinding, ...] = ()
     portfolio_accounts: tuple[UUID, ...] = ()
     reserved_cash: Money | None = None
 
     @model_validator(mode="after")
     def validate_bindings(self) -> Self:
-        """Reject duplicate categories and bindings outside the embedded inventory."""
-        kinds = [c.inputs.kind for c in self.components]
-        if len(kinds) != len(set(kinds)):
-            msg = "Choose at most one profile from each category."
+        """Reject repeated sources and bindings outside the embedded inventory."""
+        identities = [c.source_id for c in self.components]
+        if len(identities) != len(set(identities)):
+            msg = "Choose each saved scenario once."
             raise ValueError(msg)
-        for mapping in (self.work_adults, self.longevity_adults):
-            if mapping is not None and set(mapping) != {1, 2}:
-                msg = "Map each profile adult to a different household adult."
-                raise ValueError(msg)
         accounts = set()
         rows = set()
         if self.wealth:
@@ -598,13 +615,30 @@ class PlanningScenario(Assumptions):
             raise ValueError(msg)
         return self
 
+    @property
+    def combination_count(self) -> int:
+        """Count named-scenario combinations, without expanding numeric ranges."""
+        return math.prod(
+            sum(c.inputs.kind == kind for c in self.components)
+            for kind in PROFILE_KINDS
+        )
+
+    def combinations(self) -> Iterator[PlanningScenario]:
+        """Yield independent selections for later analysis, without forecasts."""
+        choices = [
+            tuple(c for c in self.components if c.inputs.kind == kind)
+            for kind in PROFILE_KINDS
+        ]
+        for components in itertools.product(*choices):
+            yield self.model_copy(update={"components": components})
+
 
 PlanningInputs = Annotated[
     WorkAssumptions
     | SpendingAssumptions
     | InvestmentAssumptions
     | EconomicAssumptions
-    | LongevityAssumptions
+    | RetirementAssumptions
     | PlanningScenario,
     Field(discriminator="kind"),
 ]
@@ -615,7 +649,7 @@ class SavedPlanningDocument(ValueModel):
     """Versioned, portable input document shared by persistence and backups."""
 
     document_type: Literal["planning_document"] = "planning_document"
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     id: UUID = Field(default_factory=uuid4)
     revision: Annotated[int, Field(strict=True, ge=1)] = 1
     updated_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -642,8 +676,6 @@ def replace_profile(
         *[c for c in plan.components if c.inputs.kind != document.inputs.kind],
         selection,
     )
-    if document.inputs.kind in {"work", "longevity"}:
-        data[f"{document.inputs.kind}_adults"] = None
     return PlanningScenario.model_validate(data)
 
 
@@ -775,8 +807,6 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
         if inputs.rsu_taxes_from_shares is None:
             details.append("Choose how RSU taxes are funded.")
         for adult in inputs.adults:
-            if adult.retirement.central is None:
-                details.append(f"{adult.name}: retirement year is unknown.")
             if not adult.phases:
                 details.append(f"{adult.name}: employment timeline is unknown.")
             for i, phase in enumerate(adult.phases, 1):
@@ -809,13 +839,6 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
                 details.append(
                     f"{adult.name}: gaps in employment are unknown intervals."
                 )
-            if (
-                phases
-                and phases[-1].end is not None
-                and adult.retirement.central is not None
-                and phases[-1].end < adult.retirement.central
-            ):
-                details.append(f"{adult.name}: timeline ends before retirement.")
             if not adult.vesting:
                 details.append(
                     f"{adult.name}: vesting schedule unknown; enter zero explicitly if none."
@@ -829,9 +852,7 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
                 details.append(f"{adult.name}: option event year needs input.")
     elif isinstance(inputs, SpendingAssumptions):
         if inputs.baseline.amount.central is None:
-            details.append("Baseline annual spending is unknown.")
-        if inputs.survivor is None or inputs.survivor.amount.central is None:
-            details.append("Survivor spending is unresolved.")
+            details.append("Regular living costs need an amount.")
         if any(r.budget.amount.central is None for r in inputs.replacements):
             details.append("Replacement budgets need amounts.")
         if any(a.amount.central is None for a in inputs.adjustments):
@@ -862,11 +883,22 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
                 details.append(
                     f"{field.replace('_', ' ').capitalize()} outlook is unknown."
                 )
-        if inputs.forecast_years is None:
-            details.append("Forecast horizon is unknown.")
-        if inputs.fees is None:
-            details.append("Investment fees are unknown.")
-    elif isinstance(inputs, LongevityAssumptions):
+    elif isinstance(inputs, RetirementAssumptions):
+        for retiree in inputs.adults:
+            if retiree.retirement.central is None:
+                details.append(f"{retiree.name}: retirement year needs input.")
+        for retiree, field in zip(
+            inputs.adults, ("only_adult_1", "only_adult_2"), strict=True
+        ):
+            choice = getattr(inputs, field)
+            if choice.mode == "unknown" or (
+                choice.budget and choice.budget.amount.central is None
+            ):
+                details.append(f"Choose living costs with only {retiree.name} retired.")
+        if inputs.both_retired.amount.central is None:
+            details.append("Living costs with both retired need an amount.")
+        if inputs.survivor is None or inputs.survivor.amount.central is None:
+            details.append("Living costs after one person dies need an amount.")
         if inputs.mode == "ages":
             details.extend(
                 f"{a.name}: planning age is unknown."
@@ -888,7 +920,15 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
                 if not a.table_classification
             )
     elif isinstance(inputs, PlanningScenario):
-        details.extend(_plan_details(inputs))
+        choices = [
+            tuple(c for c in inputs.components if c.inputs.kind == kind) or (None,)
+            for kind in PROFILE_KINDS
+        ]
+        for selection in itertools.product(*choices):
+            case = inputs.model_copy(
+                update={"components": tuple(c for c in selection if c is not None)}
+            )
+            details.extend(_plan_details(case))
     return tuple(dict.fromkeys(details))
 
 
@@ -972,7 +1012,7 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
     """Check copied inputs together without consulting mutable source libraries."""
     details = []
     profiles = {c.inputs.kind: c.inputs for c in plan.components}
-    for kind in ("work", "spending", "investments", "economy", "longevity"):
+    for kind in PROFILE_KINDS:
         if kind not in profiles:
             details.append(f"Choose {kind} assumptions.")
         else:
@@ -1001,44 +1041,16 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
     }
     if len(years) > 1:
         details.append("Money reference years differ; amounts have not been rebased.")
+    selections = {c.inputs.kind: c for c in plan.components}
     retirements: list[int | None] = [None, None]
-    work = profiles.get("work")
-    if isinstance(work, WorkAssumptions):
-        if plan.work_adults is None:
-            details.append("Review Work adult alignment in Household.")
+    retirement = profiles.get("retirement")
+    if isinstance(retirement, RetirementAssumptions):
+        mapping = selections["retirement"].adult_mapping
+        if mapping is None:
+            details.append("Match Retirement people in Household.")
         else:
-            for adult, slot in zip(work.adults, plan.work_adults, strict=True):
+            for adult, slot in zip(retirement.adults, mapping, strict=True):
                 retirements[slot - 1] = adult.retirement.central
-                if (
-                    plan.wealth
-                    and adult.retirement.central is not None
-                    and adult.retirement.central > plan.wealth.snapshot.as_of.year
-                ):
-                    phases = [p for p in adult.phases if p.start is not None]
-                    if not any(
-                        p.start is not None
-                        and p.start <= plan.wealth.snapshot.as_of.year
-                        and (p.end is None or p.end > plan.wealth.snapshot.as_of.year)
-                        for p in phases
-                    ):
-                        details.append(
-                            f"{adult.name}: employment at the starting date is unknown."
-                        )
-    retirement_pair = (retirements[0], retirements[1])
-    spending = profiles.get("spending")
-    if isinstance(spending, SpendingAssumptions):
-        details.extend(_spending_timing(spending, retirement_pair))
-    investments = profiles.get("investments")
-    if isinstance(investments, InvestmentAssumptions):
-        details.extend(_investment_timing(investments, retirement_pair))
-    longevity = profiles.get("longevity")
-    if isinstance(longevity, LongevityAssumptions):
-        if plan.longevity_adults is None:
-            details.append("Review Longevity adult alignment in Household.")
-        elif longevity.mode == "ages":
-            for lifespan, slot in zip(
-                longevity.adults, plan.longevity_adults, strict=True
-            ):
                 age = household.adults[slot - 1].age
                 if (
                     age is not None
@@ -1048,12 +1060,58 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
                     age += plan.wealth.snapshot.as_of.year - household.reference_year
                 if (
                     age is not None
-                    and lifespan.age.central is not None
-                    and lifespan.age.central < age
+                    and adult.age.central is not None
+                    and adult.age.central < age
                 ):
                     details.append(
-                        f"Longevity conflict: {lifespan.name}'s planning age precedes starting age."
+                        f"Lifespan conflict: {adult.name}'s planning age precedes starting age."
                     )
+    work = profiles.get("work")
+    if isinstance(work, WorkAssumptions):
+        mapping = selections["work"].adult_mapping
+        if mapping is None:
+            details.append("Match Work people in Household.")
+        else:
+            for worker, slot in zip(work.adults, mapping, strict=True):
+                year = retirements[slot - 1]
+                phases = sorted(
+                    (
+                        p
+                        for p in worker.phases
+                        if p.start is not None and (year is None or p.start < year)
+                    ),
+                    key=lambda p: p.start or 0,
+                )
+                if (
+                    year is not None
+                    and phases
+                    and phases[-1].end is not None
+                    and phases[-1].end < year
+                ):
+                    details.append(
+                        f"{worker.name}: work schedule ends before retirement."
+                    )
+                if (
+                    plan.wealth
+                    and year is not None
+                    and year > plan.wealth.snapshot.as_of.year
+                    and not any(
+                        p.start is not None
+                        and p.start <= plan.wealth.snapshot.as_of.year
+                        and (p.end is None or p.end > plan.wealth.snapshot.as_of.year)
+                        for p in phases
+                    )
+                ):
+                    details.append(
+                        f"{worker.name}: employment at the starting date is unknown."
+                    )
+    retirement_pair = (retirements[0], retirements[1])
+    spending = profiles.get("spending")
+    if isinstance(spending, SpendingAssumptions):
+        details.extend(_spending_timing(spending, retirement_pair))
+    investments = profiles.get("investments")
+    if isinstance(investments, InvestmentAssumptions):
+        details.extend(_investment_timing(investments, retirement_pair))
     if plan.wealth is None:
         details.append("Choose a starting Wealth snapshot.")
     else:

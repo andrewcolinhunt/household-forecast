@@ -13,8 +13,8 @@ from psycopg.types.json import Jsonb
 from financial_model.planning import (
     EconomicAssumptions,
     InvestmentAssumptions,
-    LongevityAssumptions,
     PlanningScenario,
+    RetirementAssumptions,
     SavedPlanningDocument,
     SpendingAssumptions,
     WorkAssumptions,
@@ -44,7 +44,7 @@ from financial_model.storage import (
         SpendingAssumptions,
         InvestmentAssumptions,
         EconomicAssumptions,
-        LongevityAssumptions,
+        RetirementAssumptions,
         PlanningScenario,
     ],
 )
@@ -98,7 +98,7 @@ def test_kind_cannot_change_and_source_deletion_does_not_mutate_plan(database_ur
 
 @pytest.mark.parametrize(
     "change",
-    [{"schema_version": 2}, {"document_type": "wealth_snapshot"}, {"extra": True}],
+    [{"schema_version": 1}, {"document_type": "wealth_snapshot"}, {"extra": True}],
 )
 def test_import_rejects_bad_envelopes(change):
     document = SavedPlanningDocument(inputs=EconomicAssumptions(name="Example"))
