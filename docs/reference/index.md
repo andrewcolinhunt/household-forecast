@@ -103,8 +103,24 @@ a replacement amount. After-death costs take precedence over the two-person
 budget; dated extras remain separate.
 
 Portfolio mixes use equities, fixed income and cash, totaling exactly 1. A gradual
-policy records `linear_then_hold` interpolation intent; no portfolio path is
-computed. Economy returns use `nominal_compound_after_fees_before_tax`, distinct
+policy records an interpolation choice; no portfolio path is computed yet.
+Within each pair of dated targets, let `t` be elapsed time divided by the interval
+length, from 0 to 1. The saved choices specify the fraction of the allocation
+change completed:
+
+| Stored choice | Intended fraction of change |
+| --- | --- |
+| `linear_then_hold` (default) | `t` |
+| `log_then_hold` | `log(1 + 3*t) / log(4)` |
+| `exponential_then_hold` | `(4**t - 1) / 3` |
+
+The fixed curvature avoids another user input. These are modeling choices, not
+industry-prescribed paths. Each asset's target is its starting fraction plus the
+chosen fraction of the change to its ending fraction. Each curve reaches both
+endpoints exactly; the final target is held after the final date. Existing saved
+linear choices remain unchanged, and constant policies do not use this field.
+
+Economy returns use `nominal_compound_after_fees_before_tax`, distinct
 from arithmetic means of annual random returns. Volatility and correlation order
 is equities, fixed income, cash, inflation. Entered correlation matrices must be
 4×4, finite, symmetric, diagonal 1, bounded by [-1, 1], and positive semidefinite.

@@ -542,7 +542,11 @@ def _cash_capture(
 
 
 def saving_instructions(
-    data: dict[str, Any], scope: str, goals: tuple[Goal, ...]
+    data: dict[str, Any],
+    scope: str,
+    goals: tuple[Goal, ...],
+    *,
+    surplus: bool = False,
 ) -> bool:
     """Edit goal amounts and destinations, returning whether row order changed."""
     catalogue = {str(g.id): g for g in goals}
@@ -556,7 +560,9 @@ def saving_instructions(
     )
     factor = 12 if unit == "Monthly" else 1
     st.caption(
-        "Cash goals are funded in order. Available to spend is unallocated cash, not an addition to the Spending budget."
+        "Surplus is cash left after taxes, contributions, planned spending, and topping up the cash reserve. Fixed cash goals are funded first."
+        if surplus
+        else "Cash goals are funded in order. Available to spend is unallocated cash, not an addition to the Spending budget."
     )
     changed = False
     remove_id = move_id = None
@@ -567,7 +573,25 @@ def saving_instructions(
         ).name
         for r in rows
     }
-    names[remainder] = "Available to spend"
+    if surplus:
+        selected = st.selectbox(
+            "Surplus goes to",
+            list(names),
+            index=list(names).index(remainder),
+            format_func=names.__getitem__,
+            key=f"surplus_goal_{scope}",
+        )
+        if selected != remainder:
+            for row in rows:
+                if row["goal"]["id"] == remainder:
+                    row["cash_amount"] = "0"
+                elif row["goal"]["id"] == selected:
+                    row["cash_amount"] = None
+            rows.sort(key=lambda r: r["cash_amount"] is None)
+            remainder = selected
+            changed = True
+    else:
+        names[remainder] = "Available to spend"
     table_header(
         (
             "Goal",
@@ -605,7 +629,7 @@ def saving_instructions(
                     else dollars(Decimal(str(value)) * factor)
                 )
         else:
-            cash.caption("Leftover cash")
+            cash.caption("All surplus" if surplus else "Leftover cash")
         with shares:
             percent(
                 row,

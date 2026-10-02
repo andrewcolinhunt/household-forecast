@@ -340,7 +340,9 @@ class InvestmentAssumptions(MonetaryAssumptions):
     saving: AllocationPlan | None = None
     policy: Literal["constant", "gradual", "undecided"] = "undecided"
     checkpoints: tuple[AllocationCheckpoint, ...] = ()
-    interpolation: Literal["linear_then_hold"] = "linear_then_hold"
+    interpolation: Literal[
+        "linear_then_hold", "log_then_hold", "exponential_then_hold"
+    ] = "linear_then_hold"
     rebalancing: Literal["annual", "flows_only", "undecided"] = "undecided"
     reserved_cash: Money | None = None
 

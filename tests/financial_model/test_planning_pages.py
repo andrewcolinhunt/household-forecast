@@ -21,11 +21,13 @@ from financial_model.planning import (
 from financial_model.planning_storage import (
     create_planning_document,
     delete_planning_document,
+    import_planning_backup,
     list_planning_documents,
     load_planning_document,
     update_planning_document,
 )
 from financial_model.scenario_pages import CATEGORIES
+from financial_model.schemas import AllocationPlan
 from financial_model.storage import create_wealth_snapshot
 from financial_model.wealth import (
     AccountPosition,
@@ -181,6 +183,73 @@ def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
     assert next(
         b for b in page.button if b.label == "Load input backup as new draft"
     ).disabled
+
+
+@pytest.mark.integration
+def test_investment_surplus_destination_survives_save_and_reopen(
+    database_url, monkeypatch
+):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Investments")
+    press(page, "New Investments assumptions")
+    field(page, "checkbox", "Include saving instructions").check().run()
+    saving = AllocationPlan.model_validate(raw(page, "investments")["saving"])
+    retirement = str(saving.retirement_goal_id)
+    old_remainder = saving.spending_goal_id
+    field(page, "selectbox", "Surplus goes to").select(retirement).run()
+    assert not page.exception
+    assert not page.error
+    assert any(c.value == "All surplus" for c in page.caption)
+    press(page, "Save inputs")
+    (saved,) = list_planning_documents(database_url, "investments")
+    assert saved.inputs.saving.spending_goal_id == saving.retirement_goal_id
+    assert (
+        next(
+            r for r in saved.inputs.saving.rows if r.goal.id == old_remainder
+        ).cash_amount
+        == 0
+    )
+    assert sum(r.rsu_rate for r in saved.inputs.saving.rows) == 1
+    tab(page, "Spending")
+    tab(page, "Investments")
+    assert field(page, "selectbox", "Surplus goes to").value == retirement
+    field(page, "selectbox", "Surplus goes to").select(str(old_remainder)).run()
+    assert not page.exception
+    reverted = AllocationPlan.model_validate(raw(page, "investments")["saving"])
+    assert reverted.spending_goal_id == old_remainder
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "shape", ["linear_then_hold", "log_then_hold", "exponential_then_hold"]
+)
+def test_glide_shape_survives_save_backup_and_plan_selection(
+    database_url, monkeypatch, shape
+):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Investments")
+    press(page, "New Investments assumptions")
+    assert not any(w.label == "Glide-path shape" for w in page.selectbox)
+    field(page, "selectbox", "Allocation policy").select("gradual").run()
+    assert field(page, "selectbox", "Glide-path shape").value == "linear_then_hold"
+    field(page, "selectbox", "Glide-path shape").select(shape).run()
+    press(page, "Save inputs")
+    (saved,) = list_planning_documents(database_url, "investments")
+    assert saved.inputs.interpolation == shape
+    assert import_planning_backup(saved.model_dump_json().encode()) == saved.inputs
+    plan = PlanningScenario(name="Plan", components=(select_profile(saved),))
+    assert plan.components[0].inputs.interpolation == shape
+    press(page, "All Investments inputs")
+    assert any(planning_pages.GLIDE_SHAPES[shape] in t.value for t in page.caption)
+    press(page, "Edit")
+    assert field(page, "selectbox", "Glide-path shape").value == shape
+    field(page, "selectbox", "Allocation policy").select("constant").run()
+    assert not any(w.label == "Glide-path shape" for w in page.selectbox)
+    field(page, "selectbox", "Allocation policy").select("gradual").run()
+    assert field(page, "selectbox", "Glide-path shape").value == shape
+    assert not page.exception
 
 
 @pytest.mark.integration

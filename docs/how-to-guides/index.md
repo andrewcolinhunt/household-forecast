@@ -59,7 +59,12 @@ use a mortality model later; no samples run yet.
 
 In Investments, saving instructions assign new money to goals. Portfolio strategy
 sets the mix of stocks, bonds, and cash, totaling 100%. Choose a constant mix or a
-gradual transition. Allocation dates can follow either person's retirement or the
+**Glide path**: enter a starting mix and a final mix with their dates. Choose
+**Linear** for steady change, **Logarithmic** for faster change at the beginning,
+or **Exponential** for faster change near the end. Each reaches the final mix on
+the finish date and holds it afterward. Extra dated targets use the same shape
+between each pair.
+Allocation dates can follow either person's retirement or the
 later retirement date. Starting balances and their investment mix remain in Wealth.
 Enter the cash reserve here: cash kept outside the portfolio allocation, in the
 scenario's reference-year dollars. It is already part of Wealth, not an extra asset
@@ -67,6 +72,10 @@ or expense. Enter zero if none. All accounts in the chosen snapshot are included
 Each allocation row shows its starting time and stock, bond, and cash percentages.
 Use **Details** to change its date or retirement anchor. Saving instructions use
 inline up/down arrows to change funding priority without changing amounts.
+**Surplus goes to** chooses the goal for cash left after taxes, contributions,
+planned spending, cash-reserve top-ups, and fixed cash goals. Choose Retirement to
+save all that remains. Retirement is a goal, not a promise that all saving fits
+into tax-advantaged accounts. These are saved instructions for the future forecast.
 
 In Economy, enter inflation and average yearly compound returns. Returns include
 inflation and are **after fees, before tax**. Ranges are alternative assumptions,

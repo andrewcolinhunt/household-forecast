@@ -70,6 +70,11 @@ LABELS = {
     "retirement": "Retirement",
     "plan": "Plans",
 }
+GLIDE_SHAPES = {
+    "linear_then_hold": "Linear — steady change",
+    "log_then_hold": "Logarithmic — faster at first",
+    "exponential_then_hold": "Exponential — faster near the end",
+}
 
 
 def _activate(draft_id: str) -> None:
@@ -212,7 +217,10 @@ def _summary(inputs: PlanningInputs) -> str:
             for c in inputs.checkpoints
             if c.mix
         ]
-        return " → ".join(mixes) or "Portfolio allocation not entered"
+        summary = " → ".join(mixes) or "Portfolio allocation not entered"
+        if inputs.policy == "gradual":
+            return f"{GLIDE_SHAPES[inputs.interpolation]} · {summary}"
+        return summary
     if isinstance(inputs, EconomicAssumptions):
         return " · ".join(
             f"{label}: {f'{value.central:.1%}' if value.central is not None else 'not entered'}"
@@ -305,6 +313,9 @@ def _review(inputs: PlanningInputs, label: str) -> None:
             goals = {row["goal"]["id"]: row["goal"]["name"] for row in saving["rows"]}
             for field in ("retirement_goal_id", "option_goal_id"):
                 saving[field] = goals[saving[field]]
+            for row in saving["rows"]:
+                if row["cash_amount"] is None:
+                    row["cash_amount"] = "All surplus"
         st.caption(
             "Recorded values only. Rates are decimal fractions (0.05 = 5%). Money follows the stated reference year and each amount's basis."
         )
@@ -1108,7 +1119,7 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
     ):
         app._read_goal_catalogue(dsn)
         if forms.saving_instructions(
-            data["saving"], scope, st.session_state.get("goals", ())
+            data["saving"], scope, st.session_state.get("goals", ()), surplus=True
         ):
             _changed_rows()
     st.subheader("Cash reserve")
@@ -1126,10 +1137,27 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
         "Allocation policy",
         ("undecided", "constant", "gradual"),
         f"policy_{scope}",
+        labels={
+            "undecided": "Undecided",
+            "constant": "Keep the same allocation",
+            "gradual": "Glide path",
+        },
     )
     st.caption(
-        "Stocks, bonds, and cash must total 100%. A gradual change follows the targets below. Starting balances and how they are invested stay in Wealth."
+        "For a glide path, enter a starting mix and a final mix with their dates. Stocks, bonds, and cash must total 100%; the cash reserve is separate."
     )
+    if data["policy"] == "gradual":
+        forms.choice(
+            data,
+            "interpolation",
+            "Glide-path shape",
+            tuple(GLIDE_SHAPES),
+            f"glide_shape_{scope}",
+            labels=GLIDE_SHAPES,
+        )
+        st.caption(
+            "The shape changes how quickly you move toward the final mix. All shapes reach it on the finish date and hold it afterward. With extra dated targets, the same shape applies between each pair."
+        )
     if data["checkpoints"]:
         forms.table_header(
             ("Starting when", "Stocks (%)", "Bonds (%)", "Cash (%)", "", ""),
