@@ -797,13 +797,11 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (shortfall, other))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
-    assert page.metric[0].label == "Cash surplus / deficit per year"
-    assert (
-        page.metric[0].value
-        == f"\N{MINUS SIGN}${abs(app.cash_surplus(shortfall.result)):,.0f}"
-    )
-    assert page.metric[1].label == "Spending per year"
-    assert page.metric[1].value == app._number(app.remaining_cash(shortfall))
+    shown = [t.value for t in page.text]
+    assert "Cash surplus / deficit ($/year)" in shown
+    assert f"\N{MINUS SIGN}${abs(app.cash_surplus(shortfall.result)):,.0f}" in shown
+    assert "Spending ($/year)" in shown
+    assert app._number(app.remaining_cash(shortfall)) in shown
     assert any("Funding shortfall" in caption.value for caption in page.caption)
     press(page, "Edit")
     assert not page.warning
@@ -857,7 +855,7 @@ def test_employer_metadata_survives_navigation_save_reload_and_copy(
     rendered = "\n".join(e.proto.body for e in second.get("html"))
     assert "Adult A: Example &amp; Co" in rendered
     assert "Adult B: Not working" in rendered
-    assert '<h3 class="fm-scenario-name">Synthetic baseline</h3>' in rendered
+    assert '<span class="fm-scenario-name">Synthetic baseline</span>' in rendered
     press(second, "Edit")
     assert widget(second, "text_input", "adult_0_employer").value == "Example & Co"
     assert widget(second, "checkbox", "adult_1_not_working").value
@@ -939,7 +937,7 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     assert original.inputs.name == ""
     go(page, "scenarios")
     html = "\n".join(e.proto.body for e in page.get("html"))
-    assert '<h3 class="fm-scenario-name">California</h3>' in html
+    assert '<span class="fm-scenario-name">California</span>' in html
     press(page, "Duplicate")
     assert widget(page, "text_input", "name_").value == ""
     widget(page, "number_input", "living_rent").set_value(4000.0)
@@ -1170,6 +1168,12 @@ def test_goal_priority_edit_preserves_amounts_and_survives_navigation(scenario):
     assert updated[0]["goal"]["id"] == str(travel.id)
     assert Decimal(updated[0]["cash_amount"]) == 132000
     assert updated[-1]["cash_amount"] is None
+    widget(page, "button", f"priority_down_{travel.id}").click().run()
+    reordered = page.session_state["draft_data"]["allocation_plan"]["rows"]
+    assert reordered[1]["goal"]["id"] == str(travel.id)
+    assert Decimal(reordered[1]["cash_amount"]) == 132000
+    assert widget(page, "button", f"priority_down_{travel.id}").disabled
+    widget(page, "button", f"priority_up_{travel.id}").click().run()
     go(page, "compare")
     go(page, "editor")
     press(page, "Calculate")

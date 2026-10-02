@@ -413,9 +413,47 @@ def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation
         "mode": "continue",
         "budget": None,
     }
-    assert any(
-        e.label == "Range: 90 to 100" and not e.proto.expanded for e in page.expander
+    assert any("Age: 90 to 100" in c.value for c in page.caption)
+    assert not page.error
+
+
+def test_economy_hidden_ranges_preserve_invalid_edits_and_clear_explicitly():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Economy")
+    press(page, "New Economy assumptions")
+    field(page, "text_input", "Stock return (%)").set_value("6.25").run()
+    field(page, "toggle", "Edit ranges").set_value(True).run()
+    lower = next(
+        w for w in page.text_input if (w.key or "").startswith("lower_equities_")
     )
+    lower.set_value("invalid").run()
+    next(
+        w for w in page.text_input if (w.key or "").startswith("upper_equities_")
+    ).set_value("8").run()
+    field(page, "toggle", "Edit ranges").set_value(False).run()
+    assert raw(page, "economy")["equities"] == {
+        "central": "0.0625",
+        "lower": "invalid",
+        "upper": "0.08",
+    }
+    assert page.error
+    tab(page, "Work")
+    tab(page, "Economy")
+    field(page, "toggle", "Edit ranges").set_value(True).run()
+    assert (
+        next(
+            w for w in page.text_input if (w.key or "").startswith("lower_equities_")
+        ).value
+        == "invalid"
+    )
+    next(
+        b for b in page.button if (b.key or "").startswith("clear_range_equities_")
+    ).click().run()
+    assert raw(page, "economy")["equities"] == {
+        "central": "0.0625",
+        "lower": None,
+        "upper": None,
+    }
     assert not page.error
 
 
@@ -473,3 +511,111 @@ def test_plan_alternatives_save_combinations_and_survive_source_deletion(
     ).click().run()
     press(page, "Save inputs")
     assert load_planning_document(database_url, plan.id).inputs.combination_count == 2
+
+
+@pytest.mark.integration
+def test_compact_editors_save_populated_profiles_without_changing_values(
+    database_url, monkeypatch
+):
+    from financial_model.planning import InvestmentAssumptions, RetirementAssumptions
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    budget = {
+        "amount": {"central": "78901.23", "lower": "60000", "upper": "90000"},
+        "essential": "40000",
+        "notes": "Included costs",
+    }
+    work = WorkAssumptions(name="Work").model_dump(mode="json")
+    work["money_year"] = 2026
+    work["adults"][0]["phases"] = [
+        {
+            "start": 2026,
+            "status": "working",
+            "employer": "Example",
+            "cash_pay": "123456.78",
+            "real_growth": {"central": "0.01", "lower": "0", "upper": "0.03"},
+            "employee_401k": "23000.12",
+            "employer_retirement_rate": "0.045",
+        }
+    ]
+    work["adults"][0]["vesting"] = [
+        {
+            "start": 2026,
+            "end": 2030,
+            "amount": "999.123456",
+            "basis": "shares",
+            "notes": "Share schedule",
+        }
+    ]
+    work["adults"][0]["options"] = [
+        {
+            "year": 2028,
+            "award": {
+                "kind": "ISO",
+                "vesting_shares": 500,
+                "strike": "1.123456",
+                "assumed_share_value": "2.654321",
+            },
+        }
+    ]
+    profiles = [
+        WorkAssumptions.model_validate(work),
+        SpendingAssumptions(
+            name="Spending",
+            money_year=2026,
+            baseline=budget,
+            replacements=[
+                {
+                    "label": "Move",
+                    "when": {"kind": "both", "offset": 1},
+                    "budget": budget,
+                }
+            ],
+            adjustments=[
+                {
+                    "label": "Extra",
+                    "amount": {"central": "1000.01", "lower": "500", "upper": "2000"},
+                    "start": {"kind": "year", "year": 2027},
+                    "end": {"kind": "year", "year": 2030},
+                }
+            ],
+        ),
+        RetirementAssumptions(
+            name="Retirement",
+            money_year=2026,
+            both_retired=budget,
+            survivor=budget,
+            only_adult_1={"mode": "continue"},
+            only_adult_2={"mode": "replace", "budget": budget},
+        ),
+        InvestmentAssumptions(
+            name="Investments",
+            money_year=2026,
+            policy="constant",
+            reserved_cash="12345.67",
+            checkpoints=[
+                {
+                    "when": {"kind": "adult_1", "offset": -5},
+                    "mix": {"equities": "0.7", "fixed_income": "0.2", "cash": "0.1"},
+                }
+            ],
+        ),
+        EconomicAssumptions(
+            name="Economy",
+            equities={"central": "0.06789", "lower": "0.03", "upper": "0.09"},
+            volatility=("0.15", "0.04", "0.01", "0.01"),
+            notes="Keep this note",
+        ),
+    ]
+    saved = [
+        create_planning_document(database_url, SavedPlanningDocument(inputs=p))
+        for p in profiles
+    ]
+    page = AppTest.from_file(str(ENTRY)).run()
+    for record in saved:
+        tab(page, record.inputs.kind.capitalize())
+        press(page, "Edit")
+        assert not page.error
+        press(page, "Save inputs")
+        assert load_planning_document(database_url, record.id).inputs == record.inputs
+        assert page.success

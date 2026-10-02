@@ -2,13 +2,51 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import streamlit as st
 
 from financial_model.schemas import Goal, dollars
+
+
+def compact_styles() -> None:
+    """Keep small action buttons descriptive to assistive technology."""
+    st.html("""<style>
+    [class*="st-key-inline_action_"] button { padding: 4px; }
+    [class*="st-key-inline_action_"] [data-testid="stMarkdownContainer"] {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip-path: inset(50%); white-space: nowrap;
+    }
+    </style>""")
+
+
+def table_header(labels: Sequence[str], widths: Sequence[float]) -> None:
+    """Label compact columns once, while individual controls retain their names."""
+    for column, label in zip(st.columns(widths), labels, strict=True):
+        column.text(label)
+
+
+def row_action(
+    label: str,
+    icon: str,
+    key: str,
+    *,
+    disabled: bool = False,
+    help_text: str | None = None,
+) -> bool:
+    """Render an accessible icon action without changing existing widget keys."""
+    with st.container(key=f"inline_action_{key}", width=32):
+        return st.button(
+            label,
+            icon=f":material/{icon}:",
+            key=key,
+            type="tertiary",
+            width=32,
+            disabled=disabled,
+            help=help_text or label,
+        )
 
 
 def capture(
@@ -125,11 +163,12 @@ def number(
     optional: bool = False,
     help_text: str | None = None,
     decimals: int = 2,
+    compact: bool = False,
 ) -> None:
     """Render constrained numeric controls while retaining exact unchanged amounts."""
     original = row.get(field)
     convert = int if integer else float
-    value = (
+    value: Any = (
         convert(original) if original is not None else None if optional else convert(0)
     )
     entered = st.number_input(
@@ -139,6 +178,7 @@ def number(
         max_value=convert(maximum) if maximum is not None else None,
         key=key,
         help=help_text,
+        label_visibility="collapsed" if compact else "visible",
         format="%d" if integer else f"%.{decimals}f",
         on_change=capture,
         args=(row, field, key),
@@ -146,11 +186,17 @@ def number(
     row[field] = original if original is not None and entered == value else entered
 
 
-def percent(row: dict[str, Any], field: str, label: str, key: str) -> None:
+def percent(
+    row: dict[str, Any], field: str, label: str, key: str, *, compact: bool = False
+) -> None:
     """Show decimal fractions as percentages without losing invalid raw edits."""
     original = row.get(field)
     try:
-        shown = "" if original is None else str(Decimal(str(original)) * 100)
+        shown = (
+            ""
+            if original is None
+            else format((Decimal(str(original)) * 100).normalize(), "f")
+        )
     except InvalidOperation:
         shown = str(original)
     value = st.text_input(
@@ -158,10 +204,11 @@ def percent(row: dict[str, Any], field: str, label: str, key: str) -> None:
         value=shown,
         key=key,
         placeholder="Unknown",
+        label_visibility="collapsed" if compact else "visible",
         on_change=capture,
         args=(row, field, key, percent_value),
     )
-    row[field] = percent_value(value)
+    row[field] = original if value == shown else percent_value(value)
 
 
 def money(
@@ -176,7 +223,7 @@ def money(
 ) -> None:
     """Share dollar fields while permitting unknown future amounts."""
     if annual:
-        number(row, field, label, key, help_text=help_text)
+        number(row, field, label, key, help_text=help_text, compact=compact)
     else:
         text(
             row,
@@ -234,46 +281,66 @@ def compensation(data: dict[str, Any], scope: str, *, annual: bool) -> dict[str,
             f"rsu_vesting_{scope}",
             annual=True,
         )
-    else:
-        choice(
-            data,
-            "contribution_basis",
-            "Employee contribution convention",
-            ("real", "nominal", "pay_fraction"),
-            f"contribution_basis_{scope}",
-            labels={
-                "real": "Constant purchasing power",
-                "nominal": "Constant nominal dollars",
-                "pay_fraction": "Percentage of salary and bonus",
-            },
+    try:
+        by_rate = not annual and data["contribution_basis"] == "pay_fraction"
+        employee_value = data.get("contribution_rate" if by_rate else "employee_401k")
+        employee = (
+            "Not entered"
+            if employee_value is None
+            else f"{Decimal(str(employee_value)) * 100:g}% of pay"
+            if by_rate
+            else f"${Decimal(str(employee_value)):,.0f}/year"
         )
-    if not annual and data["contribution_basis"] == "pay_fraction":
-        data["employee_401k"] = None
+        employer_value = data.get("employer_retirement_rate")
+        employer = (
+            "Not entered"
+            if employer_value is None
+            else f"{Decimal(str(employer_value)) * 100:g}% of pay"
+        )
+        st.caption(f"401(k): {employee} · Employer: {employer}")
+    except InvalidOperation:
+        st.caption("Retirement contributions need review.")
+    with st.expander("Retirement contributions"):
+        if not annual:
+            choice(
+                data,
+                "contribution_basis",
+                "Employee contribution convention",
+                ("real", "nominal", "pay_fraction"),
+                f"contribution_basis_{scope}",
+                labels={
+                    "real": "Constant purchasing power",
+                    "nominal": "Constant nominal dollars",
+                    "pay_fraction": "Percentage of salary and bonus",
+                },
+            )
+        if not annual and data["contribution_basis"] == "pay_fraction":
+            data["employee_401k"] = None
+            percent(
+                data,
+                "contribution_rate",
+                "Employee contribution (% of salary and bonus)",
+                f"contribution_rate_{scope}",
+            )
+        else:
+            if not annual:
+                data["contribution_rate"] = None
+            money(
+                data,
+                "employee_401k",
+                "Annual employee 401(k) contributions ($)",
+                f"employee_401k_{scope}",
+                annual=annual,
+                help_text="Traditional pretax contributions. Future limits are not evaluated here.",
+            )
+        if annual:
+            data.setdefault("employer_retirement_rate", "0")
         percent(
             data,
-            "contribution_rate",
-            "Employee contribution (% of salary and bonus)",
-            f"contribution_rate_{scope}",
+            "employer_retirement_rate",
+            "Employer 401(k) contributions (% of salary and bonus)",
+            f"employer_retirement_rate_{scope}",
         )
-    else:
-        if not annual:
-            data["contribution_rate"] = None
-        money(
-            data,
-            "employee_401k",
-            "Annual employee 401(k) contributions ($)",
-            f"employee_401k_{scope}",
-            annual=annual,
-            help_text="Traditional pretax contributions. Future limits are not evaluated here.",
-        )
-    if annual:
-        data.setdefault("employer_retirement_rate", "0")
-    percent(
-        data,
-        "employer_retirement_rate",
-        "Employer 401(k) contributions (% of salary and bonus)",
-        f"employer_retirement_rate_{scope}",
-    )
     return data
 
 
@@ -398,11 +465,12 @@ def annual_household(data: dict[str, Any], ages: dict[str, Any], scope: str) -> 
         labels={"WA": "Washington", "CA": "California"},
     )
     st.caption("Married filing jointly. Ages are at the annual plan's tax-year end.")
-    for i, column in enumerate(st.columns(2)):
-        with column:
-            adult = data.setdefault("adults", [{}, {}])[i]
-            st.subheader(f"Adult {i + 1}")
-            text(adult, "name", "Name", f"name_adult_{i}_{scope}")
+    table_header(("Person", "Age at year end", "WA Cares"), (3, 1.5, 2))
+    for i, adult in enumerate(data.setdefault("adults", [{}, {}])):
+        name, age, exemption = st.columns((3, 1.5, 2), vertical_alignment="center")
+        with name:
+            text(adult, "name", "Name", f"name_adult_{i}_{scope}", compact=True)
+        with age:
             number(
                 adult,
                 "age",
@@ -412,7 +480,9 @@ def annual_household(data: dict[str, Any], ages: dict[str, Any], scope: str) -> 
                 minimum=18,
                 maximum=64,
                 optional=True,
+                compact=True,
             )
+        with exemption:
             check(
                 adult,
                 "wa_cares_exempt",
@@ -498,17 +568,24 @@ def saving_instructions(
         for r in rows
     }
     names[remainder] = "Available to spend"
+    table_header(
+        (
+            "Goal",
+            "Cash ($/month)" if factor == 12 else "Cash ($/year)",
+            "Retained RSUs (%)",
+            "",
+        ),
+        (3, 2, 2, 1.8),
+    )
     for i, row in enumerate(rows):
         goal_id = row["goal"]["id"]
         if goal_id in catalogue:
             row["goal"] = catalogue[goal_id].model_dump(mode="json")
-        label, cash, shares, remove = st.columns([2, 1, 1, 1])
-        label.markdown(f"**{names[goal_id]}**")
+        label, cash, shares, actions = st.columns(
+            [3, 2, 2, 1.8], vertical_alignment="center"
+        )
+        label.text(names[goal_id])
         if goal_id != remainder:
-            if label.button(
-                "Move up", key=f"priority_up_{goal_id}_{scope}", disabled=i == 0
-            ):
-                move_id = goal_id
             with cash:
                 original = Decimal(str(row["cash_amount"]))
                 key = f"allocation_cash_{goal_id}_{unit}_{scope}"
@@ -518,6 +595,7 @@ def saving_instructions(
                     value=float(original / factor),
                     format="%.2f",
                     key=key,
+                    label_visibility="collapsed",
                     on_change=_cash_capture,
                     args=(row, key, factor, original),
                 )
@@ -534,16 +612,34 @@ def saving_instructions(
                 "rsu_rate",
                 "Retained RSU shares (%)",
                 f"allocation_rsu_{goal_id}_{scope}",
+                compact=True,
             )
-        if remove.button(
-            "Remove",
-            key=f"remove_allocation_{goal_id}_{scope}",
-            disabled=goal_id == remainder
-            or bool(Decimal(str(row["cash_amount"] or 0)))
-            or row["rsu_rate"] not in ("0", "0.0", "0.00")
-            or goal_id in (data["retirement_goal_id"], data["option_goal_id"]),
-        ):
-            remove_id = goal_id
+        with actions, st.container(horizontal=True, gap="small"):
+            if row_action(
+                "Move up",
+                "arrow_upward",
+                f"priority_up_{goal_id}_{scope}",
+                disabled=i == 0 or goal_id == remainder,
+            ):
+                move_id = (goal_id, -1)
+            if row_action(
+                "Move down",
+                "arrow_downward",
+                f"priority_down_{goal_id}_{scope}",
+                disabled=i >= len(rows) - 2 or goal_id == remainder,
+            ):
+                move_id = (goal_id, 1)
+            if row_action(
+                "Remove",
+                "close",
+                f"remove_allocation_{goal_id}_{scope}",
+                disabled=goal_id == remainder
+                or bool(Decimal(str(row["cash_amount"] or 0)))
+                or row["rsu_rate"] not in ("0", "0.0", "0.00")
+                or goal_id in (data["retirement_goal_id"], data["option_goal_id"]),
+                help_text="Remove after clearing its allocations and destinations.",
+            ):
+                remove_id = goal_id
     for field, destination_label in (
         ("retirement_goal_id", "Retirement contributions designated for"),
         ("option_goal_id", "Shares from option exercises designated for"),
@@ -577,7 +673,8 @@ def saving_instructions(
         rows[:] = [r for r in rows if r["goal"]["id"] != remove_id]
         changed = True
     if move_id:
-        i = next(i for i, r in enumerate(rows) if r["goal"]["id"] == move_id)
-        rows[i - 1], rows[i] = rows[i], rows[i - 1]
+        goal_id, offset = move_id
+        i = next(i for i, r in enumerate(rows) if r["goal"]["id"] == goal_id)
+        rows[i + offset], rows[i] = rows[i], rows[i + offset]
         changed = True
     return changed

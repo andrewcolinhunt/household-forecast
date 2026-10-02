@@ -88,11 +88,14 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
         f"household_year_{epoch}",
         labels={2025: "2025", 2026: "2026"},
     )
-    for index, column in enumerate(st.columns(2)):
-        person = raw["adults"][index]
-        with column:
-            st.subheader(f"Adult {index + 1}")
-            forms.text(person, "name", "Name", f"household_name_{index}_{epoch}")
+    forms.table_header(("Person", "Age at year end"), (3, 1))
+    for index, person in enumerate(raw["adults"]):
+        name, age = st.columns((3, 1))
+        with name:
+            forms.text(
+                person, "name", "Name", f"household_name_{index}_{epoch}", compact=True
+            )
+        with age:
             forms.number(
                 person,
                 "age",
@@ -102,6 +105,7 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
                 minimum=18,
                 maximum=64,
                 optional=True,
+                compact=True,
             )
     raw.setdefault("children_text", ", ".join(str(d["age"]) for d in raw["dependents"]))
     forms.text(
@@ -154,9 +158,10 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     st.caption(
         "Shared savings goals. Set amounts and funding priority in Investments → Saving instructions."
     )
-    with st.form("new_goal", clear_on_submit=True):
-        name = st.text_input("New goal name", max_chars=80)
-        if st.form_submit_button("Add goal"):
+    with st.form("new_goal", clear_on_submit=True, border=False):
+        name_column, add_column = st.columns((5, 1), vertical_alignment="bottom")
+        name = name_column.text_input("New goal name", max_chars=80)
+        if add_column.form_submit_button("Add goal"):
             try:
                 goal = Goal(name=name)
                 if dsn:
@@ -180,6 +185,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
         for row in draft["draft_data"].get("allocation_plan", {}).get("rows", ())
         if row["cash_amount"] is None
     )
+    forms.table_header(("Goal", "Used in annual plans", ""), (3, 2, 1))
     for goal in st.session_state.get("goals", ()):
         if goal.id not in spending_ids:
             _goal_row(dsn, goal, records)
@@ -202,22 +208,25 @@ def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -
         )
         for draft in st.session_state.get("drafts", {}).values()
     )
-    with st.container(border=True):
-        name = st.text_input(
+    with st.container():
+        label, usage, actions = st.columns((3, 2, 1), vertical_alignment="center")
+        name = label.text_input(
             "Goal name",
             value=goal.name,
             max_chars=80,
             key=f"goal_name_{goal.id}_{goal.revision}",
+            label_visibility="collapsed",
         )
-        st.caption(f"Used in {used} saved scenario{'s' if used != 1 else ''}.")
-        rename, delete = st.columns(2)
-        change = rename.button("Rename", key=f"rename_goal_{goal.id}")
-        remove = delete.button(
-            "Delete unused goal",
-            key=f"delete_goal_{goal.id}",
-            disabled=bool(used or draft_used),
-            help="Remove the goal from saved scenarios and open drafts before deleting it.",
-        )
+        usage.caption(f"{used} saved plan{'s' if used != 1 else ''}")
+        with actions, st.container(horizontal=True, gap="small"):
+            change = forms.row_action("Rename", "check", f"rename_goal_{goal.id}")
+            remove = forms.row_action(
+                "Delete unused goal",
+                "delete",
+                f"delete_goal_{goal.id}",
+                disabled=bool(used or draft_used),
+                help_text="Remove the goal from saved scenarios and open drafts before deleting it.",
+            )
         if not (change or remove):
             return
         try:

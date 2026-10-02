@@ -138,22 +138,26 @@ def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
     from financial_model import app, planning_pages
 
     st.subheader("Annual plan")
-    forms.text(data, "name", "Custom label (optional)", f"name_{scope}")
-    forms.choice(
-        data,
-        "tax_year",
-        "Tax year",
-        [2025, 2026],
-        f"year_{scope}",
-        labels={2025: "2025", 2026: "2026"},
-    )
+    name, year = st.columns((3, 1))
+    with name:
+        forms.text(data, "name", "Custom label (optional)", f"name_{scope}")
+    with year:
+        forms.choice(
+            data,
+            "tax_year",
+            "Tax year",
+            [2025, 2026],
+            f"year_{scope}",
+            labels={2025: "2025", 2026: "2026"},
+        )
     with st.container(horizontal=True):
         for category in ("Household", "Work", "Spending", "Investments"):
             category_link(f"Edit {category}", category)
     st.caption(
         "Household owns family and residence facts; Work owns compensation; Spending owns expenses; Investments owns saving instructions."
     )
-    forms.text(data, "notes", "Scenario notes", f"notes_{scope}", multiline=True)
+    with st.expander("Notes (optional)"):
+        forms.text(data, "notes", "Scenario notes", f"notes_{scope}", multiline=True)
     forms.check(
         data,
         "assumptions_confirmed",
@@ -212,6 +216,8 @@ def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
 def workspace() -> None:
     """Render only the open category, retaining the category and target across Compare."""
     from financial_model import app, planning_pages, setup_pages, wealth_pages
+
+    forms.compact_styles()
 
     # Children's raw text also needs capture when its widget changes with navigation.
     if (

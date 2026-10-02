@@ -14,6 +14,7 @@ import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
+from financial_model import input_forms as forms
 from financial_model.comparison import (
     Period,
     _number,
@@ -691,39 +692,30 @@ def _forget_scenario(record: SavedScenario) -> None:
     ]
 
 
-def _scenario_card(record: SavedScenario, display: ScenarioDisplay) -> None:
-    """Show a saved scenario's outcomes and its edit, copy, and delete actions."""
-    with st.container(border=True):
-        name, cash, balance = st.columns([2, 1, 1], vertical_alignment="center")
-        name.html(f'<div class="fm-scenario-card">{display.html(heading=True)}</div>')
-        gap = record.result.allocations.funding_gap
-        cash.metric(
-            "Cash surplus / deficit per year",
-            _number(cash_surplus(record.result)),
-            help="After taxes, employee 401(k) contributions, and living expenses. Before additional savings and option exercises.",
-        )
-        balance.metric(
-            "Spending per year",
-            _number(remaining_cash(record)),
-            help="Cash left after funding goals in priority order, or an expense deficit.",
-        )
-        if gap:
-            st.caption(
-                "Funding shortfall after taxes, expenses, and planned contributions."
-            )
-        if not _current(record.result):
-            st.caption("Recalculation needed: saved results use older rules.")
-        with st.container(horizontal=True):
-            if st.button("Edit", key=f"edit_{record.id}"):
-                _open_editor(record)
-            if st.button("Duplicate", key=f"duplicate_{record.id}"):
-                _open_editor(record, duplicate=True)
-            if st.button(
-                "Delete",
-                key=f"delete_{record.id}",
-                disabled=not st.session_state["store_available"],
-            ):
-                st.session_state["pending_delete"] = record
+def _scenario_row(record: SavedScenario, display: ScenarioDisplay) -> None:
+    """Align saved annual outcomes with compact edit, copy, and delete controls."""
+    name, cash, balance, actions = st.columns(
+        (4, 2, 2, 1.5), vertical_alignment="center"
+    )
+    name.html(display.html())
+    cash.text(_number(cash_surplus(record.result)))
+    balance.text(_number(remaining_cash(record)))
+    if record.result.allocations.funding_gap:
+        balance.caption("Funding shortfall")
+    if not _current(record.result):
+        name.caption("Recalculation needed: saved results use older rules.")
+    with actions, st.container(horizontal=True, gap="small"):
+        if forms.row_action("Edit", "edit", f"edit_{record.id}"):
+            _open_editor(record)
+        if forms.row_action("Duplicate", "content_copy", f"duplicate_{record.id}"):
+            _open_editor(record, duplicate=True)
+        if forms.row_action(
+            "Delete",
+            "delete",
+            f"delete_{record.id}",
+            disabled=not st.session_state["store_available"],
+        ):
+            st.session_state["pending_delete"] = record
 
 
 def scenarios_page() -> None:
@@ -736,8 +728,13 @@ def scenarios_page() -> None:
     records = st.session_state["records"]
     if not records:
         st.info("No saved scenarios yet. Create one to get started.")
+    if records:
+        forms.table_header(
+            ("Annual plan", "Cash surplus / deficit ($/year)", "Spending ($/year)", ""),
+            (4, 2, 2, 1.5),
+        )
     for record, display in zip(records, scenario_displays(records), strict=True):
-        _scenario_card(record, display)
+        _scenario_row(record, display)
     drafts = [
         draft
         for draft in st.session_state.get("drafts", {}).values()

@@ -6,7 +6,6 @@
 .fm-scenario-record { font-size: .7rem; }
 .fm-scenario-differences:empty { display: none; }
 .fm-scenario-status { display: block; margin-top: 6px; }
-.fm-scenario-card .fm-scenario-name { font-size: 1.3rem; line-height: 1.3; margin: 0; padding: 0; }
 .st-key-comparison_checklist [class*="st-key-comparison_row_"] {
   border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   border-radius: 8px;
