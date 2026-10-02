@@ -92,8 +92,10 @@ A combined Plan embeds its selected inputs. A later library edit does not change
 that plan; replacing a selection is explicit. This makes alternatives reproducible
 while allowing the same source assumptions to be reused. Household, Work, Spending,
 Retirement, Investments, and Economy retain separate meanings. Saving instructions
-allocate additions to goals; portfolio targets describe asset mix; Wealth describes
-what is already owned.
+allocate additions to goals; portfolio targets and cash reserves describe future choices; Wealth records
+named account balances, tax treatment, and starting stock/bond/cash mixes. Balances
+are pooled for household planning; person-specific withdrawal rules remain future
+work.
 
 Missing values remain unknown. Input completeness does not establish retirement
 feasibility. Captured lifespan assumptions are different from a future calculated

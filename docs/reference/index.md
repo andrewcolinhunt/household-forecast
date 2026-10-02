@@ -27,42 +27,35 @@ Share prices allow six decimal places; shares are nonnegative whole numbers.
 | `CashFunding` | Funded fixed goals in priority order and signed remaining cash |
 | `SavedScenario` | Schema version, UUID, revision, update timestamp, inputs and matching result |
 
-## Wealth inventory models
+## Wealth snapshot models
 
-These models reuse the same immutable values and decimal money constraints as
-the annual model. They do not invoke taxes or change scenario schema version 2.
+The models in `financial_model.wealth` reuse immutable values and decimal money
+constraints. Saving them does not run a projection or tax calculation.
 
 | Type | Content |
 | --- | --- |
-| `AssetPosition` | Local UUID, label, instrument type, asset class, nullable value, optional security identifier, source notes |
-| `DirectAssetPosition` | Asset fields plus owner, tax treatment, and optional valuation date |
-| `AccountPosition` | Local UUID, label, institution, owner, account type, tax treatment, nullable reported value, valuation date, combined-account flag, source notes, holdings |
-| `DebtPosition` | Local UUID, label, owner/borrower, debt type, nullable amount owed, valuation date, combined-debt flag, source notes |
-| `WealthSnapshot` | Name, financial `as_of` date, actual/hypothetical kind, USD currency, coverage and source notes, accounts, direct assets, debts |
-| `SavedWealthSnapshot` | `document_type="wealth_snapshot"`, schema version 1, UUID, revision, save timestamp, and a `snapshot` |
+| `AssetMix` | Equities, fixed-income, and cash fractions totaling exactly 1; shared with future allocation targets |
+| `AccountPosition` | Local UUID, label, nullable balance, tax treatment, `invested_in`, and optional mixed allocation |
+| `DebtPosition` | Local UUID, label, nullable amount owed |
+| `WealthSnapshot` | Name, one `as_of` date, USD currency, optional note, accounts, debts |
+| `SavedWealthSnapshot` | `document_type="wealth_snapshot"`, schema version 2, UUID, revision, save timestamp, and snapshot |
 
-Unknown monetary values are `None`, serialized as `null`. Known amounts serialize
-as decimal strings, including explicit zeros. IDs are distinct across every row
-within a snapshot; labels need not be unique. Separate snapshots own their copied
-contents, even if local row IDs match.
+Tax treatment is `unknown`, `taxable`, `tax_deferred`, `roth`, or `hsa`.
+`invested_in` is `unknown`, `cash`, `stocks`, `bonds`, or `mixed`. Only `mixed`
+allows an entered `AssetMix`; a missing split stays unknown. The `allocation`
+property resolves simple choices to stock/bond/cash fractions.
 
-`AccountPosition.known_value` uses the reported total when known; otherwise it
-uses known holdings as a partial amount. `unitemized` is the reported total minus
-known holdings, or `None` if the total is unknown. Holdings cannot exceed a known
-total. Missing amounts are never inferred from account names or categories.
+Balances are counted once. `assets`, `liabilities`, and `net_recorded` are derived
+from entered amounts. `asset_classes` splits balances by the selected mix and
+keeps unclassified amounts under `unknown`. `has_balances` distinguishes unknown
+amounts from explicit zeros. `missing_details` asks for balances, tax treatment,
+and investment mix; known zero balances need no classification.
 
-`WealthSnapshot.assets`, `liabilities`, and `net_recorded` are derived subtotals.
-`asset_classes` includes unitemized amounts separately from classified holdings;
-`account_types` includes direct assets as a separate group. Each grouping sums to
-the known asset subtotal. `has_balances` distinguishes an empty or entirely unknown
-inventory from known zeros. `missing_details` describes incomplete coverage,
-amounts, classifications, owners, tax treatment, and source dates. These properties
-are derived on read and are not independently stored totals.
-
-Account types, tax treatments, instruments, asset classes, and debt types are
-separate controlled values. Mixed or unknown retirement tax treatment remains
-unresolved; dollar-level tax splits and cost basis are not part of this inventory
-schema. Owners are copied labels, not live references to household names or goals.
+Amounts serialize as decimal strings; unknown is `null`. IDs must be distinct
+across accounts and debts. Saved copies retain independent contents. Owners,
+security identifiers, nested holdings, per-account dates, and account-type
+classifications are not part of this schema. Household pooling does not model
+person-specific retirement withdrawals. Cost basis is not yet captured.
 
 ## Planning input models
 
@@ -75,19 +68,18 @@ these models calculates financial outcomes or calls the annual tax engine.
 | `TimeAnchor` | Calendar year, or offset from household adult 1, adult 2 or both retirements |
 | `WorkAssumptions` | Money year, two ordered adult work slots, employment phases, vesting, dated option events and RSU tax funding |
 | `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions |
-| `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and employer-stock intention |
+| `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and nullable `reserved_cash` |
 | `EconomicAssumptions` | Inflation and compound returns after fees and before tax; optional annual volatility and correlation |
 | `RetirementAssumptions` | Two adult slots with retirement years and planning ages; one-person, both-retired and after-death household budgets; optional mortality-sampling intent |
 | `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
 | `ProfileSelection` | Source UUID/revision/name plus an exact validated copy and optional reviewed adult mapping |
-| `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed adult/owner mappings and portfolio account IDs |
-| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 2, UUID, revision, aware timestamp and discriminated `inputs` |
+| `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed Work/Retirement adult mappings |
+| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 3, UUID, revision, aware timestamp and discriminated `inputs` |
 
 The six input kinds are `work`, `spending`, `investments`, `economy`, `retirement`,
 and `plan`. Household is embedded, not a seventh library. Nested Plans and duplicate source IDs are rejected. Several selections of the
 same kind represent alternatives. `combination_count` counts their cross-product;
-`combinations()` yields independent selections without calculating results. Existing annual and Wealth document schemas stay
-unchanged.
+`combinations()` yields independent selections without calculating results. The annual document schema stays unchanged.
 
 Money uses finite decimal strings in USD, with at most two decimal places. Blank
 is `null`. A money reference year identifies purchasing power; it does not establish
@@ -120,9 +112,11 @@ A missing matrix remains unknown.
 
 `missing_details(inputs)` reports capture omissions and combination conflicts.
 `select_profile()` and `replace_profile()` copy validated contents. Replacing Work
-or Retirement clears adult alignment. `replace_wealth()` clears portfolio membership,
-owner mappings and reserved cash. Row IDs must belong to the embedded snapshot;
-names and positions are never used as automatic identity matches.
+or Retirement clears adult alignment. `replace_wealth()` changes starting balances
+without changing Investment scenarios or their reserves. All Wealth accounts are
+included automatically. Cash reserved outside the allocation remains part of
+Wealth and is not added to assets. When all account mixes and balances are known,
+combination checks flag a reserve larger than recorded cash.
 
 `copy_annual_inputs()` returns unsaved Work, Spending and Investments profiles with
 annual ID, revision, year and input digest as provenance. It copies one year of
@@ -154,13 +148,15 @@ Optional `--settings FILE` supplies a JSON `money_year` and `retirement_rows`
 (source UUIDs mapped to reviewed row indices). These identify undated retirement
 budgets without guessing from labels. Ambiguous retirement timing stops conversion.
 Originals remain available for recovery. Version-one backups are not imported
-through the version-two editor.
+through the current editor.
 
 Known fees convert all return assumptions with `(1 + return) * (1 - fee) - 1`.
 When no fee was recorded, numeric rates stay unchanged and a note asks the user to
 review their new after-fee meaning. Retirement dates and spending move into new
 Retirement records as needed, including independent copies inside Plans. Person
-mappings are retained explicitly.
+mappings are retained explicitly. If the Wealth library is still at schema 1,
+follow this with `scripts/migrate_wealth.py`; it preserves already upgraded
+Planning documents.
 
 ## Calculate a scenario
 

@@ -8,11 +8,11 @@ Under **Scenarios**, save the inputs you want to reuse, then combine them in Pla
 | --- | --- |
 | Plans | Which scenarios to hold fixed and which alternatives to compare; existing annual plans |
 | Household | Names, ages, children, residence, and personal tax elections |
-| Wealth | Dated balances, holdings, assets, and debts |
+| Wealth | Dated account balances, tax treatment, investment mix, and debts |
 | Work | Pay, salary growth, contributions, and equity compensation |
 | Spending | Regular living costs, changes to that budget, and extra expenses |
 | Retirement | Retirement dates, living costs with one or both retired, lifespans, and costs after one person dies |
-| Investments | Saving destinations and portfolio allocation over time |
+| Investments | Saving destinations, cash reserves, and portfolio allocation over time |
 | Economy | Inflation and stock, bond, and cash returns after fees |
 | Goals | Shared names for saving purposes |
 
@@ -53,7 +53,10 @@ later sampling; no samples run yet.
 In Investments, saving instructions assign new money to goals. Portfolio strategy
 sets the mix of stocks, bonds, and cash, totaling 100%. Choose a constant mix or a
 gradual transition. Allocation dates can follow either person's retirement or the
-later retirement date. Actual holdings remain in Wealth.
+later retirement date. Starting balances and their investment mix remain in Wealth.
+Enter the cash reserve here: cash kept outside the portfolio allocation, in the
+scenario's reference-year dollars. It is already part of Wealth, not an extra asset
+or expense. Enter zero if none. All accounts in the chosen snapshot are included.
 
 In Economy, enter inflation and average yearly compound returns. Returns include
 inflation and are **after fees, before tax**. Ranges are alternative assumptions,
@@ -71,14 +74,14 @@ choices make six combinations when Retirement, Investments, and Economy are fixe
 Numeric ranges remain available for later analysis and are not expanded here.
 
 Use **Edit plan Household** to review family facts and match the people in each
-Work and Retirement choice. Use **Map plan Wealth** to review owners, portfolio
-accounts, and reserved cash. Household and Wealth remain fixed within that Plan.
+Work and Retirement choice. Household and Wealth remain fixed within that Plan.
 Return to Plans and save.
 
 Each choice is a saved copy. Editing or deleting a library scenario does not change
 a saved Plan. **Use only this scenario** replaces all choices in that category;
 **Remove** removes one. A new Work or Retirement selection needs its person mapping
-reviewed. Replacing Wealth clears its account and owner mappings for review.
+reviewed. Replacing Wealth changes the starting balances and keeps the selected
+Investment scenarios, including their cash reserves.
 
 **What still needs input** lists unknown values and conflicts across the selected
 combinations. Saving inputs does not run a projection, tax calculation, or retirement
@@ -109,38 +112,37 @@ Spending is the automatic cash remainder, separate from editable goals.
 
 ## Save wealth snapshots
 
-Open **Wealth** to keep assets and debts at a financial date. Choose **New
-snapshot**, set the date, and label it **Actual** or **Hypothetical**. A name is
-optional; otherwise the date becomes its title. Mark household coverage as
-partial until all intended assets and debts are included, and describe exclusions.
+Open **Wealth → New snapshot**. Enter one date for all balances and an optional
+name. Without a name, the date becomes the title.
 
-Add accounts with their owner, account type, tax treatment, and reported value.
-Within an account, use **Add holding** to record individual securities or groups
-of assets. Holding type and asset class are separate: an ETF can contain equities,
-fixed income, or a mixture. A 401(k) or HSA label does not identify its investments.
-Owner choices suggest names from Household; you can enter another name. Saved
-snapshots retain those labels when household defaults change.
+Add one row per named account:
 
-Enter amounts in USD without commas or a currency symbol, such as `1250.00`.
-Leave an unknown amount blank; enter `0` only for a known zero. You can save an
-account total before identifying its holdings. The difference appears as
-**Unitemized contents**, rather than assumed cash. A $100,000 account containing
-$90,000 of identified holdings contributes $100,000 to assets, with $10,000
-unitemized. If its total is unknown, only known holdings contribute to the partial
-subtotal. Holdings exceeding a reported total must be reconciled before saving.
+| Column | What to enter |
+| --- | --- |
+| Account | A recognizable name, such as Example checking |
+| Balance | The account's total value in USD |
+| Tax treatment | Taxable, Pretax retirement, Roth, HSA, or Not entered |
+| Invested in | Cash, Stocks, Bonds, Mixed, or Not entered |
 
-Add a home or other assets outside accounts under **Directly held assets**, and
-amounts owed under **Debts**. Enter debt as a positive number; it is subtracted
-once. Do not also enter an account holding as a direct asset. For an account with
-borrowing, record gross assets and the borrowing separately. Combined Savings or
-Credit amounts can be marked as not yet itemized; replace those rows when entering
-individual accounts. Replace grouped holdings when adding their constituents.
+**Invested in** determines which return assumptions a future projection would use.
+Choose **Mixed** to enter stock, bond, and cash percentages totaling 100%.
+Individual holdings and tickers are not needed. A fund's name or its tax treatment
+does not establish its investment mix. Accounts with both pretax and Roth balances
+need separately named portions when that split is known; do not count the total
+again as another row.
 
-**Net recorded position** is known assets less known debts. It does not claim
-complete household net worth. Separate summaries show assets by account type and
-asset class. **Missing information** identifies unknown values, owners, tax
-details, and source dates. A snapshot's financial date does not establish when an
-account last updated; use its optional valuation date and source notes.
+Enter amounts without commas or currency symbols, such as `1250.00`. Leave an
+unknown balance blank; enter `0` only for a known zero. Incomplete inputs can be
+saved. **What still needs input** asks for missing balances, tax treatment, or
+investment mix. Empty accounts do not need a tax or investment classification.
+
+Under **Debts**, enter a name and positive amount owed. Debt is subtracted once.
+**Net recorded wealth** is the recorded assets less debts; it does not certify
+that every household asset has been included. Use the optional snapshot note for
+anything left out.
+
+All balances are pooled for household planning. Wealth describes the starting
+position; future allocation changes and cash reserves belong in **Investments**.
 
 **Save snapshot** saves without calculating taxes. **Edit** corrects the same
 dated record. Its date is fixed after saving: use **Duplicate** in Wealth to
@@ -167,8 +169,9 @@ competing edits; they do not provide an archive of every previous edit.
 Wealth snapshots serve as a saved inventory and can be copied into combined Plans.
 Annual scenarios and goal allocations remain independent. Projecting from starting wealth, assigning
 existing assets to goals, investment growth, and retirement projections are future
-work. Unvested awards, tax lots, and detailed tax splits can be described in notes;
-do not include future vesting again in opening account balances.
+work. Future vesting belongs in Work and must not also be counted as opening
+account balances. Owner-specific retirement withdrawals and tax-lot accounting
+are outside this simplified snapshot.
 
 ## Create and edit annual plans
 
@@ -486,3 +489,32 @@ Never update expected results solely to match a new engine output.
 Run formatting, tests, type checks, and documentation build. Test the exported
 Linux environment before redeploying. Recalculate existing scenarios to compare
 them with the updated rules; saving remains explicit.
+
+
+## Simplify existing Wealth records
+
+Wealth schema 1 and Planning schema 2 require an explicit migration before they
+can be opened by the simplified editor. Already upgraded Planning documents are
+retained unchanged. Stop the app, set an owner connection in
+`FINANCIAL_MODEL_DATABASE_URL`, then preview into a private directory:
+
+```bash
+pixi run --locked python scripts/migrate_wealth.py preview /private/path/wealth-review
+pixi run --locked python scripts/migrate_wealth.py apply /private/path/wealth-review
+```
+
+Review `originals.json` and `proposals.json` before applying. The original files
+retain the removed account metadata. A settings file passed with `--settings`
+can supply reviewed `account_updates`, keyed by account UUID, for tax treatment
+or investment mix. The converter does not guess these from account names.
+
+The migration keeps account names, balances, IDs, snapshot dates, and independent
+Plan copies. It moves each Plan's cash reserve into its copied Investment scenarios.
+Unknown library reserves stay unknown. Fully classified holdings become a mix;
+partial holdings stay unclassified. Direct assets, holdings without a total, and
+active company-share sale instructions require review before conversion.
+
+Applying a stale or altered preview fails. Both stores and their version checks
+change in one transaction. Annual plans, results, Household defaults, and goals
+are not changed. Restart the app after migration. Old JSON backups also need
+explicit conversion; the editor accepts the current schema only.
