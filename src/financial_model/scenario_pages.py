@@ -16,9 +16,9 @@ CATEGORIES = (
     "Wealth",
     "Work",
     "Spending",
+    "Retirement",
     "Investments",
     "Economy",
-    "Longevity",
     "Goals",
 )
 

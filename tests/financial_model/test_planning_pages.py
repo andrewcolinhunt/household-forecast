@@ -72,13 +72,13 @@ def test_active_categories_and_new_inputs_never_calculate(monkeypatch):
     monkeypatch.setattr(app, "evaluate_scenario", forbidden)
     page = AppTest.from_file(str(ENTRY)).run()
     assert [t.label for t in page.tabs] == list(CATEGORIES)
-    for category in ("Work", "Spending", "Investments", "Economy", "Longevity"):
+    for category in ("Work", "Spending", "Investments", "Economy", "Retirement"):
         tab(page, category)
         press(page, f"New {category} assumptions")
         assert page.get("download_button")
         assert next(b for b in page.button if b.label == "Save inputs").disabled
         assert not any(b.label == "Calculate" for b in page.button)
-        assert any("Needs input" in c.value for c in page.caption)
+        assert any("need input" in c.value for c in page.caption)
     tab(page, "Plans")
     press(page, "New combined plan")
     assert "plan" in page.session_state["planning_active"]
@@ -91,19 +91,17 @@ def test_invalid_text_survives_tab_change_in_same_rerun_and_compare():
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Economy")
     press(page, "New Economy assumptions")
-    field(page, "text_input", "Central Equity return (%)").set_value("not a number")
-    tab(page, "Longevity")
+    field(page, "text_input", "Stock return (%)").set_value("not a number")
+    tab(page, "Retirement")
     assert raw(page, "economy")["equities"]["central"] == "not a number"
     page.switch_page("src/financial_model/pages/compare.py").run()
     page.switch_page("src/financial_model/pages/scenarios.py").run()
-    assert page.session_state["scenario_category"] == "Longevity"
+    assert page.session_state["scenario_category"] == "Retirement"
     tab(page, "Economy")
-    assert (
-        field(page, "text_input", "Central Equity return (%)").value == "not a number"
-    )
+    assert field(page, "text_input", "Stock return (%)").value == "not a number"
     assert page.error
     assert not page.get("download_button")
-    field(page, "text_input", "Central Equity return (%)").set_value("5.5").run()
+    field(page, "text_input", "Stock return (%)").set_value("5.5").run()
     assert raw(page, "economy")["equities"]["central"] == "0.055"
     assert not page.error
 
@@ -119,7 +117,7 @@ def test_work_shares_compensation_without_demographics_and_collects_dates():
         for w in getattr(page, kind)
     )
     field(page, "selectbox", "Employment status").select("working").run()
-    field(page, "number_input", "Phase start year").set_value(2026).run()
+    field(page, "number_input", "Start year").set_value(2026).run()
     field(page, "text_input", "Annual salary and bonus ($)").set_value(
         "123456.78"
     ).run()
@@ -134,16 +132,14 @@ def test_spending_and_investment_rows_retain_inputs():
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Spending")
     press(page, "New Spending assumptions")
-    press(page, "Add replacement budget")
-    field(page, "selectbox", "Replacement starts").select("both").run()
-    field(page, "text_input", "Central Replacement spending ($/year)").set_value(
+    press(page, "Change regular living costs")
+    field(page, "selectbox", "Change starts").select("both").run()
+    field(page, "text_input", "New regular living costs ($/year)").set_value(
         "80000"
     ).run()
-    press(page, "Add additional expense")
-    field(page, "text_input", "Additional expense label").set_value("Childcare").run()
-    field(page, "text_input", "Central Additional spending ($/year)").set_value(
-        "20000"
-    ).run()
+    press(page, "Add an expense")
+    field(page, "text_input", "Expense name").set_value("Childcare").run()
+    field(page, "text_input", "Extra annual cost ($/year)").set_value("20000").run()
     field(page, "checkbox", "Specify an end date").check().run()
     assert not page.exception
     tab(page, "Investments")
@@ -159,8 +155,8 @@ def test_spending_and_investment_rows_retain_inputs():
         field(page, "text_input", label).set_value(value).run()
     assert not page.error
     tab(page, "Spending")
-    assert field(page, "text_input", "Additional expense label").value == "Childcare"
-    assert field(page, "selectbox", "Replacement starts").value == "both"
+    assert field(page, "text_input", "Expense name").value == "Childcare"
+    assert field(page, "selectbox", "Change starts").value == "both"
 
 
 def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
@@ -197,7 +193,7 @@ def test_all_categories_save_partial_inputs_without_calculation(
         app, "evaluate_scenario", lambda *args: pytest.fail("No annual evaluation")
     )
     page = AppTest.from_file(str(ENTRY)).run()
-    for category in ("Work", "Spending", "Investments", "Economy", "Longevity"):
+    for category in ("Work", "Spending", "Investments", "Economy", "Retirement"):
         tab(page, category)
         press(page, f"New {category} assumptions")
         press(page, "Save inputs")
@@ -206,7 +202,7 @@ def test_all_categories_save_partial_inputs_without_calculation(
         assert page.success
     tab(page, "Plans")
     press(page, "New combined plan")
-    for kind in ("work", "spending", "investments", "economy", "longevity"):
+    for kind in ("work", "spending", "investments", "economy", "retirement"):
         next(
             b for b in page.button if (b.key or "").startswith(f"choose_{kind}_")
         ).click().run()
@@ -227,7 +223,7 @@ def test_conflicts_reload_duplicate_and_same_name_drafts(database_url, monkeypat
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Economy")
     press(page, "Edit")
-    field(page, "text_input", "Central Equity return (%)").set_value("invalid").run()
+    field(page, "text_input", "Stock return (%)").set_value("invalid").run()
     press(page, "All Economy inputs")
     latest = update_planning_document(
         database_url,
@@ -237,7 +233,7 @@ def test_conflicts_reload_duplicate_and_same_name_drafts(database_url, monkeypat
     )
     page.run()
     press(page, "Edit")
-    assert field(page, "text_input", "Central Equity return (%)").value == "invalid"
+    assert field(page, "text_input", "Stock return (%)").value == "invalid"
     press(page, "Discard edits and reload inputs")
     assert raw(page, "economy")["name"] == "New name"
     delete_planning_document(database_url, latest.id, latest.revision)
@@ -369,7 +365,7 @@ def test_plan_household_and_wealth_bindings_save_in_plan_only(
     page.button(key=f"planning_edit_{plan.id}").click().run()
     press(page, "Edit plan Household")
     field(page, "text_input", "Name").set_value("Synthetic A").run()
-    field(page, "selectbox", "Work adult alignment").select((1, 2)).run()
+    field(page, "selectbox", "Match people · Work").select((1, 2)).run()
     press(page, "Return to Plans")
     press(page, "Map plan Wealth")
     field(page, "selectbox", "Synthetic cash · reported owner: Joint").select(
@@ -383,7 +379,7 @@ def test_plan_household_and_wealth_bindings_save_in_plan_only(
     press(page, "Save inputs")
     saved = load_planning_document(database_url, plan.id)
     assert saved.inputs.household.adults[0].name == "Synthetic A"
-    assert saved.inputs.work_adults == (1, 2)
+    assert saved.inputs.components[0].adult_mapping == (1, 2)
     assert saved.inputs.owners[0].owner == "joint"
     assert saved.inputs.portfolio_accounts == (account.id,)
     assert saved.inputs.reserved_cash == 10
@@ -393,3 +389,95 @@ def test_plan_household_and_wealth_bindings_save_in_plan_only(
     assert not raw(page, "plan")["owners"]
     assert not raw(page, "plan")["portfolio_accounts"]
     assert raw(page, "plan")["reserved_cash"] is None
+
+
+def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Retirement")
+    press(page, "New Retirement assumptions")
+    field(page, "number_input", "Adult 1 retires").set_value(2040).run()
+    field(page, "number_input", "Plan for Adult 1 through age").set_value(95).run()
+    age_bounds = [w for w in page.number_input if "age_0_" in (w.key or "")]
+    next(w for w in age_bounds if w.label == "Lower").set_value(90).run()
+    next(
+        w for w in page.number_input if "age_0_" in (w.key or "") and w.label == "Upper"
+    ).set_value(100).run()
+    field(page, "selectbox", "Only Adult 1 retired").select("continue").run()
+    field(page, "text_input", "Both retired ($/year)").set_value("80000").run()
+    tab(page, "Work")
+    press(page, "New Work assumptions")
+    assert not any("retire" in w.label.lower() for w in page.number_input)
+    tab(page, "Spending")
+    press(page, "New Spending assumptions")
+    assert not any("survivor" in w.label.lower() for w in page.checkbox)
+    tab(page, "Retirement")
+    assert raw(page, "retirement")["adults"][0]["age"] == {
+        "central": 95,
+        "lower": 90,
+        "upper": 100,
+    }
+    assert raw(page, "retirement")["both_retired"]["amount"]["central"] == "80000"
+    assert raw(page, "retirement")["only_adult_1"] == {
+        "mode": "continue",
+        "budget": None,
+    }
+    assert any(
+        e.label == "Range: 90 to 100" and not e.proto.expanded for e in page.expander
+    )
+    assert not page.error
+
+
+@pytest.mark.integration
+def test_plan_alternatives_save_combinations_and_survive_source_deletion(
+    database_url, monkeypatch
+):
+    from financial_model.planning import InvestmentAssumptions, RetirementAssumptions
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    choices = [
+        create_planning_document(database_url, SavedPlanningDocument(inputs=m(name=n)))
+        for m, n in (
+            (WorkAssumptions, "Job A"),
+            (WorkAssumptions, "Job B"),
+            (SpendingAssumptions, "Budget A"),
+            (SpendingAssumptions, "Budget B"),
+            (RetirementAssumptions, "Retire"),
+            (InvestmentAssumptions, "Invest"),
+            (EconomicAssumptions, "Economy"),
+        )
+    ]
+    plan = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=PlanningScenario(
+                name="Compare",
+                components=tuple(select_profile(choices[i]) for i in (0, 2, 4, 5, 6)),
+            )
+        ),
+    )
+    page = AppTest.from_file(str(ENTRY)).run()
+    page.button(key=f"planning_edit_{plan.id}").click().run()
+    for kind, index in (("work", 1), ("spending", 3)):
+        field(page, "selectbox", f"Choose {kind.capitalize()} from library").select(
+            str(choices[index].id)
+        ).run()
+        next(
+            b for b in page.button if (b.key or "").startswith(f"alternative_{kind}_")
+        ).click().run()
+        assert not page.exception
+    assert any("4 combinations selected" in i.value for i in page.info)
+    press(page, "Save inputs")
+    saved = load_planning_document(database_url, plan.id)
+    assert saved.inputs.combination_count == 4
+    delete_planning_document(database_url, choices[1].id, choices[1].revision)
+    page.run()
+    assert any("Source no longer in library" in c.value for c in page.caption)
+    assert load_planning_document(database_url, plan.id) == saved
+    field(page, "selectbox", "Choose Work from library").select(
+        str(choices[0].id)
+    ).run()
+    next(
+        b for b in page.button if (b.key or "").startswith("choose_work_")
+    ).click().run()
+    press(page, "Save inputs")
+    assert load_planning_document(database_url, plan.id).inputs.combination_count == 2
