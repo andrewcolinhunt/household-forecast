@@ -20,8 +20,14 @@ Choose **New** in a category, enter known values, and **Save inputs**. A blank
 amount means unknown; zero means a known zero. Dollar amounts use the purchasing
 power of the year shown above the form, unless explicitly labeled nominal.
 
-The main value is visible. Open **Range** to enter lower and upper alternatives;
-closing it keeps the values. **Remove range** clears both bounds. Notes and sources
+Saved scenarios appear as compact rows. Use the pencil to edit, the copy button
+to duplicate, or the trash button to delete. A missing-input count opens the
+specific items to complete.
+
+Editors keep the main values visible in rows. **Details** opens timing, notes,
+and other settings for that row. **Ranges** opens lower and upper alternatives;
+in Economy, **Edit ranges** shows their columns for all four rates. Closing these
+controls keeps the values. **Remove range** clears both bounds. Notes and sources
 are optional and collapsed.
 
 ### Enter work, spending, and retirement
@@ -29,7 +35,8 @@ are optional and collapsed.
 Work keeps each person's compensation separate. Salary growth is above inflation:
 0% means pay keeps pace with inflation. A work phase includes its start year and
 excludes its end year. A blank end continues until the selected retirement year.
-Vesting and option exercises have their own schedules.
+Vesting and option exercises have their own schedules. Contribution summaries
+stay visible; open **Retirement contributions** to change their settings.
 
 In Spending, **Regular living costs** is the total annual household budget,
 excluding taxes and saving. **Change regular living costs** replaces that budget
@@ -44,9 +51,9 @@ keep their own end dates.
 
 **Living costs after one person dies** is the remaining person's total household
 budget. It can apply before retirement too. Enter it explicitly; the app does not
-halve a two-person budget. Under **How long to plan for**, choose each person's
-planning age, with optional ranges. Mortality-model settings can be recorded for
-later sampling; no samples run yet.
+halve a two-person budget. **Plan through age** sits beside each person's
+retirement year, with optional ranges. **Lifespan settings** holds the option to
+use a mortality model later; no samples run yet.
 
 ### Enter investments and economic assumptions
 
@@ -57,6 +64,9 @@ later retirement date. Starting balances and their investment mix remain in Weal
 Enter the cash reserve here: cash kept outside the portfolio allocation, in the
 scenario's reference-year dollars. It is already part of Wealth, not an extra asset
 or expense. Enter zero if none. All accounts in the chosen snapshot are included.
+Each allocation row shows its starting time and stock, bond, and cash percentages.
+Use **Details** to change its date or retirement anchor. Saving instructions use
+inline up/down arrows to change funding priority without changing amounts.
 
 In Economy, enter inflation and average yearly compound returns. Returns include
 inflation and are **after fees, before tax**. Ranges are alternative assumptions,
@@ -67,7 +77,9 @@ together). Leave them blank until the simulation method is chosen.
 ### Hold some choices fixed and vary others
 
 Choose **Plans → New combined plan**, select a Wealth snapshot, and choose saved
-scenarios from each category. One selected scenario holds that category fixed.
+scenarios from each category using **Change** in that row. The table shows the
+selected scenarios and whether each category is fixed or varying.
+One selected scenario holds that category fixed.
 **Add alternative** varies it. For example, two Work choices and three Spending
 choices make six combinations when Retirement, Investments, and Economy are fixed.
 **Preview combinations** shows the selections; it does not calculate forecasts.
