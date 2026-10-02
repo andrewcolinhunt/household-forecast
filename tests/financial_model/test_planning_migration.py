@@ -124,7 +124,7 @@ def test_migration_combines_retirement_without_matching_names_or_mutating_origin
     converted = convert_planning_documents(originals, money_year=2026)
     assert originals == before
     by_id = {str(d.id): d for d in converted}
-    assert all(d.schema_version == 2 for d in converted)
+    assert all(d.schema_version == 3 for d in converted)
     assert all(by_id[d["id"]].revision == 4 for d in originals)
     assert "retirement" not in by_id[work["id"]].inputs.adults[0].model_dump()
     assert not by_id[spending["id"]].inputs.replacements
@@ -225,7 +225,7 @@ def test_migration_is_atomic_and_rejects_a_stale_preview(database_url, tmp_path)
         )
         connection.execute(
             "CREATE TABLE planning_documents"
-            + schema.replace("FROM '2'", "FROM '1'").replace(
+            + schema.replace("FROM '3'", "FROM '1'").replace(
                 "'retirement'", "'longevity'"
             )
         )

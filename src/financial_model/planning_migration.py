@@ -12,6 +12,10 @@ from financial_model.planning import (
     RetirementAssumptions,
     SavedPlanningDocument,
 )
+from financial_model.wealth_migration import (
+    convert_investment_inputs,
+    convert_plan_inputs,
+)
 
 
 def _without_range_notes(value: Any) -> Any:
@@ -92,6 +96,8 @@ def _profile(
                     ),
                 )
             )
+    elif kind == "investments":
+        data = convert_investment_inputs(data)
     elif kind == "longevity":
         data["kind"] = "retirement"
         data["money_year"] = money_year
@@ -132,7 +138,7 @@ def convert_planning_documents(
         money_year: Reviewed dollar reference year for old lifespan-only profiles.
 
     Returns:
-        Valid version-two records, including new Retirement scenarios as needed.
+        Valid current-version records, including new Retirement scenarios as needed.
 
     Raises:
         ValueError: For unknown versions, ambiguous timing or unreviewed people.
@@ -285,6 +291,8 @@ def convert_planning_documents(
             )
         plan["components"] = new_components
         converted[old["id"]] = SavedPlanningDocument(
-            id=old["id"], revision=old["revision"] + 1, inputs=plan
+            id=old["id"],
+            revision=old["revision"] + 1,
+            inputs=INPUT_ADAPTER.validate_python(convert_plan_inputs(plan)),
         )
     return tuple(converted.values())

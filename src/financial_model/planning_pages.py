@@ -947,6 +947,14 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
             data["saving"], scope, st.session_state.get("goals", ())
         ):
             _changed_rows()
+    st.subheader("Cash reserve")
+    forms.money(
+        data,
+        "reserved_cash",
+        "Cash reserve ($)",
+        f"reserved_cash_{scope}",
+        help_text="Cash kept outside the portfolio allocation, in this scenario's reference-year dollars. It is already part of Wealth, not an extra asset. Enter 0 for none.",
+    )
     st.subheader("Portfolio strategy")
     forms.choice(
         data,
@@ -956,7 +964,7 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
         f"policy_{scope}",
     )
     st.caption(
-        "Target equities, fixed income and cash must total 100%. Gradual transitions record linear changes between checkpoints and hold the final target. Actual holdings stay in Wealth."
+        "Stocks, bonds, and cash must total 100%. A gradual change follows the targets below. Starting balances and how they are invested stay in Wealth."
     )
     for i, row in enumerate(data["checkpoints"]):
         key = f"checkpoint_{i}_{scope}"
@@ -976,7 +984,7 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
                         forms.percent(
                             row["mix"],
                             field,
-                            f"{field.replace('_', ' ').capitalize()} (%)",
+                            f"{({'equities': 'Stocks', 'fixed_income': 'Bonds', 'cash': 'Cash'})[field]} (%)",
                             f"{field}_{key}",
                         )
             _remove(data["checkpoints"], i, "Remove allocation checkpoint", key)
@@ -998,35 +1006,6 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
             "flows_only": "Contributions and withdrawals only",
         },
     )
-    forms.choice(
-        data,
-        "employer_stock",
-        "Employer shares",
-        ("undecided", "keep", "diversify"),
-        f"employer_stock_{scope}",
-        labels={
-            "undecided": "Undecided",
-            "keep": "Keep",
-            "diversify": "Gradually diversify",
-        },
-    )
-    if data["employer_stock"] == "diversify":
-        for field, label in (
-            ("diversify_start", "Diversification starts"),
-            ("diversify_end", "Diversification ends"),
-        ):
-            forms.number(
-                data,
-                field,
-                label,
-                f"{field}_{scope}",
-                integer=True,
-                minimum=1900,
-                maximum=9999,
-                optional=True,
-            )
-    else:
-        data["diversify_start"] = data["diversify_end"] = None
 
 
 def _economy(data: dict[str, Any], scope: str) -> None:
@@ -1221,7 +1200,6 @@ def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
     )
     with st.container(horizontal=True):
         category_link("Edit plan Household", "Household", target="plan")
-        category_link("Map plan Wealth", "Wealth", target="plan")
     for kind in PROFILE_KINDS:
         records = _read(dsn, kind)
         selected = [c for c in data["components"] if c["inputs"]["kind"] == kind]
@@ -1378,17 +1356,14 @@ def _apply_replacement(data: dict[str, Any], document: SavedPlanningDocument) ->
 
 
 def _apply_wealth(data: dict[str, Any], document: Any) -> None:
-    """Replace inventory and require new account/owner review, without name matching."""
-    updated = replace_wealth(PlanningScenario(name="Selection"), document).model_dump(
-        mode="json"
-    )
-    for field in ("wealth", "owners", "portfolio_accounts", "reserved_cash"):
-        data[field] = updated[field]
+    """Replace starting balances without changing the selected Investments."""
+    updated = replace_wealth(PlanningScenario(name="Selection"), document)
+    data["wealth"] = updated.model_dump(mode="json")["wealth"]
     _changed_rows()
 
 
 def plan_context(category: str, dsn: str | None) -> None:
-    """Edit plan-local family facts or account bindings under their owning category."""
+    """Edit family facts and person mappings in the selected Plan."""
     if "plan" not in st.session_state.get("planning_active", {}):
         navigate("Plans", target="library", view="library")
     data = _draft("plan")["data"]
@@ -1397,17 +1372,9 @@ def plan_context(category: str, dsn: str | None) -> None:
     with st.container(horizontal=True):
         category_link("Return to Plans", "Plans", target="plan", view="editor")
         category_link(
-            "Shared Household defaults"
-            if category == "Household"
-            else "All wealth snapshots",
-            category,
-            target="library",
-            view="library",
+            "Shared Household defaults", "Household", target="library", view="library"
         )
-    if category == "Household":
-        _household_context(data, scope)
-    else:
-        _wealth_context(data, scope)
+    _household_context(data, scope)
     st.caption(
         "These edits belong to this combined plan. Return to Plans to save them."
     )
@@ -1527,69 +1494,6 @@ def _household_context(data: dict[str, Any], scope: str) -> None:
                 args=(component, "adult_mapping", key),
             )
             component["adult_mapping"] = value
-
-
-def _wealth_context(data: dict[str, Any], scope: str) -> None:
-    """Map exact embedded Wealth rows and choose the strategy's account coverage."""
-    if data["wealth"] is None:
-        st.info("Choose a Wealth snapshot in Plans first.")
-        return
-    snapshot = data["wealth"]["snapshot"]
-    st.subheader(snapshot["name"] or snapshot["as_of"])
-    st.caption(
-        "Bindings apply to this plan's saved copy. Account balances and holdings are edited in the Wealth library."
-    )
-    owners = {b["row_id"]: b for b in data["owners"]}
-    labels = {
-        "unknown": "Unknown",
-        "joint": "Joint",
-        "other": "Other",
-        **{
-            f"adult_{i + 1}": f"{a['name']} (adult {i + 1})"
-            for i, a in enumerate(data["household"]["adults"])
-        },
-    }
-    for row in (*snapshot["accounts"], *snapshot["direct_assets"], *snapshot["debts"]):
-        if row["id"] not in owners:
-            binding = {"row_id": row["id"], "owner": "unknown"}
-            data["owners"].append(binding)
-            owners[row["id"]] = binding
-        forms.choice(
-            owners[row["id"]],
-            "owner",
-            f"{row['label']} · reported owner: {row.get('owner') or 'unknown'}",
-            tuple(labels),
-            f"owner_{row['id']}_{scope}",
-            labels=labels,
-        )
-    st.subheader("Portfolio accounts")
-    st.caption(
-        "Choose explicitly. Property, debt and unclassified holdings are not assumed to be a stock/bond/cash portfolio."
-    )
-    for row in snapshot["accounts"]:
-        key = f"portfolio_{row['id']}_{scope}"
-        st.checkbox(
-            row["label"],
-            value=row["id"] in data["portfolio_accounts"],
-            key=key,
-            on_change=_portfolio_choice,
-            args=(data, row["id"], key),
-        )
-    forms.money(
-        data,
-        "reserved_cash",
-        "Cash reserved within selected accounts ($)",
-        f"reserved_cash_{scope}",
-    )
-
-
-def _portfolio_choice(data: dict[str, Any], account_id: str, key: str) -> None:
-    """Retain explicit account IDs instead of guessing membership from their labels."""
-    values = data["portfolio_accounts"]
-    if st.session_state[key] and account_id not in values:
-        values.append(account_id)
-    elif not st.session_state[key] and account_id in values:
-        values.remove(account_id)
 
 
 def copy_from_annual(document: SavedScenario, *, stale: bool) -> None:

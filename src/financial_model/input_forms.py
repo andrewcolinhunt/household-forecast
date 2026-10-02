@@ -45,6 +45,7 @@ def text(
     *,
     optional: bool = False,
     help_text: str | None = None,
+    compact: bool = False,
     multiline: bool = False,
     disabled: bool = False,
 ) -> None:
@@ -56,6 +57,7 @@ def text(
         value=row.get(field) or "",
         key=key,
         help=help_text,
+        label_visibility="collapsed" if compact else "visible",
         disabled=disabled,
         on_change=capture,
         args=(row, field, key, transform),
@@ -72,6 +74,7 @@ def choice(
     *,
     labels: dict[Any, str] | None = None,
     help_text: str | None = None,
+    compact: bool = False,
 ) -> None:
     """Choose an explicit meaning without inferring other fields."""
     row[field] = st.selectbox(
@@ -83,6 +86,7 @@ def choice(
         else str(value).replace("_", " ").capitalize(),
         key=key,
         help=help_text,
+        label_visibility="collapsed" if compact else "visible",
         on_change=capture,
         args=(row, field, key),
     )
@@ -168,6 +172,7 @@ def money(
     *,
     annual: bool = False,
     help_text: str | None = None,
+    compact: bool = False,
 ) -> None:
     """Share dollar fields while permitting unknown future amounts."""
     if annual:
@@ -179,6 +184,7 @@ def money(
             label,
             key,
             optional=True,
+            compact=compact,
             help_text=help_text
             or "USD, no commas. Blank is unknown; 0 is a known zero.",
         )

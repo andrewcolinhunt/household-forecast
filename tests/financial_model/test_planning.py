@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -13,7 +12,6 @@ from financial_model.model import evaluate_scenario
 from financial_model.planning import (
     INPUT_ADAPTER,
     AdultWork,
-    AssetMix,
     Budget,
     EconomicAssumptions,
     Exploration,
@@ -34,7 +32,12 @@ from financial_model.planning import (
     select_profile,
 )
 from financial_model.schemas import Money, SavedScenario
-from financial_model.wealth import AccountPosition, SavedWealthSnapshot, WealthSnapshot
+from financial_model.wealth import (
+    AccountPosition,
+    AssetMix,
+    SavedWealthSnapshot,
+    WealthSnapshot,
+)
 
 
 @pytest.mark.parametrize(
@@ -261,27 +264,64 @@ def test_plan_copies_are_stable_and_replacement_clears_alignment():
         select_profile(SavedPlanningDocument(inputs=plan))
 
 
-def test_wealth_bindings_are_local_and_replacing_clears_them():
-    account = AccountPosition(label="Account", reported_value=100)
+def test_wealth_replacement_keeps_investment_choices_and_reserve():
+    account = AccountPosition(
+        label="Account", balance=100, invested_in="cash", tax_treatment="taxable"
+    )
     wealth = SavedWealthSnapshot(
         snapshot=WealthSnapshot(as_of=date(2026, 9, 27), accounts=(account,))
     )
-    plan = PlanningScenario(
-        name="Plan",
-        wealth=wealth,
-        owners=({"row_id": account.id, "owner": "joint"},),
-        portfolio_accounts=(account.id,),
-        reserved_cash=0,
+    investments = select_profile(
+        SavedPlanningDocument(
+            inputs=InvestmentAssumptions(name="Invest", reserved_cash=10)
+        )
     )
-    replaced = replace_wealth(plan, wealth)
-    assert replaced.wealth == wealth
-    assert not replaced.owners
-    assert not replaced.portfolio_accounts
-    assert replaced.reserved_cash is None
-    with pytest.raises(ValidationError, match="selected Wealth"):
-        PlanningScenario(name="Bad", wealth=wealth, owners=({"row_id": uuid4()},))
-    with pytest.raises(ValidationError, match="selected Wealth"):
-        PlanningScenario(name="Bad", portfolio_accounts=(account.id,))
+    plan = PlanningScenario(name="Plan", wealth=wealth, components=(investments,))
+    newer = SavedWealthSnapshot(
+        snapshot=WealthSnapshot(as_of=date(2026, 10, 1), accounts=(account,))
+    )
+    replaced = replace_wealth(plan, newer)
+    assert replaced.wealth == newer
+    assert replaced.components == plan.components
+    assert plan.wealth == wealth
+    assert not any(
+        "owner" in d.lower() or "Choose the accounts" in d
+        for d in missing_details(replaced)
+    )
+    for removed in ({"owners": []}, {"portfolio_accounts": []}, {"reserved_cash": 0}):
+        with pytest.raises(ValidationError):
+            PlanningScenario.model_validate(plan.model_dump() | removed)
+
+
+def test_investment_reserve_is_checked_against_all_known_starting_cash():
+    investments = select_profile(
+        SavedPlanningDocument(
+            inputs=InvestmentAssumptions(name="Invest", reserved_cash=101)
+        )
+    )
+    wealth = SavedWealthSnapshot(
+        snapshot=WealthSnapshot(
+            as_of=date(2026, 1, 1),
+            accounts=(AccountPosition(label="Cash", balance=100, invested_in="cash"),),
+        )
+    )
+    plan = PlanningScenario(name="Plan", wealth=wealth, components=(investments,))
+    assert "Investments: cash reserve exceeds recorded cash." in missing_details(plan)
+    unknown = wealth.model_copy(
+        update={
+            "snapshot": wealth.snapshot.model_copy(
+                update={
+                    "accounts": (
+                        *wealth.snapshot.accounts,
+                        AccountPosition(label="Unknown", balance=1000),
+                    )
+                }
+            )
+        }
+    )
+    assert "Investments: cash reserve exceeds recorded cash." not in missing_details(
+        replace_wealth(plan, unknown)
+    )
 
 
 def test_combination_checks_resolve_ranges_people_timing_and_money_years():

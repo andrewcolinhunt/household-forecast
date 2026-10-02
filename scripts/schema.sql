@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS wealth_snapshots (
     updated_at TIMESTAMPTZ NOT NULL,
     CHECK (document ? 'id' AND document ->> 'id' = id::text),
     CHECK (document ? 'revision' AND (document ->> 'revision')::integer = revision),
-    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1'),
+    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '2'),
     CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'wealth_snapshot')
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS planning_documents (
     updated_at TIMESTAMPTZ NOT NULL,
     CHECK ((document ->> 'id') IS NOT DISTINCT FROM id::text),
     CHECK (((document ->> 'revision')::integer) IS NOT DISTINCT FROM revision),
-    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '2'),
+    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '3'),
     CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'planning_document'),
     CHECK ((document -> 'inputs' ->> 'kind'
            IN ('work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE)

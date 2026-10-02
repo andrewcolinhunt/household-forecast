@@ -1,4 +1,4 @@
-"""Back up, preview, and atomically migrate planning inputs to schema version two."""
+"""Back up, preview, and atomically migrate planning inputs to the current schema."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def apply(dsn: str, directory: Path) -> None:
                 ),
             )
         connection.execute(
-            "ALTER TABLE planning_documents ADD CONSTRAINT planning_schema_version CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '2'), ADD CONSTRAINT planning_kind CHECK ((document -> 'inputs' ->> 'kind' IN ('work', 'spending', 'retirement', 'investments', 'economy', 'plan')) IS TRUE)"
+            "ALTER TABLE planning_documents ADD CONSTRAINT planning_schema_version CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '3'), ADD CONSTRAINT planning_kind CHECK ((document -> 'inputs' ->> 'kind' IN ('work', 'spending', 'retirement', 'investments', 'economy', 'plan')) IS TRUE)"
         )
     Console().print(f"Migrated {len(proposals)} planning documents.")
 

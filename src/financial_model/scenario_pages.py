@@ -239,7 +239,7 @@ def workspace() -> None:
         }:
             st.session_state["records"] = app._read_store(dsn)
             _annual_category(category, dsn)
-        elif target == "plan" and category in {"Household", "Wealth"}:
+        elif target == "plan" and category == "Household":
             planning_pages.plan_context(category, dsn)
         elif category == "Household":
             st.session_state["records"] = app._read_store(dsn)

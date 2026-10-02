@@ -29,7 +29,6 @@ from financial_model.scenario_pages import CATEGORIES
 from financial_model.storage import create_wealth_snapshot
 from financial_model.wealth import (
     AccountPosition,
-    AssetPosition,
     SavedWealthSnapshot,
     WealthSnapshot,
 )
@@ -148,8 +147,8 @@ def test_spending_and_investment_rows_retain_inputs():
     press(page, "Add allocation checkpoint")
     field(page, "checkbox", "Specify target allocation").check().run()
     for label, value in (
-        ("Equities (%)", "80"),
-        ("Fixed income (%)", "20"),
+        ("Stocks (%)", "80"),
+        ("Bonds (%)", "20"),
         ("Cash (%)", "0"),
     ):
         field(page, "text_input", label).set_value(value).run()
@@ -329,20 +328,12 @@ def test_annual_ownership_and_unchanged_round_trip(scenario):
 
 
 @pytest.mark.integration
-def test_plan_household_and_wealth_bindings_save_in_plan_only(
+def test_plan_household_and_wealth_are_copied_without_account_bindings(
     database_url, monkeypatch
 ):
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     account = AccountPosition(
-        label="Synthetic cash",
-        owner="Joint",
-        account_type="brokerage",
-        reported_value=100,
-        holdings=(
-            AssetPosition(
-                label="Cash", value=100, asset_class="cash", instrument_type="cash"
-            ),
-        ),
+        label="Synthetic cash", balance=100, invested_in="cash", tax_treatment="taxable"
     )
     wealth = create_wealth_snapshot(
         database_url,
@@ -363,32 +354,33 @@ def test_plan_household_and_wealth_bindings_save_in_plan_only(
     )
     page = AppTest.from_file(str(ENTRY)).run()
     page.button(key=f"planning_edit_{plan.id}").click().run()
+    assert not any(b.label == "Map plan Wealth" for b in page.button)
     press(page, "Edit plan Household")
     field(page, "text_input", "Name").set_value("Synthetic A").run()
     field(page, "selectbox", "Match people · Work").select((1, 2)).run()
-    press(page, "Return to Plans")
-    press(page, "Map plan Wealth")
-    field(page, "selectbox", "Synthetic cash · reported owner: Joint").select(
-        "joint"
-    ).run()
-    field(page, "checkbox", "Synthetic cash").check().run()
-    field(page, "text_input", "Cash reserved within selected accounts ($)").set_value(
-        "10"
-    )
     press(page, "Return to Plans")
     press(page, "Save inputs")
     saved = load_planning_document(database_url, plan.id)
     assert saved.inputs.household.adults[0].name == "Synthetic A"
     assert saved.inputs.components[0].adult_mapping == (1, 2)
-    assert saved.inputs.owners[0].owner == "joint"
-    assert saved.inputs.portfolio_accounts == (account.id,)
-    assert saved.inputs.reserved_cash == 10
     assert saved.inputs.wealth == wealth
     assert load_planning_document(database_url, work.id) == work
     press(page, "Replace Wealth")
-    assert not raw(page, "plan")["owners"]
-    assert not raw(page, "plan")["portfolio_accounts"]
-    assert raw(page, "plan")["reserved_cash"] is None
+    assert raw(page, "plan")["wealth"] == wealth.model_dump(mode="json")
+    assert (
+        not {"owners", "portfolio_accounts", "reserved_cash"} & raw(page, "plan").keys()
+    )
+
+
+def test_cash_reserve_lives_in_investments_and_survives_navigation():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Investments")
+    press(page, "New Investments assumptions")
+    field(page, "text_input", "Cash reserve ($)").set_value("12345.67").run()
+    tab(page, "Wealth")
+    tab(page, "Investments")
+    assert raw(page, "investments")["reserved_cash"] == "12345.67"
+    assert not any(w.label == "Employer shares" for w in page.selectbox)
 
 
 def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation():

@@ -24,7 +24,7 @@ from financial_model.schemas import (
     SavedScenario,
     ValueModel,
 )
-from financial_model.wealth import Label, Notes, SavedWealthSnapshot
+from financial_model.wealth import AssetMix, Label, Notes, SavedWealthSnapshot
 
 PlanningYear = Annotated[int, Field(strict=True, ge=1900, le=9999)]
 Age = Annotated[int, Field(strict=True, ge=18, le=130)]
@@ -326,22 +326,6 @@ class SpendingAssumptions(MonetaryAssumptions):
         return self
 
 
-class AssetMix(ValueModel):
-    """A complete target allocation, independent of actual account holdings."""
-
-    equities: Rate
-    fixed_income: Rate
-    cash: Rate
-
-    @model_validator(mode="after")
-    def validate_total(self) -> Self:
-        """Require complete allocation without implicitly assigning a remainder."""
-        if self.equities + self.fixed_income + self.cash != 1:
-            msg = "Target equities, fixed income, and cash must total 100%."
-            raise ValueError(msg)
-        return self
-
-
 class AllocationCheckpoint(ValueModel):
     """A target at an entered time; missing mix remains explicitly unknown."""
 
@@ -358,9 +342,7 @@ class InvestmentAssumptions(MonetaryAssumptions):
     checkpoints: tuple[AllocationCheckpoint, ...] = ()
     interpolation: Literal["linear_then_hold"] = "linear_then_hold"
     rebalancing: Literal["annual", "flows_only", "undecided"] = "undecided"
-    employer_stock: Literal["keep", "diversify", "undecided"] = "undecided"
-    diversify_start: PlanningYear | None = None
-    diversify_end: PlanningYear | None = None
+    reserved_cash: Money | None = None
 
     @model_validator(mode="after")
     def validate_policy(self) -> Self:
@@ -377,18 +359,6 @@ class InvestmentAssumptions(MonetaryAssumptions):
             for a, b in itertools.pairwise(years)
         ):
             msg = "Allocation checkpoints must have increasing dates."
-            raise ValueError(msg)
-        if self.employer_stock != "diversify" and (
-            self.diversify_start or self.diversify_end
-        ):
-            msg = "Diversification dates require a diversification intention."
-            raise ValueError(msg)
-        if (
-            self.diversify_start
-            and self.diversify_end
-            and self.diversify_end <= self.diversify_start
-        ):
-            msg = "Diversification must end after it starts."
             raise ValueError(msg)
         return self
 
@@ -568,13 +538,6 @@ class ProfileSelection(ValueModel):
         return self
 
 
-class OwnerBinding(ValueModel):
-    """A reviewed mapping of a specific Wealth row to household participants."""
-
-    row_id: UUID
-    owner: Literal["adult_1", "adult_2", "joint", "other", "unknown"] = "unknown"
-
-
 class PlanningScenario(Assumptions):
     """A saved selection of inputs, without projected balances or success measures."""
 
@@ -582,36 +545,13 @@ class PlanningScenario(Assumptions):
     household: PlanningHousehold = Field(default_factory=PlanningHousehold)
     wealth: SavedWealthSnapshot | None = None
     components: tuple[ProfileSelection, ...] = ()
-    owners: tuple[OwnerBinding, ...] = ()
-    portfolio_accounts: tuple[UUID, ...] = ()
-    reserved_cash: Money | None = None
 
     @model_validator(mode="after")
     def validate_bindings(self) -> Self:
-        """Reject repeated sources and bindings outside the embedded inventory."""
+        """Reject repeated source selections."""
         identities = [c.source_id for c in self.components]
         if len(identities) != len(set(identities)):
             msg = "Choose each saved scenario once."
-            raise ValueError(msg)
-        accounts = set()
-        rows = set()
-        if self.wealth:
-            snapshot = self.wealth.snapshot
-            accounts = {a.id for a in snapshot.accounts}
-            rows = (
-                accounts
-                | {a.id for a in snapshot.direct_assets}
-                | {d.id for d in snapshot.debts}
-            )
-        bindings = [b.row_id for b in self.owners]
-        if len(set(bindings)) != len(bindings) or not set(bindings) <= rows:
-            msg = "Owner bindings must uniquely identify rows in the selected Wealth snapshot."
-            raise ValueError(msg)
-        if (
-            len(set(self.portfolio_accounts)) != len(self.portfolio_accounts)
-            or not set(self.portfolio_accounts) <= accounts
-        ):
-            msg = "Portfolio selection must use distinct accounts from the selected Wealth snapshot."
             raise ValueError(msg)
         return self
 
@@ -649,7 +589,7 @@ class SavedPlanningDocument(ValueModel):
     """Versioned, portable input document shared by persistence and backups."""
 
     document_type: Literal["planning_document"] = "planning_document"
-    schema_version: Literal[2] = 2
+    schema_version: Literal[3] = 3
     id: UUID = Field(default_factory=uuid4)
     revision: Annotated[int, Field(strict=True, ge=1)] = 1
     updated_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -682,16 +622,8 @@ def replace_profile(
 def replace_wealth(
     plan: PlanningScenario, document: SavedWealthSnapshot | None
 ) -> PlanningScenario:
-    """Copy a selected inventory and clear all bindings requiring renewed review."""
-    return PlanningScenario.model_validate(
-        plan.model_dump()
-        | {
-            "wealth": document,
-            "owners": (),
-            "portfolio_accounts": (),
-            "reserved_cash": None,
-        }
-    )
+    """Replace the starting balances without changing future investment choices."""
+    return PlanningScenario.model_validate(plan.model_dump() | {"wealth": document})
 
 
 def household_from_defaults(household: Household) -> PlanningHousehold:
@@ -870,12 +802,8 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
             details.append("Portfolio policy or allocation checkpoints need input.")
         if inputs.rebalancing == "undecided":
             details.append("Rebalancing intention is undecided.")
-        if inputs.employer_stock == "undecided":
-            details.append("Employer-stock intention is undecided.")
-        if inputs.employer_stock == "diversify" and (
-            inputs.diversify_start is None or inputs.diversify_end is None
-        ):
-            details.append("Employer-stock diversification dates need input.")
+        if inputs.reserved_cash is None:
+            details.append("Cash reserve needs an amount; enter zero if none.")
         details.extend(_investment_timing(inputs, (None, None)))
     elif isinstance(inputs, EconomicAssumptions):
         for field in ("inflation", "equities", "fixed_income", "cash"):
@@ -1119,40 +1047,15 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
         details.extend(f"Wealth: {detail}" for detail in snapshot.missing_details)
         if not snapshot.has_balances:
             details.append("Wealth: no balances entered.")
-        known_owners = {b.row_id for b in plan.owners if b.owner != "unknown"}
-        if any(
-            row_id not in known_owners
-            for row_id in [
-                *(a.id for a in snapshot.accounts),
-                *(a.id for a in snapshot.direct_assets),
-                *(d.id for d in snapshot.debts),
-            ]
-        ):
-            details.append("Review Wealth owner mappings.")
-        if not plan.portfolio_accounts:
-            details.append("Choose the accounts covered by the portfolio strategy.")
-        if plan.reserved_cash is None:
-            details.append("Reserved cash is unknown; enter zero if none.")
-        accounts = [a for a in snapshot.accounts if a.id in plan.portfolio_accounts]
-        if any(
-            a.reported_value is None
-            or a.unitemized
-            or any(
-                h.value is None
-                or h.asset_class not in {"equities", "fixed_income", "cash"}
-                for h in a.holdings
+        if (
+            isinstance(investments, InvestmentAssumptions)
+            and investments.reserved_cash is not None
+            and not any(
+                a.balance is None or (a.balance and a.allocation is None)
+                for a in snapshot.accounts
             )
-            for a in accounts
+            and investments.reserved_cash
+            > snapshot.asset_classes.get("cash", Decimal(0))
         ):
-            details.append("Selected portfolio contents are not fully classified.")
-        known_cash = sum(
-            h.value or Decimal(0)
-            for a in accounts
-            for h in a.holdings
-            if h.asset_class == "cash"
-        )
-        if plan.reserved_cash is not None and plan.reserved_cash > known_cash:
-            details.append(
-                "Reserved cash exceeds identified cash in selected accounts."
-            )
+            details.append("Investments: cash reserve exceeds recorded cash.")
     return details

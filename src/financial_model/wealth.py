@@ -1,4 +1,4 @@
-"""Dated wealth inventories, independent of annual income and goal funding."""
+"""Dated household balances and their treatment in a future projection."""
 
 from __future__ import annotations
 
@@ -9,122 +9,76 @@ from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from financial_model.schemas import ZERO, Money, ValueModel
+from financial_model.schemas import ZERO, Money, Rate, ValueModel
 
 Label = Annotated[str, Field(min_length=1, max_length=80)]
 Notes = Annotated[str, Field(max_length=4000)]
-AccountType = Literal[
-    "unknown", "checking", "savings", "brokerage", "ira", "401k", "403b", "hsa", "other"
-]
-TaxTreatment = Literal[
-    "unknown", "taxable", "tax_deferred", "roth", "hsa", "mixed", "other"
-]
-InstrumentType = Literal[
-    "unknown", "cash", "stock", "etf", "mutual_fund", "bond", "property", "other"
-]
-AssetClass = Literal[
-    "unknown", "cash", "equities", "fixed_income", "real_estate", "mixed", "other"
-]
-DebtType = Literal["unknown", "credit_card", "mortgage", "loan", "other"]
+TaxTreatment = Literal["unknown", "taxable", "tax_deferred", "roth", "hsa"]
+InvestmentType = Literal["unknown", "cash", "stocks", "bonds", "mixed"]
 
 
-class AssetPosition(ValueModel):
-    """An individual holding or nonoverlapping group valued in dollars."""
+class AssetMix(ValueModel):
+    """Stock, bond, and cash fractions shared by balances and allocation targets."""
 
-    id: UUID = Field(default_factory=uuid4)
-    label: Label
-    instrument_type: InstrumentType = "unknown"
-    asset_class: AssetClass = "unknown"
-    value: Money | None = None
-    security_id: Label | None = None
-    source_notes: Notes = ""
-
-
-class DirectAssetPosition(AssetPosition):
-    """An asset outside accounts, with its own ownership and tax context."""
-
-    owner: Label | None = None
-    tax_treatment: TaxTreatment = "unknown"
-    valuation_date: date | None = None
-
-
-class AccountPosition(ValueModel):
-    """A reported account balance and optional detail explaining that balance."""
-
-    id: UUID = Field(default_factory=uuid4)
-    label: Label
-    institution: Label | None = None
-    owner: Label | None = None
-    account_type: AccountType = "unknown"
-    tax_treatment: TaxTreatment = "unknown"
-    reported_value: Money | None = None
-    valuation_date: date | None = None
-    source_notes: Notes = ""
-    is_combined: Annotated[bool, Field(strict=True)] = False
-    holdings: tuple[AssetPosition, ...] = ()
-
-    @property
-    def known_holdings(self) -> Decimal:
-        """Sum only entered holding values, without treating missing values as zero."""
-        return sum((h.value for h in self.holdings if h.value is not None), ZERO)
-
-    @property
-    def known_value(self) -> Decimal:
-        """Count the reported total once, or known holdings when it is unavailable."""
-        return (
-            self.reported_value
-            if self.reported_value is not None
-            else self.known_holdings
-        )
-
-    @property
-    def unitemized(self) -> Decimal | None:
-        """Return the unexplained part of a known total, never an inferred cash value."""
-        if self.reported_value is None:
-            return None
-        return self.reported_value - self.known_holdings
+    equities: Rate
+    fixed_income: Rate
+    cash: Rate
 
     @model_validator(mode="after")
-    def validate_holdings(self) -> Self:
-        """Reject contents that exceed the reported total or repeat a row identity."""
-        if (
-            self.reported_value is not None
-            and self.known_holdings > self.reported_value
-        ):
-            message = f"{self.label}: holdings exceed the reported account value."
-            raise ValueError(message)
-        ids = [h.id for h in self.holdings]
-        if len(ids) != len(set(ids)):
-            message = "Each holding must have a distinct ID."
+    def validate_total(self) -> Self:
+        """Require a complete allocation without assigning an implicit remainder."""
+        if self.equities + self.fixed_income + self.cash != 1:
+            message = "Stocks, bonds, and cash must total 100%."
             raise ValueError(message)
         return self
 
 
-class DebtPosition(ValueModel):
-    """A positive amount owed, deducted once from the recorded asset subtotal."""
+class AccountPosition(ValueModel):
+    """One named account, counted once and pooled for household planning."""
 
     id: UUID = Field(default_factory=uuid4)
     label: Label
-    owner: Label | None = None
-    debt_type: DebtType = "unknown"
+    balance: Money | None = None
+    tax_treatment: TaxTreatment = "unknown"
+    invested_in: InvestmentType = "unknown"
+    mix: AssetMix | None = None
+
+    @model_validator(mode="after")
+    def validate_mix(self) -> Self:
+        """Only mixed accounts have an entered percentage split."""
+        if self.invested_in != "mixed" and self.mix is not None:
+            message = "Choose Mixed before entering investment percentages."
+            raise ValueError(message)
+        return self
+
+    @property
+    def allocation(self) -> AssetMix | None:
+        """Resolve simple choices to fractions without guessing unknown contents."""
+        if self.invested_in in {"unknown", "mixed"}:
+            return self.mix
+        return AssetMix(
+            equities=Decimal(int(self.invested_in == "stocks")),
+            fixed_income=Decimal(int(self.invested_in == "bonds")),
+            cash=Decimal(int(self.invested_in == "cash")),
+        )
+
+
+class DebtPosition(ValueModel):
+    """A named amount owed, deducted once from household assets."""
+
+    id: UUID = Field(default_factory=uuid4)
+    label: Label
     amount_owed: Money | None = None
-    valuation_date: date | None = None
-    source_notes: Notes = ""
-    is_combined: Annotated[bool, Field(strict=True)] = False
 
 
 class WealthSnapshot(ValueModel):
-    """Reusable dated balances; missing information remains explicitly unknown."""
+    """Named accounts and debts sharing one financial date."""
 
     name: Annotated[str, Field(max_length=80)] = ""
     as_of: date
-    kind: Literal["actual", "hypothetical"] = "actual"
     currency: Literal["USD"] = "USD"
-    coverage: Literal["partial", "complete_as_reported"] = "partial"
-    source_notes: Notes = ""
-    coverage_notes: Notes = ""
+    notes: Notes = ""
     accounts: tuple[AccountPosition, ...] = ()
-    direct_assets: tuple[DirectAssetPosition, ...] = ()
     debts: tuple[DebtPosition, ...] = ()
 
     @property
@@ -134,138 +88,79 @@ class WealthSnapshot(ValueModel):
 
     @property
     def assets(self) -> Decimal:
-        """Known asset subtotal, including partial accounts exactly once."""
-        return sum((a.known_value for a in self.accounts), ZERO) + sum(
-            (a.value for a in self.direct_assets if a.value is not None), ZERO
-        )
+        """Sum entered balances, without treating unknown amounts as known zeros."""
+        return sum((a.balance for a in self.accounts if a.balance is not None), ZERO)
 
     @property
     def liabilities(self) -> Decimal:
-        """Known amounts owed, without claiming missing debts have zero balances."""
+        """Sum entered amounts owed."""
         return sum(
             (d.amount_owed for d in self.debts if d.amount_owed is not None), ZERO
         )
 
     @property
     def net_recorded(self) -> Decimal:
-        """Known assets less known liabilities; not a claim of complete net worth."""
+        """Subtract debts from the recorded asset total."""
         return self.assets - self.liabilities
 
     @property
     def has_balances(self) -> bool:
-        """Distinguish an empty inventory from explicitly entered zero balances."""
-        return (
-            any(a.reported_value is not None for a in self.accounts)
-            or any(h.value is not None for a in self.accounts for h in a.holdings)
-            or any(a.value is not None for a in self.direct_assets)
-            or any(d.amount_owed is not None for d in self.debts)
+        """Distinguish an empty snapshot from explicitly entered zero balances."""
+        return any(a.balance is not None for a in self.accounts) or any(
+            d.amount_owed is not None for d in self.debts
         )
 
     @property
     def asset_classes(self) -> dict[str, Decimal]:
-        """Group recorded asset values while retaining unknown contents separately."""
-        groups: dict[str, Decimal] = {}
-        holdings = (
-            *self.direct_assets,
-            *(h for a in self.accounts for h in a.holdings),
-        )
-        for holding in holdings:
-            if holding.value is not None:
-                key = holding.asset_class
-                groups[key] = groups.get(key, ZERO) + holding.value
-        for account in self.accounts:
-            if account.unitemized:
-                groups["unitemized"] = (
-                    groups.get("unitemized", ZERO) + account.unitemized
-                )
-        return groups
-
-    @property
-    def account_types(self) -> dict[str, Decimal]:
-        """Group account subtotals; directly held assets remain a separate group."""
+        """Split balances by projection category, retaining unclassified amounts."""
         groups: dict[str, Decimal] = {}
         for account in self.accounts:
-            key = account.account_type
-            groups[key] = groups.get(key, ZERO) + account.known_value
-        if self.direct_assets:
-            groups["direct_assets"] = sum(
-                (a.value for a in self.direct_assets if a.value is not None), ZERO
-            )
+            if account.balance is None:
+                continue
+            mix = account.allocation
+            fractions = mix.model_dump() if mix else {"unknown": Decimal(1)}
+            for category, fraction in fractions.items():
+                if fraction:
+                    groups[category] = (
+                        groups.get(category, ZERO) + account.balance * fraction
+                    )
         return groups
 
     @property
     def missing_details(self) -> tuple[str, ...]:
-        """Describe incomplete coverage, amounts, dates, ownership, and contents."""
-        details = (
-            ["Household coverage is partial."] if self.coverage == "partial" else []
-        )
-        rows: tuple[AccountPosition | DirectAssetPosition | DebtPosition, ...] = (
-            *self.accounts,
-            *self.direct_assets,
-            *self.debts,
-        )
-        for row in rows:
-            if row.owner is None:
-                details.append(f"{row.label}: owner unknown.")
-            if row.valuation_date != self.as_of:
-                details.append(f"{row.label}: valuation date differs or is unknown.")
-            if isinstance(
-                row, (AccountPosition, DirectAssetPosition)
-            ) and row.tax_treatment in {"unknown", "mixed"}:
-                details.append(f"{row.label}: tax treatment needs detail.")
+        """Ask only for balances, tax treatment, and projection categories."""
+        details: list[str] = []
         for account in self.accounts:
-            if account.reported_value is None:
-                details.append(
-                    f"{account.label}: total unknown; known holdings are partial."
-                )
-            if account.unitemized:
-                details.append(f"{account.label}: some contents are unitemized.")
-            if account.account_type == "unknown" or account.is_combined:
-                details.append(
-                    f"{account.label}: account classification or breakdown missing."
-                )
-        for asset in (
-            *self.direct_assets,
-            *(h for a in self.accounts for h in a.holdings),
-        ):
-            if asset.value is None or "unknown" in (
-                asset.asset_class,
-                asset.instrument_type,
-            ):
-                details.append(f"{asset.label}: value or asset classification missing.")
-        for debt in self.debts:
-            if (
-                debt.amount_owed is None
-                or debt.debt_type == "unknown"
-                or debt.is_combined
-            ):
-                details.append(
-                    f"{debt.label}: debt amount, classification, or breakdown missing."
-                )
+            if account.balance is None:
+                details.append(f"{account.label}: balance needs input.")
+            if account.balance == 0:
+                continue
+            if account.tax_treatment == "unknown":
+                details.append(f"{account.label}: choose tax treatment.")
+            if account.allocation is None:
+                details.append(f"{account.label}: choose how it is invested.")
+        details.extend(
+            f"{debt.label}: amount owed needs input."
+            for debt in self.debts
+            if debt.amount_owed is None
+        )
         return tuple(details)
 
     @model_validator(mode="after")
     def validate_ids(self) -> Self:
-        """Reject overlapping local identities across all accounts, holdings, and debts."""
-        rows: tuple[AccountPosition | DirectAssetPosition | DebtPosition, ...] = (
-            *self.accounts,
-            *self.direct_assets,
-            *self.debts,
-        )
-        ids = [r.id for r in rows] + [h.id for a in self.accounts for h in a.holdings]
+        """Prevent repeated rows across accounts and debts."""
+        ids = [a.id for a in self.accounts] + [d.id for d in self.debts]
         if len(ids) != len(set(ids)):
-            message = (
-                "Every account, holding, direct asset, and debt needs a distinct ID."
-            )
+            message = "Every account and debt needs a distinct ID."
             raise ValueError(message)
         return self
 
 
 class SavedWealthSnapshot(ValueModel):
-    """Versioned document shared by PostgreSQL storage and portable JSON backups."""
+    """Versioned snapshot shared by storage and portable JSON backups."""
 
     document_type: Literal["wealth_snapshot"] = "wealth_snapshot"
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     id: UUID = Field(default_factory=uuid4)
     revision: Annotated[int, Field(strict=True, ge=1)] = 1
     updated_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))

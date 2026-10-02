@@ -22,7 +22,6 @@ from financial_model.storage import (
 )
 from financial_model.wealth import (
     AccountPosition,
-    AssetPosition,
     SavedWealthSnapshot,
     WealthSnapshot,
 )
@@ -36,15 +35,8 @@ def wealth_document() -> SavedWealthSnapshot:
             accounts=(
                 AccountPosition(
                     label="Synthetic brokerage",
-                    reported_value=100,
-                    holdings=(
-                        AssetPosition(
-                            label="Fund",
-                            instrument_type="etf",
-                            asset_class="equities",
-                            value=80,
-                        ),
-                    ),
+                    balance=100,
+                    invested_in="stocks",
                 ),
             ),
         )
@@ -64,7 +56,7 @@ def test_wealth_storage_round_trip_order_and_atomic_revision(
     )
     assert list_wealth_snapshots(database_url) == (later, original)
     raw = original.snapshot.model_dump(mode="json")
-    raw["accounts"][0]["holdings"][0]["asset_class"] = "fixed_income"
+    raw["accounts"][0]["invested_in"] = "bonds"
     edited = SavedWealthSnapshot(
         id=original.id,
         revision=original.revision,
