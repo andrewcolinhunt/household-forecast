@@ -12,7 +12,7 @@ Open <http://localhost:8501>. The first calculation loads the tax engine and can
 take longer than later calculations. No tax-service account is required.
 
 Open **Scenarios**. Its sub-tabs collect Plans, Household, Wealth, Work,
-Spending, Investments, Economy, Longevity, and Goals. **Compare annual plans**
+Spending, Retirement, Investments, Economy, and Goals. **Compare annual plans**
 remains a separate results page.
 
 For a one-year calculation, choose **Plans → New scenario** in the Annual plans
@@ -26,15 +26,16 @@ confirm the facts, and select **Calculate**. Results describe the last calculate
 inputs. Choose **Save** to keep those inputs and results in the shared store.
 
 To collect longer-term assumptions, create reusable profiles in **Work**, **Spending**,
-**Investments**, **Economy**, and **Longevity**. Use **All Work assumptions** or the
+**Retirement**, **Investments**, and **Economy**. Use **All Work assumptions** or the
 corresponding action to leave an annual editing context. Then choose **Plans → New
-combined plan** and select saved profiles plus a Wealth snapshot. These combined
-plans save inputs only; they do not calculate future wealth or retirement outcomes.
+combined plan** and select a Wealth snapshot. Choose one scenario per category to
+hold it fixed, or **Add alternative** to vary it. The app previews the combinations;
+it does not yet calculate future wealth or retirement outcomes.
 
 Without a database connection, drafts last for the browser session. Use
 **Backups → Download calculated scenario** for annual results, or the category's
 backup section to download current valid assumptions or Wealth. New input saves
-can be incomplete; **Input checks** lists what is still unknown.
+can be incomplete; **What still needs input** lists what is still unknown.
 
 Next, [compare and save scenarios](../how-to-guides/index.md) or read
 [how the calculations work](../concepts/index.md).

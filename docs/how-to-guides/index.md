@@ -2,84 +2,97 @@
 
 ## Organize assumptions and combine plans
 
-**Scenarios** is the input workspace. Each sub-tab owns a distinct concern:
+Under **Scenarios**, save the inputs you want to reuse, then combine them in Plans.
 
 | Sub-tab | What you enter |
 | --- | --- |
-| Plans | Named combinations and existing annual cases; annual calculation actions |
-| Household | Names, ages, children, residence and personal tax elections |
-| Wealth | Dated account balances, holdings, assets and debts |
-| Work | Compensation, work phases, retirement timing and salary growth |
-| Spending | Household consumption, replacement budgets and additional expenses |
-| Investments | Saving instructions, portfolio targets and rebalancing intentions |
-| Economy | Inflation, returns, fees and optional statistical inputs |
-| Longevity | Planning ages or a request to sample lifespans later |
+| Plans | Which scenarios to hold fixed and which alternatives to compare; existing annual plans |
+| Household | Names, ages, children, residence, and personal tax elections |
+| Wealth | Dated balances, holdings, assets, and debts |
+| Work | Pay, salary growth, contributions, and equity compensation |
+| Spending | Regular living costs, changes to that budget, and extra expenses |
+| Retirement | Retirement dates, living costs with one or both retired, lifespans, and costs after one person dies |
+| Investments | Saving destinations and portfolio allocation over time |
+| Economy | Inflation and stock, bond, and cash returns after fees |
 | Goals | Shared names for saving purposes |
 
-Create a profile in a category, enter a name and known values, and choose **Save
-inputs**. Leave unknown amounts blank; zero means a known zero. Money uses USD
-purchasing power at the profile's **Money reference year**, except fields explicitly
-labeled nominal. Names need not be unique. **Duplicate** and imports open independent
-unsaved drafts. **Save as new inputs** keeps a separate library record.
+Choose **New** in a category, enter known values, and **Save inputs**. A blank
+amount means unknown; zero means a known zero. Dollar amounts use the purchasing
+power of the year shown above the form, unless explicitly labeled nominal.
 
-Work phases use an inclusive start year and exclusive end year. Enter each person's
-retirement as the first year without employment. A gap between phases remains
-unknown unless you enter a not-working phase. Salary growth is above inflation;
-new phases visibly start at editable 0% real growth. Vesting uses its own dollar or
-share basis and dates. Option exercises are dated events, not recurring salary.
+The main value is visible. Open **Range** to enter lower and upper alternatives;
+closing it keeps the values. **Remove range** clears both bounds. Notes and sources
+are optional and collapsed.
 
-In Spending, a replacement budget changes the baseline. Dated additional expenses
-continue until their own end dates. Enter childcare phases as additional rows only
-when they are not already included in the baseline. Moving can use a replacement
-budget plus a one-time expense. Enter survivor spending explicitly when known.
+### Enter work, spending, and retirement
 
-In Investments, **Saving instructions** assigns additions to goals; **Portfolio
-strategy** records target equities, fixed income and cash. Targets total 100%.
-Choose a constant target or a gradual transition with increasing checkpoints.
-Checkpoints can refer to a calendar year, either household adult's retirement, or
-the later retirement date. Gradual transitions record linear changes between
-checkpoints and hold the last target. They do not alter actual Wealth holdings.
+Work keeps each person's compensation separate. Salary growth is above inflation:
+0% means pay keeps pace with inflation. A work phase includes its start year and
+excludes its end year. A blank end continues until the selected retirement year.
+Vesting and option exercises have their own schedules.
 
-Economy records nominal annualized compound returns before fees and taxes. Record
-the source and forecast horizon. Optional exploration ranges need both lower and
-upper values around the central assumption. They are alternatives, not probabilities
-or limits on one-year market movements. Advanced variability and a complete
-correlation matrix are optional; blank correlations do not mean independence.
+In Spending, **Regular living costs** is the total annual household budget,
+excluding taxes and saving. **Change regular living costs** replaces that budget
+from a chosen date. **Add an expense** adds a recurring or one-time cost. Add
+childcare only if it is not already included in regular living costs.
 
-Longevity supports specified planning ages for both adults or a request to sample
-lifespans later. For sampling intent, record the life-table source, version, basis,
-and adult classifications when known. No mortality samples are generated here.
+In Retirement, enter the first full year each person will no longer work. For
+periods with only one person retired, choose to continue regular living costs or
+enter a different total household budget. Enter the budget for both people retired
+separately. These amounts replace regular living costs; extras such as childcare
+keep their own end dates.
 
-After saving profiles, choose **Plans → New combined plan**. Choose each component
-from its library and a starting Wealth snapshot. Use **Edit plan Household** for
-copied family facts and explicit adult alignment. Use **Map plan Wealth** to review
-owner mappings, select the accounts covered by the portfolio strategy, and enter
-reserved cash. Return to Plans and save.
+**Living costs after one person dies** is the remaining person's total household
+budget. It can apply before retirement too. Enter it explicitly; the app does not
+halve a two-person budget. Under **How long to plan for**, choose each person's
+planning age, with optional ranges. Mortality-model settings can be recorded for
+later sampling; no samples run yet.
 
-Each selection embeds the reviewed source contents. Editing or deleting a source
-cannot change a saved Plan. **Replace from library** is explicit; changing Work or
-Longevity clears the corresponding adult alignment, and replacing Wealth clears
-account/owner bindings and reserved cash for review. **Newer version available**
-and **Source no longer in library** describe provenance, not a changed Plan.
+### Enter investments and economic assumptions
 
-**Needs input** identifies missing values, timing conflicts, inconsistent reference
-years and unresolved mappings. **Inputs entered** means the capture fields are
-present and consistent; it does not mean the plan is ready for a projection. These
-libraries do not run OWL, Monte Carlo simulations, future taxes, withdrawals or
-retirement-readiness calculations.
+In Investments, saving instructions assign new money to goals. Portfolio strategy
+sets the mix of stocks, bonds, and cash, totaling 100%. Choose a constant mix or a
+gradual transition. Allocation dates can follow either person's retirement or the
+later retirement date. Actual holdings remain in Wealth.
 
-Raw drafts, including invalid text, survive category changes and visits to Compare
-within a session. Each category has its own drafts. **Refresh** reads current saved
-records; **Discard edits and reload inputs** explicitly replaces a draft. Concurrent
-saves or deletes cannot overwrite a newer revision. Category backups export current
-valid inputs; imports create new outer identities and retain embedded provenance,
-without populating other libraries. The import limit is 1 MB.
+In Economy, enter inflation and average yearly compound returns. Returns include
+inflation and are **after fees, before tax**. Ranges are alternative assumptions,
+not probabilities or limits on one-year market movements. Optional simulation
+details record volatility (yearly fluctuations) and correlation (how returns move
+together). Leave them blank until the simulation method is chosen.
 
-An annual plan's **Create assumption profiles from this annual plan** section
-previews Work, Spending and saving instructions. Calculate current annual edits
-first, then create three unsaved drafts for separate review. The conversion uses
-inputs only: monthly consumption is multiplied by 12, care-credit eligibility is
-not added again, and calculated taxes or cash surplus are not copied as pay.
+### Hold some choices fixed and vary others
+
+Choose **Plans → New combined plan**, select a Wealth snapshot, and choose saved
+scenarios from each category. One selected scenario holds that category fixed.
+**Add alternative** varies it. For example, two Work choices and three Spending
+choices make six combinations when Retirement, Investments, and Economy are fixed.
+**Preview combinations** shows the selections; it does not calculate forecasts.
+Numeric ranges remain available for later analysis and are not expanded here.
+
+Use **Edit plan Household** to review family facts and match the people in each
+Work and Retirement choice. Use **Map plan Wealth** to review owners, portfolio
+accounts, and reserved cash. Household and Wealth remain fixed within that Plan.
+Return to Plans and save.
+
+Each choice is a saved copy. Editing or deleting a library scenario does not change
+a saved Plan. **Use only this scenario** replaces all choices in that category;
+**Remove** removes one. A new Work or Retirement selection needs its person mapping
+reviewed. Replacing Wealth clears its account and owner mappings for review.
+
+**What still needs input** lists unknown values and conflicts across the selected
+combinations. Saving inputs does not run a projection, tax calculation, or retirement
+analysis. Annual calculations remain available separately under Plans.
+
+Drafts survive category changes and visits to Compare within a browser session.
+**Discard edits and reload inputs** restores a saved version. Concurrent saves
+cannot overwrite a newer revision. Category backups export valid inputs; imports
+create a new draft. The import limit is 1 MB.
+
+An annual plan's **Create assumption profiles from this annual plan** action opens
+Work, Spending, and Investments drafts. It copies pay and vesting for the recorded
+year, converts monthly spending to annual amounts, and copies saving instructions.
+It does not copy calculated taxes or cash surplus as income.
 
 ## Household and goals
 

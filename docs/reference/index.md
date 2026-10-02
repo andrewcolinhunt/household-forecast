@@ -71,21 +71,22 @@ these models calculates financial outcomes or calls the annual tax engine.
 
 | Type | Content |
 | --- | --- |
-| `Exploration[T]` | Nullable central value, optional paired lower/upper alternatives, notes |
+| `Exploration[T]` | Nullable central value, optional paired lower/upper alternatives |
 | `TimeAnchor` | Calendar year, or offset from household adult 1, adult 2 or both retirements |
-| `WorkAssumptions` | Money year, two ordered adult work slots, retirement choices, employment phases, vesting, dated option events and RSU tax funding |
-| `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions and optional survivor budget |
+| `WorkAssumptions` | Money year, two ordered adult work slots, employment phases, vesting, dated option events and RSU tax funding |
+| `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions |
 | `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and employer-stock intention |
-| `EconomicAssumptions` | Inflation and nominal compound return outlooks, fees, forecast horizon, optional annual volatility and correlation |
-| `LongevityAssumptions` | Two adult slots with planning ages, or mortality-sampling intent and table metadata |
+| `EconomicAssumptions` | Inflation and compound returns after fees and before tax; optional annual volatility and correlation |
+| `RetirementAssumptions` | Two adult slots with retirement years and planning ages; one-person, both-retired and after-death household budgets; optional mortality-sampling intent |
 | `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
-| `ProfileSelection` | Source UUID/revision/name plus an exact validated copy of a profile |
+| `ProfileSelection` | Source UUID/revision/name plus an exact validated copy and optional reviewed adult mapping |
 | `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed adult/owner mappings and portfolio account IDs |
-| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 1, UUID, revision, aware timestamp and discriminated `inputs` |
+| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 2, UUID, revision, aware timestamp and discriminated `inputs` |
 
-The six input kinds are `work`, `spending`, `investments`, `economy`, `longevity`,
-and `plan`. Household is embedded, not a seventh library. Nested Plans and duplicate
-component kinds are rejected. Existing annual and Wealth document schemas stay
+The six input kinds are `work`, `spending`, `investments`, `economy`, `retirement`,
+and `plan`. Household is embedded, not a seventh library. Nested Plans and duplicate source IDs are rejected. Several selections of the
+same kind represent alternatives. `combination_count` counts their cross-product;
+`combinations()` yields independent selections without calculating results. Existing annual and Wealth document schemas stay
 unchanged.
 
 Money uses finite decimal strings in USD, with at most two decimal places. Blank
@@ -103,11 +104,15 @@ Work and recurring spending intervals are start-inclusive, end-exclusive.
 `TimeAnchor.resolve()` performs date resolution only. The `both` anchor uses the
 later retirement year; missing required dates remain unresolved. Spending checks
 inspect entered change boundaries for negative consumption without creating a
-financial projection. Replacements affect only the baseline.
+financial projection. Replacements affect only the baseline. Retirement budgets
+replace regular costs with the total appropriate to the retired people. A
+`RetirementBudget` records an unknown choice, continuation of regular costs, or
+a replacement amount. After-death costs take precedence over the two-person
+budget; dated extras remain separate.
 
 Portfolio mixes use equities, fixed income and cash, totaling exactly 1. A gradual
 policy records `linear_then_hold` interpolation intent; no portfolio path is
-computed. Economy returns use `nominal_compound_before_fees_and_taxes`, distinct
+computed. Economy returns use `nominal_compound_after_fees_before_tax`, distinct
 from arithmetic means of annual random returns. Volatility and correlation order
 is equities, fixed income, cash, inflation. Entered correlation matrices must be
 4×4, finite, symmetric, diagonal 1, bounded by [-1, 1], and positive semidefinite.
@@ -115,7 +120,7 @@ A missing matrix remains unknown.
 
 `missing_details(inputs)` reports capture omissions and combination conflicts.
 `select_profile()` and `replace_profile()` copy validated contents. Replacing Work
-or Longevity clears adult alignment. `replace_wealth()` clears portfolio membership,
+or Retirement clears adult alignment. `replace_wealth()` clears portfolio membership,
 owner mappings and reserved cash. Row IDs must belong to the embedded snapshot;
 names and positions are never used as automatic identity matches.
 
@@ -135,6 +140,27 @@ catalogue records.
 `import_planning_backup(bytes) -> PlanningInputs` validates the declared envelope,
 version, payload and 1 MB limit, then discards the outer identity/revision. Embedded
 copies and their provenance survive; the import does not populate source libraries.
+
+### Migrate earlier planning inputs
+
+Version-one planning documents require an explicit migration before this app can
+read them. Run `scripts/migrate_planning_retirement.py preview DIRECTORY` with the
+database-owner connection in `FINANCIAL_MODEL_DATABASE_URL`. The private directory
+contains originals, settings, and validated proposals. `apply DIRECTORY` locks the
+table, checks that nothing changed, and updates documents and constraints in one
+transaction. Other financial tables are not modified.
+
+Optional `--settings FILE` supplies a JSON `money_year` and `retirement_rows`
+(source UUIDs mapped to reviewed row indices). These identify undated retirement
+budgets without guessing from labels. Ambiguous retirement timing stops conversion.
+Originals remain available for recovery. Version-one backups are not imported
+through the version-two editor.
+
+Known fees convert all return assumptions with `(1 + return) * (1 - fee) - 1`.
+When no fee was recorded, numeric rates stay unchanged and a note asks the user to
+review their new after-fee meaning. Retirement dates and spending move into new
+Retirement records as needed, including independent copies inside Plans. Person
+mappings are retained explicitly.
 
 ## Calculate a scenario
 

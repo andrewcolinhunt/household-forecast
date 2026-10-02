@@ -59,7 +59,7 @@ income, expense, tax, or asset assumption.
 | Planning question | Status |
 | --- | --- |
 | How do supported job and full-year CA/WA alternatives change annual cash, taxes, saving, and equity? | Implemented in the annual model. |
-| Can we save and mix work, spending, portfolio, economic and longevity assumptions from a chosen Wealth snapshot? | Implemented as input collection and saved combinations; no projection is calculated. |
+| Can we save and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as input collection and saved combinations; no projection is calculated. |
 | How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Planned: projecting from captured balances, dated changes and growth assumptions, with multi-year tax treatment. |
 | Can each scenario fund a specified retirement lifestyle, and for how long? | Planned: retirement income, account withdrawals, taxes, and spending over time. |
 | How sensitive is the comparison to returns, inflation, employment changes, or employer-share values? | Planned: comparable alternative assumptions, followed by simulations where useful. |
@@ -82,10 +82,16 @@ requires a spending target, income and withdrawal assumptions, and a planning
 horizon; reaching an asset total alone does not establish that someone can
 retire.
 
+A combined Plan can hold categories fixed while varying others: two Work choices
+and three Spending choices create six combinations under the same retirement and
+economic assumptions. The current app saves and previews these combinations.
+Future forecasts will show wealth over time and whether funds last through both
+lifetimes.
+
 A combined Plan embeds its selected inputs. A later library edit does not change
 that plan; replacing a selection is explicit. This makes alternatives reproducible
 while allowing the same source assumptions to be reused. Household, Work, Spending,
-Investments, Economy and Longevity retain separate meanings. Saving instructions
+Retirement, Investments, and Economy retain separate meanings. Saving instructions
 allocate additions to goals; portfolio targets describe asset mix; Wealth describes
 what is already owned.
 
