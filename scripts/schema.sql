@@ -56,3 +56,15 @@ CREATE TABLE IF NOT EXISTS planning_documents (
     CHECK ((document -> 'inputs' ->> 'kind'
            IN ('work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE)
 );
+
+
+-- Forecasts are inserted once; the runtime role only needs SELECT and INSERT.
+CREATE TABLE IF NOT EXISTS forecast_runs (
+    id UUID PRIMARY KEY,
+    document JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    CHECK ((document ->> 'id') IS NOT DISTINCT FROM id::text),
+    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1'),
+    CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'forecast'),
+    CHECK (((document ->> 'created_at')::timestamptz) IS NOT DISTINCT FROM created_at)
+);

@@ -778,6 +778,9 @@ def main() -> None:
             st.Page(
                 str(COMPARE_PAGE), title="Compare annual plans", url_path="compare"
             ),
+            st.Page(
+                str(PAGE_DIR / "forecast.py"), title="Forecast", url_path="forecast"
+            ),
         ],
         position="top",
     )
