@@ -121,6 +121,71 @@ def test_position_rejects_invalid_money(value: str) -> None:
         AccountPosition(label="Account", balance=value)
     with pytest.raises(ValidationError):
         DebtPosition(label="Debt", amount_owed=value)
+    with pytest.raises(ValidationError):
+        AccountPosition(label="Account", cost_basis=value)
+    with pytest.raises(ValidationError):
+        DebtPosition(label="Debt", annual_payment=value)
+
+
+@pytest.mark.parametrize("value", ["-0.01", "1.01", "NaN", "Infinity"])
+def test_debt_rejects_invalid_interest_rate(value: str) -> None:
+    with pytest.raises(ValidationError):
+        DebtPosition(label="Debt", interest_rate=value)
+
+
+@pytest.mark.parametrize("owner", [0, 3, "Named owner"])
+def test_account_rejects_unknown_household_slot(owner: object) -> None:
+    with pytest.raises(ValidationError):
+        AccountPosition.model_validate({"label": "Account", "owner": owner})
+
+
+def test_existing_wealth_documents_leave_forecast_facts_unknown() -> None:
+    saved = SavedWealthSnapshot.model_validate(
+        {
+            "schema_version": 2,
+            "snapshot": {
+                "as_of": "2026-01-01",
+                "accounts": [{"label": "Adult 1 Roth", "balance": "100"}],
+                "debts": [{"label": "Loan", "amount_owed": "200"}],
+            },
+        }
+    )
+    account, debt = saved.snapshot.accounts[0], saved.snapshot.debts[0]
+    assert account.owner is None
+    assert account.cost_basis is None
+    assert debt.annual_payment is None
+    assert debt.interest_rate is None
+    assert SavedWealthSnapshot.model_validate_json(saved.model_dump_json()) == saved
+
+
+def test_forecast_facts_round_trip_without_changing_recorded_wealth() -> None:
+    saved = SavedWealthSnapshot(
+        snapshot=WealthSnapshot(
+            as_of=date(2026, 1, 1),
+            accounts=(
+                AccountPosition(
+                    label="Account",
+                    balance="100.01",
+                    tax_treatment="taxable",
+                    invested_in="stocks",
+                    owner=2,
+                    cost_basis="120.23",
+                ),
+            ),
+            debts=(
+                DebtPosition(
+                    label="Loan",
+                    amount_owed="30.04",
+                    annual_payment="12.34",
+                    interest_rate="0.0575",
+                ),
+            ),
+        )
+    )
+    restored = SavedWealthSnapshot.model_validate_json(saved.model_dump_json())
+    assert restored == saved
+    assert restored.snapshot.net_recorded == Decimal("69.97")
+    assert not restored.snapshot.missing_details
 
 
 def test_snapshot_rejects_repeated_ids_across_accounts_and_debts() -> None:

@@ -42,6 +42,8 @@ class AccountPosition(ValueModel):
     tax_treatment: TaxTreatment = "unknown"
     invested_in: InvestmentType = "unknown"
     mix: AssetMix | None = None
+    owner: Literal[1, 2] | None = None
+    cost_basis: Money | None = None
 
     @model_validator(mode="after")
     def validate_mix(self) -> Self:
@@ -69,6 +71,8 @@ class DebtPosition(ValueModel):
     id: UUID = Field(default_factory=uuid4)
     label: Label
     amount_owed: Money | None = None
+    annual_payment: Money | None = None
+    interest_rate: Rate | None = None
 
 
 class WealthSnapshot(ValueModel):

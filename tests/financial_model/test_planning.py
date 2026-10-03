@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from financial_model.model import evaluate_scenario
 from financial_model.planning import (
     INPUT_ADAPTER,
+    AdultRetirement,
     AdultWork,
     Budget,
     EconomicAssumptions,
@@ -188,6 +189,81 @@ def test_economy_optional_statistics_remain_unknown():
     assert valid.correlation[0][1] == 0
     with pytest.raises(ValidationError):
         EconomicAssumptions(name="Bad", volatility=(-1, None, None, None))
+
+
+def test_existing_scenarios_keep_new_forecast_facts_unknown():
+    retirement = RetirementAssumptions(name="Existing", money_year=2026)
+    old = retirement.model_dump(mode="json")
+    old.pop("health_costs_in_budget")
+    for adult in old["adults"]:
+        for field in (
+            "social_security",
+            "claiming_age",
+            "pension",
+            "pension_start_age",
+            "pension_survivor_fraction",
+            "health_before_65",
+            "health_from_65",
+            "hsa_eligible_before_65",
+            "hsa_eligible_from_65",
+        ):
+            adult.pop(field)
+    loaded = RetirementAssumptions.model_validate(old)
+    assert loaded.adults[0].social_security is None
+    assert loaded.adults[0].pension is None
+    assert loaded.adults[0].health_before_65 is None
+    assert loaded.health_costs_in_budget == "included"
+    economy = EconomicAssumptions(name="Existing")
+    assert economy.stock_dividend_yield is None
+    assert economy.bond_interest_yield is None
+
+
+def test_benefits_survive_plan_copy_and_person_mapping():
+    source = SavedPlanningDocument(
+        inputs=RetirementAssumptions(
+            name="Benefits",
+            adults=(
+                AdultRetirement(
+                    slot=1,
+                    name="B",
+                    social_security=30000,
+                    claiming_age=70,
+                    pension=20000,
+                    pension_start_age=60,
+                    pension_survivor_fraction="0.5",
+                    health_before_65=12000,
+                    health_from_65=6000,
+                    hsa_eligible_before_65=4000,
+                    hsa_eligible_from_65=2000,
+                ),
+                AdultRetirement(slot=2, name="A", social_security=0, pension=0),
+            ),
+        )
+    )
+    copied = select_profile(source).model_copy(update={"adult_mapping": (2, 1)})
+    plan = SavedPlanningDocument(
+        inputs=PlanningScenario(name="Plan", components=(copied,))
+    )
+    restored = SavedPlanningDocument.model_validate_json(plan.model_dump_json())
+    retirement = restored.inputs.components[0]
+    assert retirement.adult_mapping == (2, 1)
+    assert retirement.inputs.adults[0].social_security == 30000
+    assert retirement.inputs.adults[0].hsa_eligible_from_65 == 2000
+    assert retirement.inputs.adults[1].pension == 0
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"health_before_65": 2000, "hsa_eligible_before_65": 2001},
+        {"health_from_65": 2000, "hsa_eligible_from_65": 2001},
+        {"claiming_age": 61},
+        {"pension_survivor_fraction": "1.01"},
+    ],
+)
+def test_retirement_forecast_inputs_validate_eligibility_and_benefits(fields):
+    with pytest.raises(ValidationError):
+        AdultRetirement(slot=1, name="A", **fields)
 
 
 def test_lifespan_sampling_intent_and_age_validation():
