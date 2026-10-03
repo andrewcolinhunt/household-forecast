@@ -40,7 +40,7 @@ def test_forecast_actual_retirement_tax_grossup_matches_bracket_equation():
     def edit(data):
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
         account.update(label="Pretax", balance=200000, tax_treatment="tax_deferred")
-        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+        account["owner"] = 1
         _profile(data, "retirement")["both_retired"]["amount"]["central"] = 60000
 
     rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
@@ -64,11 +64,8 @@ def test_forecast_actual_taxes_follow_cash_taxable_pretax_roth_order():
             _account("Roth", 30000, "roth"),
         ]
         data["plans"][0]["wealth"]["snapshot"]["accounts"] = accounts
-        data["details"]["accounts"] = [
-            {"account_id": accounts[1]["id"], "cost_basis": 25000},
-            {"account_id": accounts[2]["id"], "owner": 1},
-            {"account_id": accounts[3]["id"], "owner": 1},
-        ]
+        accounts[1]["cost_basis"] = 25000
+        accounts[2]["owner"] = accounts[3]["owner"] = 1
         _profile(data, "retirement")["both_retired"]["amount"]["central"] = 180000
 
     row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
@@ -93,7 +90,7 @@ def test_forecast_partial_year_tax_uses_annualized_income_then_prorates_once():
         snapshot["as_of"] = "2026-07-02"
         account = snapshot["accounts"][0]
         account.update(balance=200000, tax_treatment="tax_deferred")
-        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+        account["owner"] = 1
         _profile(data, "retirement")["both_retired"]["amount"]["central"] = 60000
 
     first = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
@@ -108,10 +105,8 @@ def test_forecast_realized_loss_carry_is_consumed_once_each_year():
     def edit(data):
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
         account.update(balance=100000, invested_in="stocks")
-        data["details"]["accounts"] = [
-            {"account_id": account["id"], "cost_basis": 100000}
-        ]
-        data["details"]["incomes"][0].update(
+        account["cost_basis"] = 100000
+        _profile(data, "retirement")["adults"][0].update(
             pension=60000, pension_start_age=60, pension_survivor_fraction=0
         )
         _profile(data, "retirement")["both_retired"]["amount"]["central"] = 70000
@@ -146,10 +141,8 @@ def test_forecast_funds_expenses_at_discontinuous_child_credit_threshold():
         ]
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
         account.update(balance=10000, invested_in="stocks")
-        data["details"]["accounts"] = [
-            {"account_id": account["id"], "cost_basis": 20000}
-        ]
-        data["details"]["incomes"][0].update(
+        account["cost_basis"] = 20000
+        _profile(data, "retirement")["adults"][0].update(
             pension=400100, pension_start_age=60, pension_survivor_fraction=0
         )
         retirement = _profile(data, "retirement")
@@ -174,7 +167,7 @@ def test_forecast_survivor_with_no_own_ss_receives_spousal_survivor_benefit():
         retire = _profile(data, "retirement")
         retire["adults"][0]["age"]["central"] = 67
         retire["adults"][1]["age"]["central"] = 68
-        first, second = data["details"]["incomes"]
+        first, second = _profile(data, "retirement")["adults"]
         first["social_security"] = 20000
         second.update(social_security=0, pension=60000, pension_survivor_fraction=0)
 
@@ -192,7 +185,7 @@ def test_forecast_future_market_path_cannot_change_prior_withdrawals():
         account.update(
             balance=250000, invested_in="stocks", tax_treatment="tax_deferred"
         )
-        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+        account["owner"] = 1
         _profile(data, "retirement")["both_retired"]["amount"]["central"] = 60000
         data["settings"].update(
             mode="historical",
@@ -251,13 +244,12 @@ def test_forecast_hsa_growth_and_qualified_withdrawal_use_state_basis(state):
         hsa = _account("HSA", 100000, "hsa", "stocks")
         data["plans"][0]["wealth"]["snapshot"]["accounts"].append(hsa)
         data["plans"][0]["household"]["residence"][0]["location"] = state
-        data["details"]["accounts"] = [
-            {"account_id": hsa["id"], "owner": 1, "cost_basis": 50000}
-        ]
-        data["details"]["stock_dividend_yield"] = ".02"
-        for income in data["details"]["incomes"]:
+        hsa.update(owner=1, cost_basis=50000)
+        _profile(data, "economy")["stock_dividend_yield"] = ".02"
+        _profile(data, "retirement")["health_costs_in_budget"] = "additional"
+        for income in _profile(data, "retirement")["adults"]:
             income.update(hsa_eligible_before_65=0, hsa_eligible_from_65=0)
-        data["details"]["incomes"][0].update(
+        _profile(data, "retirement")["adults"][0].update(
             pension=100000,
             pension_start_age=60,
             pension_survivor_fraction=0,

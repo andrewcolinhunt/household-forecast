@@ -9,88 +9,12 @@ from uuid import UUID, uuid4
 from pydantic import AwareDatetime, Field, model_validator
 
 from financial_model.planning import PlanningScenario
-from financial_model.schemas import Money, Rate, ValueModel
+from financial_model.schemas import ValueModel
 
-FORECAST_VERSION: Final = "1"
+FORECAST_VERSION: Final = "2"
 Finite = Annotated[float, Field(allow_inf_nan=False)]
 Probability = Annotated[Finite, Field(ge=0, le=1)]
 AnnualRate = Annotated[Finite, Field(gt=-1)]
-
-
-class ForecastAccount(ValueModel):
-    """Projection details without changing the simplified Wealth inventory."""
-
-    account_id: UUID
-    owner: Literal[1, 2] | None = None
-    cost_basis: Money | None = None
-
-
-class ForecastIncome(ValueModel):
-    """Annual retirement income in the Plan's reference-year purchasing power."""
-
-    owner: Literal[1, 2]
-    social_security: Money | None = None
-    claiming_age: Annotated[int, Field(ge=62, le=70)] = 67
-    pension: Money | None = None
-    pension_start_age: Annotated[int, Field(ge=18, le=100)] = 65
-    pension_survivor_fraction: Rate | None = None
-    health_before_65: Money | None = None
-    health_from_65: Money | None = None
-    hsa_eligible_before_65: Money | None = None
-    hsa_eligible_from_65: Money | None = None
-
-    @model_validator(mode="after")
-    def validate_health(self) -> Self:
-        """Keep explicitly eligible HSA expenses within the health budget."""
-        for health, eligible in (
-            (self.health_before_65, self.hsa_eligible_before_65),
-            (self.health_from_65, self.hsa_eligible_from_65),
-        ):
-            if eligible is not None and health is not None and eligible > health:
-                msg = (
-                    "HSA-eligible expenses cannot exceed the additional health budget."
-                )
-                raise ValueError(msg)
-        return self
-
-
-class ForecastDebt(ValueModel):
-    """Nominal debt terms; payment includes principal and interest."""
-
-    debt_id: UUID
-    annual_payment: Money | None = None
-    interest_rate: Rate | None = None
-
-
-class ForecastDetails(ValueModel):
-    """Explicit account, benefit, and tax assumptions needed beyond saved Plans."""
-
-    accounts: tuple[ForecastAccount, ...] = ()
-    incomes: tuple[ForecastIncome, ForecastIncome] = (
-        ForecastIncome(owner=1),
-        ForecastIncome(owner=2),
-    )
-    debts: tuple[ForecastDebt, ...] = ()
-    stock_dividend_yield: Rate | None = None
-    bond_interest_yield: Rate | None = None
-    first_year_events: Literal["remaining", "already_in_snapshot"] | None = None
-    tax_policy: Literal["2026_rules_constant_purchasing_power"] = (
-        "2026_rules_constant_purchasing_power"
-    )
-    assumptions_confirmed: bool = False
-
-    @model_validator(mode="after")
-    def validate_identities(self) -> Self:
-        """Reject repeated metadata and mismatched household slots."""
-        if tuple(i.owner for i in self.incomes) != (1, 2):
-            msg = "Benefit inputs must use household owners 1 and 2, in order."
-            raise ValueError(msg)
-        for rows, field in ((self.accounts, "account_id"), (self.debts, "debt_id")):
-            ids = [getattr(row, field) for row in rows]
-            if len(ids) != len(set(ids)):
-                msg = "Forecast details cannot contain duplicate accounts or debts."
-                raise ValueError(msg)
-        return self
 
 
 class ForecastSettings(ValueModel):
@@ -125,7 +49,6 @@ class ForecastRequest(ValueModel):
 
     name: Annotated[str, Field(min_length=1, max_length=120)] = "Scenario forecast"
     plans: Annotated[tuple[PlanningScenario, ...], Field(min_length=1, max_length=4)]
-    details: ForecastDetails
     settings: ForecastSettings = Field(default_factory=ForecastSettings)
 
     @model_validator(mode="after")
@@ -213,8 +136,8 @@ class SavedForecast(ValueModel):
     """An immutable run with inputs sufficient to regenerate every simulated path."""
 
     document_type: Literal["forecast"] = "forecast"
-    schema_version: Literal[1] = 1
-    model_version: Literal["1"] = FORECAST_VERSION
+    schema_version: Literal[2] = 2
+    model_version: Literal["2"] = FORECAST_VERSION
     id: UUID = Field(default_factory=uuid4)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     numpy_version: str

@@ -63,8 +63,18 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
     id UUID PRIMARY KEY,
     document JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    CHECK ((document ->> 'id') IS NOT DISTINCT FROM id::text),
-    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1'),
-    CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'forecast'),
-    CHECK (((document ->> 'created_at')::timestamptz) IS NOT DISTINCT FROM created_at)
+    CONSTRAINT forecast_runs_document_id
+        CHECK ((document ->> 'id') IS NOT DISTINCT FROM id::text),
+    CONSTRAINT forecast_runs_document_type
+        CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'forecast'),
+    CONSTRAINT forecast_runs_document_timestamp
+        CHECK (((document ->> 'created_at')::timestamptz) IS NOT DISTINCT FROM created_at)
 );
+
+-- Keep original immutable runs intact while allowing the current format.
+-- Replace the version-1 constraint created by the original table definition.
+ALTER TABLE forecast_runs
+    DROP CONSTRAINT IF EXISTS forecast_runs_document_check1,
+    DROP CONSTRAINT IF EXISTS forecast_runs_schema_version,
+    ADD CONSTRAINT forecast_runs_schema_version
+        CHECK ((document ->> 'schema_version' IN ('1', '2')) IS TRUE);

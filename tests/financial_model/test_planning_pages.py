@@ -486,6 +486,158 @@ def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation
     assert not page.error
 
 
+def test_retirement_benefits_and_health_preserve_inputs_across_navigation():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Retirement")
+    press(page, "New Retirement assumptions")
+    field(page, "text_input", "Adult 1 Social Security ($/year)").set_value(
+        "32000"
+    ).run()
+    field(page, "number_input", "Social Security claiming age").set_value(70).run()
+    field(page, "selectbox", "Adult 1 pension").select("pension").run()
+    field(page, "text_input", "Pension ($/year)").set_value("12000").run()
+    field(page, "number_input", "Pension starts at age").set_value(60).run()
+    field(page, "text_input", "Pension paid to survivor (%)").set_value("50").run()
+    field(page, "selectbox", "Adult 2 pension").select("none").run()
+    field(page, "text_input", "Adult 1 health costs before age 65 ($/year)").set_value(
+        "10000"
+    ).run()
+    assert field(page, "selectbox", "These health costs are").value == "included"
+    tab(page, "Economy")
+    tab(page, "Retirement")
+    data = raw(page, "retirement")
+    assert data["adults"][0]["social_security"] == "32000"
+    assert data["adults"][0]["claiming_age"] == 70
+    assert data["adults"][0]["pension_start_age"] == 60
+    assert data["adults"][0]["pension_survivor_fraction"] == "0.5"
+    assert data["adults"][0]["health_before_65"] == "10000"
+    assert data["adults"][1]["pension"] == "0"
+    assert (
+        len([w for w in page.number_input if w.label == "Pension starts at age"]) == 1
+    )
+    field(page, "selectbox", "Adult 1 pension").select("none").run()
+    assert not any(w.label == "Pension starts at age" for w in page.number_input)
+    assert raw(page, "retirement")["adults"][0]["pension"] == "0"
+    assert not page.error
+
+
+def test_economy_yields_are_separate_saved_income_portions_of_returns():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Economy")
+    press(page, "New Economy assumptions")
+    field(page, "text_input", "Stock return (%)").set_value("7").run()
+    field(page, "text_input", "Stock dividend yield (%)").set_value("2").run()
+    field(page, "text_input", "Bond interest yield (%)").set_value("4").run()
+    tab(page, "Retirement")
+    tab(page, "Economy")
+    data = raw(page, "economy")
+    assert data["equities"]["central"] == "0.07"
+    assert data["stock_dividend_yield"] == "0.02"
+    assert data["bond_interest_yield"] == "0.04"
+    assert not page.error
+
+
+@pytest.mark.parametrize("rename_person", [False, True])
+def test_refresh_one_profile_preserves_alternatives_and_reviews_person_changes(
+    monkeypatch, rename_person
+):
+    source = SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
+    alternative = SavedPlanningDocument(inputs=WorkAssumptions(name="Other work"))
+    selection = select_profile(source).model_copy(update={"adult_mapping": (2, 1)})
+    plan = PlanningScenario(
+        name="Plan", components=(selection, select_profile(alternative))
+    )
+    data = plan.model_dump(mode="json")
+    updated = source.model_dump(mode="json")
+    updated["revision"] = 2
+    updated["inputs"]["notes"] = "Updated assumptions"
+    if rename_person:
+        updated["inputs"]["adults"][0]["name"] = "Different person"
+    monkeypatch.setattr(planning_pages, "_changed_rows", lambda: None)
+    planning_pages._refresh_profile_copy(
+        data, SavedPlanningDocument.model_validate(updated)
+    )
+    assert data["components"][0]["source_revision"] == 2
+    assert data["components"][0]["inputs"]["notes"] == "Updated assumptions"
+    assert data["components"][0]["adult_mapping"] == (None if rename_person else [2, 1])
+    assert data["components"][1] == plan.model_dump(mode="json")["components"][1]
+
+
+def _readiness_app(plan_json):
+    from financial_model.planning import PlanningScenario
+    from financial_model.planning_pages import _status
+
+    _status(PlanningScenario.model_validate_json(plan_json))
+
+
+def test_plan_readiness_distinguishes_fixed_and_simulated_requirements(monkeypatch):
+    import runpy
+
+    from financial_model import forecast
+
+    helper = runpy.run_path(str(Path(__file__).with_name("test_forecast.py")))
+    plan = helper["forecast_request"]().plans[0]
+    monkeypatch.setattr(
+        forecast,
+        "calculate_forecast",
+        lambda *args, **kwargs: pytest.fail("Readiness must not calculate"),
+    )
+    page = AppTest.from_function(_readiness_app, args=(plan.model_dump_json(),)).run()
+    assert not page.exception
+    assert any(s.value == "Ready for a fixed forecast" for s in page.success)
+    assert any(
+        "Monte Carlo assumptions are also complete" in c.value for c in page.caption
+    )
+    data = plan.model_dump(mode="json")
+    economy = next(
+        c["inputs"] for c in data["components"] if c["inputs"]["kind"] == "economy"
+    )
+    economy["volatility"] = [None] * 4
+    page = AppTest.from_function(
+        _readiness_app, args=(PlanningScenario.model_validate(data).model_dump_json(),)
+    ).run()
+    assert not page.exception
+    assert page.success
+    assert any("all four economic volatilities" in t.value for t in page.text)
+    retirement = next(
+        c["inputs"] for c in data["components"] if c["inputs"]["kind"] == "retirement"
+    )
+    retirement["adults"][0]["health_before_65"] = None
+    retirement["health_costs_in_budget"] = "additional"
+    page = AppTest.from_function(
+        _readiness_app, args=(PlanningScenario.model_validate(data).model_dump_json(),)
+    ).run()
+    assert not page.exception
+    assert not page.success
+    assert any("Retirement:" in t.value and "health" in t.value for t in page.text)
+
+
+def test_large_plan_defers_forecast_readiness_until_combinations_are_selected(
+    monkeypatch,
+):
+    import runpy
+    from uuid import uuid4
+
+    from financial_model import forecast
+
+    helper = runpy.run_path(str(Path(__file__).with_name("test_forecast.py")))
+    plan = helper["forecast_request"]().plans[0]
+    spending = next(c for c in plan.components if c.inputs.kind == "spending")
+    alternatives = tuple(
+        spending.model_copy(update={"source_id": uuid4()}) for _ in range(4)
+    )
+    plan = plan.model_copy(update={"components": plan.components + alternatives})
+    monkeypatch.setattr(
+        forecast,
+        "forecast_issues",
+        lambda *args: pytest.fail("Do not expand all forecast combinations"),
+    )
+    page = AppTest.from_function(_readiness_app, args=(plan.model_dump_json(),)).run()
+    assert not page.exception
+    assert any("select combinations in Forecast" in c.value for c in page.caption)
+    assert not page.success
+
+
 def test_economy_hidden_ranges_preserve_invalid_edits_and_clear_explicitly():
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Economy")
@@ -524,6 +676,83 @@ def test_economy_hidden_ranges_preserve_invalid_edits_and_clear_explicitly():
         "upper": None,
     }
     assert not page.error
+
+
+@pytest.mark.integration
+def test_plan_explicit_copy_updates_preserve_other_alternatives(
+    database_url, monkeypatch
+):
+    from financial_model.storage import update_wealth_snapshot
+
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    source = create_planning_document(
+        database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
+    )
+    alternative = create_planning_document(
+        database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Other work"))
+    )
+    wealth = create_wealth_snapshot(
+        database_url,
+        SavedWealthSnapshot(
+            snapshot=WealthSnapshot(
+                as_of=date(2026, 1, 1),
+                accounts=(
+                    AccountPosition(
+                        label="Cash",
+                        balance=100,
+                        invested_in="cash",
+                        tax_treatment="taxable",
+                    ),
+                ),
+            )
+        ),
+    )
+    plan = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=PlanningScenario(
+                name="Plan",
+                wealth=wealth,
+                components=(
+                    select_profile(source).model_copy(update={"adult_mapping": (2, 1)}),
+                    select_profile(alternative),
+                ),
+            )
+        ),
+    )
+    page = AppTest.from_file(str(ENTRY)).run()
+    page.button(key=f"planning_edit_{plan.id}").click().run()
+    newer = update_planning_document(
+        database_url,
+        source.model_copy(
+            update={
+                "inputs": source.inputs.model_copy(
+                    update={"notes": "New benefit inputs"}
+                )
+            }
+        ),
+    )
+    newer_wealth = update_wealth_snapshot(
+        database_url,
+        wealth.model_copy(
+            update={
+                "snapshot": wealth.snapshot.model_copy(
+                    update={"notes": "Reviewed account basis"}
+                )
+            }
+        ),
+    )
+    page.run()
+    assert not page.exception
+    press(page, "Update this copy")
+    press(page, "Update Wealth copy")
+    assert load_planning_document(database_url, plan.id) == plan
+    press(page, "Save inputs")
+    saved = load_planning_document(database_url, plan.id)
+    assert saved.inputs.components[0].source_revision == newer.revision
+    assert saved.inputs.components[0].adult_mapping == (2, 1)
+    assert saved.inputs.components[1] == plan.inputs.components[1]
+    assert saved.inputs.wealth == newer_wealth
 
 
 @pytest.mark.integration

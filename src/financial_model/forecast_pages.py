@@ -11,9 +11,6 @@ import streamlit as st
 
 from financial_model import input_forms as forms
 from financial_model.forecast_models import (
-    ForecastAccount,
-    ForecastDebt,
-    ForecastDetails,
     ForecastRequest,
     ForecastSettings,
     SavedForecast,
@@ -70,9 +67,6 @@ def _open_run(document: SavedForecast) -> None:
     """Open exactly the saved assumptions without resolving current Plan revisions."""
     st.session_state["forecast_document"] = document
     st.session_state["forecast_loaded_request"] = document.request
-    st.session_state["forecast_details"] = document.request.details.model_dump(
-        mode="json"
-    )
     st.session_state["forecast_settings"] = document.request.settings.model_dump(
         mode="json"
     )
@@ -98,7 +92,10 @@ def _saved_runs(dsn: str | None) -> None:
                     "Forecast storage needs the updated scripts/schema.sql. JSON downloads still work."
                 )
                 records = ()
-            except (psycopg.Error, ValueError):
+            except ValueError as error:
+                st.error(str(error))
+                records = ()
+            except psycopg.Error:
                 st.error(
                     "Saved forecasts could not be read. Try again or open a downloaded JSON file."
                 )
@@ -163,203 +160,37 @@ def _selection(
     return tuple(options[item] for item in selected)
 
 
-def _account_inputs(
-    plan: PlanningScenario, data: dict[str, Any], scope: str, *, california: bool
-) -> None:
-    """Require ownership and basis only where their financial meaning is needed."""
-    if plan.wealth is None:
-        return
-    previous = {row["account_id"]: row for row in data["accounts"]}
-    data["accounts"] = [
-        previous.get(
-            str(account.id),
-            ForecastAccount(account_id=account.id).model_dump(mode="json"),
-        )
-        for account in plan.wealth.snapshot.accounts
-    ]
-    owners = {
-        None: "Unknown",
-        1: plan.household.adults[0].name,
-        2: plan.household.adults[1].name,
-    }
-    for account, row in zip(
-        plan.wealth.snapshot.accounts, data["accounts"], strict=True
-    ):
-        st.markdown(f"**{account.label}** · {account.tax_treatment.replace('_', ' ')}")
-        if account.tax_treatment in {"tax_deferred", "roth", "hsa"}:
-            forms.choice(
-                row,
-                "owner",
-                "Account owner",
-                (None, 1, 2),
-                f"owner_{account.id}_{scope}",
-                labels=owners,
-            )
-        if account.tax_treatment == "taxable" and account.invested_in != "cash":
-            forms.money(
-                row,
-                "cost_basis",
-                "Taxable cost basis ($)",
-                f"basis_{account.id}_{scope}",
-            )
-        if account.tax_treatment == "hsa" and california:
-            forms.money(
-                row,
-                "cost_basis",
-                "California HSA cost basis ($)",
-                f"hsa_basis_{account.id}_{scope}",
-                help_text="State tax basis for the HSA; required when any compared Plan includes California.",
-            )
-
-
-def _income_inputs(plan: PlanningScenario, data: dict[str, Any], scope: str) -> None:
-    """Keep retirement benefits and additional health costs explicit for both adults."""
-    st.caption(
-        f"Annual amounts in {plan.household.reference_year or 'reference-year'} dollars. Health costs apply during retirement, in addition to the Plan's living costs; omit costs already budgeted there. Blank means unknown; enter 0 for none."
-    )
-    for adult, row in zip(plan.household.adults, data["incomes"], strict=True):
-        st.markdown(f"**{adult.name}**")
-        owner = row["owner"]
-        for field, label in (
-            ("social_security", "Annual Social Security ($)"),
-            ("pension", "Annual pension ($)"),
-        ):
-            forms.money(row, field, label, f"{field}_{owner}_{scope}")
-        forms.number(
-            row,
-            "claiming_age",
-            "Social Security claiming age",
-            f"claim_{owner}_{scope}",
-            integer=True,
-            minimum=62,
-            maximum=70,
-        )
-        forms.number(
-            row,
-            "pension_start_age",
-            "Pension starts at age",
-            f"pension_age_{owner}_{scope}",
-            integer=True,
-            minimum=18,
-            maximum=100,
-        )
-        forms.percent(
-            row,
-            "pension_survivor_fraction",
-            "Pension continuing to survivor (%)",
-            f"survivor_{owner}_{scope}",
-        )
-        forms.money(
-            row,
-            "health_before_65",
-            "Annual health costs before 65 ($)",
-            f"health_early_{owner}_{scope}",
-        )
-        forms.money(
-            row,
-            "health_from_65",
-            "Annual health costs from 65 ($)",
-            f"health_late_{owner}_{scope}",
-        )
-        if plan.wealth and any(
-            account.tax_treatment == "hsa" and account.balance
-            for account in plan.wealth.snapshot.accounts
-        ):
-            st.caption(
-                "Enter the portion of those health costs eligible for HSA withdrawals. Determine eligibility explicitly; insurance premiums are not automatically eligible."
-            )
-            forms.money(
-                row,
-                "hsa_eligible_before_65",
-                "Of health costs before 65, HSA-eligible ($)",
-                f"hsa_early_{owner}_{scope}",
-            )
-            forms.money(
-                row,
-                "hsa_eligible_from_65",
-                "Of health costs from 65, HSA-eligible ($)",
-                f"hsa_late_{owner}_{scope}",
-            )
-
-
-def _debt_inputs(plan: PlanningScenario, data: dict[str, Any], scope: str) -> None:
-    """Add debt service independently of consumption to avoid implicit financing."""
-    if plan.wealth is None:
-        return
-    previous = {row["debt_id"]: row for row in data["debts"]}
-    data["debts"] = [
-        previous.get(
-            str(debt.id), ForecastDebt(debt_id=debt.id).model_dump(mode="json")
-        )
-        for debt in plan.wealth.snapshot.debts
-    ]
-    if data["debts"]:
+def _assumptions() -> None:
+    """Explain fixed model conventions without asking for duplicate household facts."""
+    with st.expander("How this forecast works"):
         st.caption(
-            "Debt payments are additional to living costs. Remove any duplicate debt payment from the Plan's spending first."
+            "Financial inputs come from each saved Plan. Edit them in Scenarios, "
+            "update the Plan's copies, and save the Plan before running again."
         )
-    for debt, row in zip(plan.wealth.snapshot.debts, data["debts"], strict=True):
-        st.markdown(f"**{debt.label}**")
-        forms.money(
-            row,
-            "annual_payment",
-            "Annual debt payment ($)",
-            f"debt_pay_{debt.id}_{scope}",
-            help_text="Nominal principal plus interest; enter 0 only if no payments are planned.",
-        )
-        forms.percent(
-            row, "interest_rate", "Debt interest (%)", f"debt_rate_{debt.id}_{scope}"
-        )
-
-
-def _details(plans: tuple[PlanningScenario, ...], scope: str) -> dict[str, Any]:
-    """Retain supplemental facts separately from existing Plan and Wealth documents."""
-    plan = plans[0]
-    california = any(r.location == "CA" for p in plans for r in p.household.residence)
-    data: dict[str, Any] = st.session_state.setdefault(
-        "forecast_details", ForecastDetails().model_dump(mode="json")
-    )
-    with st.expander("Account ownership and taxable basis", expanded=True):
-        _account_inputs(plan, data, scope, california=california)
-    with st.expander("Retirement income and health costs"):
-        _income_inputs(plan, data, scope)
-    with st.expander("Debt payments"):
-        _debt_inputs(plan, data, scope)
-    with st.expander("Tax and annual timing assumptions", expanded=True):
-        forms.percent(
-            data,
-            "stock_dividend_yield",
-            "Stock dividend yield (%)",
-            f"stock_yield_{scope}",
-        )
-        forms.percent(
-            data,
-            "bond_interest_yield",
-            "Bond interest yield (%)",
-            f"bond_yield_{scope}",
-        )
-        forms.choice(
-            data,
-            "first_year_events",
-            "Events in the opening calendar year",
-            (None, "remaining", "already_in_snapshot"),
-            f"events_{scope}",
-            labels={
-                None: "Choose how to treat dated one-time events",
-                "remaining": "Still to happen after the snapshot",
-                "already_in_snapshot": "Already included in the opening balances",
-            },
+        st.caption(
+            "Recurring income and spending are prorated from the Wealth snapshot date. "
+            "One-time expenses listed for the opening year are planned expenses at year end. "
+            "Remove expenses that have already happened from the Plan."
         )
         st.caption(FORECAST_TAX_ASSUMPTION)
         st.caption(
             "Withdrawal policy: required distributions first, then cash, taxable investments, eligible pretax accounts, and Roth funds. Retirement access starts at 60; Roth withdrawals are assumed qualified. Pretax accounts are fully taxable, and retirement accounts pass to the surviving spouse. Taxable sales use proportional average basis and long-term gains, without a basis step-up on death. Stocks use the broad-market return path, including retained employer shares; concentrated-stock risk is not modeled. Annual 401(k) contributions use the regular limit; catch-up contributions are not modeled."
         )
-        forms.check(
-            data,
-            "assumptions_confirmed",
-            "I have reviewed the tax, annual timing, benefit, and withdrawal assumptions",
-            f"confirmed_{scope}",
-        )
-    return data
+
+
+def _scenario_links() -> None:
+    """Send missing-input work to its owning category while retaining forecast setup."""
+    st.caption(
+        "Complete missing inputs in Scenarios. After editing a source, update its copy "
+        "in the Plan and save the Plan."
+    )
+    with st.container(horizontal=True):
+        for category in ("Plans", "Wealth", "Retirement", "Economy"):
+            if st.button(f"Open {category}", key=f"forecast_open_{category}"):
+                st.session_state["pending_category"] = category
+                st.session_state["workspace_target"] = "library"
+                st.session_state.setdefault("workspace_views", {})[category] = "library"
+                st.switch_page("src/financial_model/pages/scenarios.py")
 
 
 def _settings(scope: str) -> dict[str, Any]:
@@ -692,13 +523,12 @@ def forecast_page() -> None:
                 "forecast_name", {"name": "Scenario forecast"}
             )
             forms.text(names, "name", "Forecast name", f"forecast_name_{scope}")
-            details = _details(plans, scope)
+            _assumptions()
             try:
                 settings = _settings(scope)
                 request = ForecastRequest(
                     name=names["name"],
                     plans=plans,
-                    details=ForecastDetails.model_validate(details),
                     settings=ForecastSettings.model_validate(settings),
                 )
                 issues = forecast_issues(request)
@@ -706,11 +536,10 @@ def forecast_page() -> None:
                 st.error(str(error))
                 request, issues = None, ()
             if issues:
-                with st.expander(
-                    f"{len(issues)} details need attention", expanded=True
-                ):
+                with st.expander(f"{len(issues)} scenario inputs need attention"):
                     for issue in issues:
                         st.write(f"• {issue}")
+                _scenario_links()
             if (
                 st.button(
                     "Run forecast",

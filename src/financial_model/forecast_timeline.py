@@ -3,7 +3,8 @@
 Real monetary values retain the common profiles' ``money_year`` purchasing
 power. Nominal contributions, vesting and option exercise prices stay nominal.
 The ledger applies path inflation and prorates recurring flows by year_fraction;
-one-time spending and option events are never prorated. A snapshot describes the
+one-time spending and option events are never prorated. Events scheduled in the
+opening calendar year remain planned year-end expenses. A snapshot describes the
 opening of its as-of date. Retirement stops recurring pay, contributions and
 vesting; dated exercises of already-earned options remain scheduled.
 """
@@ -14,7 +15,7 @@ import math
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Literal, cast
+from typing import cast
 
 from financial_model.planning import (
     PROFILE_KINDS,
@@ -28,8 +29,6 @@ from financial_model.planning import (
     missing_details,
 )
 from financial_model.schemas import ZERO
-
-FirstYearEvents = Literal["remaining", "already_in_snapshot"]
 
 
 @dataclass(frozen=True)
@@ -77,15 +76,11 @@ class CompiledPlan:
     end_years: tuple[int, int]
 
 
-def compile_plan(
-    plan: PlanningScenario, *, first_year_events: FirstYearEvents | None = None
-) -> CompiledPlan:
+def compile_plan(plan: PlanningScenario) -> CompiledPlan:
     """Resolve a complete single combination without forecasting its balances.
 
     Args:
         plan: Reviewed Plan with one selection of every profile kind.
-        first_year_events: Whether first-year one-time events are still to occur
-            or already reflected in a part-year starting snapshot.
 
     Returns:
         Annual inputs through the later person's final planning-age year.
@@ -95,9 +90,6 @@ def compile_plan(
             share-price or sampled-lifespan assumptions.
     """
     profiles = {c.inputs.kind: c.inputs for c in plan.components}
-    if first_year_events not in {None, "remaining", "already_in_snapshot"}:
-        msg = "Choose remaining or already_in_snapshot for first-year events."
-        raise ValueError(msg)
     if len(plan.components) != len(PROFILE_KINDS) or plan.combination_count != 1:
         msg = "Compile exactly one selection of each Plan profile."
         raise ValueError(msg)
@@ -128,8 +120,6 @@ def compile_plan(
             year,
             retirements,
             end_years,
-            fraction,
-            first_year_events,
         )
         recurring, once = _spending(
             spending,
@@ -139,7 +129,6 @@ def compile_plan(
             retirements,
             adults,
             fraction,
-            first_year_events,
         )
         annual.append(
             AnnualInputs(
@@ -194,8 +183,6 @@ def _adults(
     year: int,
     retirements: tuple[int, int],
     end_years: tuple[int, int],
-    fraction: float,
-    first_year_events: FirstYearEvents | None,
 ) -> tuple[AnnualAdultInputs, AnnualAdultInputs]:
     people = []
     reference = plan.household.reference_year
@@ -212,8 +199,6 @@ def _adults(
         if retired and any(e.award and e.award.vesting_shares for e in events):
             msg = f"{worker.name}: new option awards after retirement conflict with the retirement date."
             raise ValueError(msg)
-        if events and not _include_event(fraction, first_year_events, "option events"):
-            events = ()
         people.append(
             AnnualAdultInputs(
                 age=person.age + year - reference,
@@ -282,15 +267,6 @@ def _vesting(worker: AdultWork, year: int) -> tuple[Decimal, Decimal]:
     return real, nominal
 
 
-def _include_event(fraction: float, choice: FirstYearEvents | None, label: str) -> bool:
-    if fraction == 1:
-        return True
-    if choice is None:
-        msg = f"Part-year {label}: specify whether these remain or are already in the snapshot."
-        raise ValueError(msg)
-    return choice == "remaining"
-
-
 def _spending(
     spending: SpendingAssumptions,
     retirement: RetirementAssumptions,
@@ -299,7 +275,6 @@ def _spending(
     retirements: tuple[int, int],
     adults: tuple[AnnualAdultInputs, AnnualAdultInputs],
     fraction: float,
-    first_year_events: FirstYearEvents | None,
 ) -> tuple[Decimal, Decimal]:
     budget = spending.baseline
     replacements = sorted(
@@ -331,9 +306,7 @@ def _spending(
         assert start is not None
         assert adjustment.amount.central is not None
         if adjustment.frequency == "once":
-            if year == start and _include_event(
-                fraction, first_year_events, "one-time spending"
-            ):
+            if year == start:
                 once += adjustment.amount.central
         elif start <= year and (end is None or year < end):
             recurring += adjustment.amount.central

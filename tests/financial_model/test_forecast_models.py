@@ -8,8 +8,6 @@ import pytest
 from pydantic import ValidationError
 
 from financial_model.forecast_models import (
-    ForecastDetails,
-    ForecastIncome,
     ForecastPoint,
     ForecastRequest,
     ForecastSettings,
@@ -25,7 +23,7 @@ def request_input():
         household={"reference_year": 2026},
         wealth={"snapshot": {"as_of": date(2026, 1, 1)}},
     )
-    return ForecastRequest(plans=(plan,), details=ForecastDetails())
+    return ForecastRequest(plans=(plan,))
 
 
 @pytest.fixture
@@ -46,26 +44,12 @@ def point_input():
     }
 
 
-def test_forecast_details_keep_unknown_benefits_distinct_from_zero():
-    details = ForecastDetails()
-    assert details.incomes[0].social_security is None
-    assert details.incomes[0].health_before_65 is None
-    assert details.stock_dividend_yield is None
-    assert not details.assumptions_confirmed
-
-
-def test_forecast_income_rejects_hsa_expenses_above_health_budget():
-    with pytest.raises(ValidationError, match="cannot exceed"):
-        ForecastIncome(owner=1, health_before_65=100, hsa_eligible_before_65=200)
-
-
 def test_forecast_request_allows_residence_choices(request_input):
     original = request_input.plans[0]
     alternative = original.model_dump()
     alternative["household"]["residence"] = [{"year": 2026, "location": "WA"}]
     request = ForecastRequest(
         plans=(original, PlanningScenario.model_validate(alternative)),
-        details=request_input.details,
     )
     assert len(request.plans) == 2
 
@@ -81,7 +65,6 @@ def test_forecast_request_rejects_unfair_comparison(request_input, difference):
     with pytest.raises(ValidationError):
         ForecastRequest(
             plans=(original, PlanningScenario.model_validate(alternative)),
-            details=request_input.details,
         )
 
 

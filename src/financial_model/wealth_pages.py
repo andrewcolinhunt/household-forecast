@@ -19,6 +19,7 @@ from financial_model.storage import (
     delete_wealth_snapshot,
     import_wealth_backup,
     list_wealth_snapshots,
+    load_household,
     update_wealth_snapshot,
 )
 from financial_model.wealth import (
@@ -165,7 +166,63 @@ def _investment_choice(row: dict[str, Any]) -> None:
         st.session_state.pop(_key(row, field), None)
 
 
-def _account_row(row: dict[str, Any]) -> bool:
+def _owner_labels(dsn: str | None) -> dict[int | None, str]:
+    """Label household slots without deriving ownership from account names."""
+    labels: dict[int | None, str] = {None: "Not entered", 1: "Adult 1", 2: "Adult 2"}
+    try:
+        household = (
+            load_household(dsn) if dsn else st.session_state.get("local_household")
+        )
+    except (psycopg.Error, ValueError):
+        return labels
+    if household:
+        labels.update(
+            {
+                i: f"{adult.name} (adult {i})"
+                for i, adult in enumerate(household.adults, 1)
+            }
+        )
+    return labels
+
+
+def _account_tax_details(
+    row: dict[str, Any], owner_labels: dict[int | None, str]
+) -> None:
+    """Keep forecast ownership and basis with the balance they describe."""
+    retirement = row["tax_treatment"] in {"tax_deferred", "roth", "hsa"}
+    basis = row["tax_treatment"] == "hsa" or (
+        row["tax_treatment"] == "taxable" and row["invested_in"] != "cash"
+    )
+    if not retirement and not basis:
+        return
+    with st.expander(f"{row['label']} · tax details"):
+        if retirement:
+            forms.choice(
+                row,
+                "owner",
+                "Account owner",
+                (None, 1, 2),
+                _key(row, "owner"),
+                labels=owner_labels,
+                help_text="Adult 1 and Adult 2 refer to the first and second people in the Plan's household.",
+            )
+        if basis:
+            hsa = row["tax_treatment"] == "hsa"
+            forms.money(
+                row,
+                "cost_basis",
+                "California HSA cost basis ($)" if hsa else "Taxable cost basis ($)",
+                _key(row, "cost_basis"),
+                help_text=(
+                    "California tax basis for this HSA, needed when a Plan includes California. "
+                    if hsa
+                    else "Total purchase cost adjusted for prior transactions, used to calculate gains on sale. "
+                )
+                + "Include cash at face value in the total. Leave blank if unknown.",
+            )
+
+
+def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bool:
     """Keep the four account fields together and open percentages only for Mixed."""
     name, balance, tax, investment, remove = st.columns(
         [3, 2, 2, 2, 0.5], vertical_alignment="center"
@@ -215,10 +272,11 @@ def _account_row(row: dict[str, Any]) -> bool:
                     forms.percent(
                         row["mix"], field, f"{_label(field)} (%)", _key(row, field)
                     )
+    _account_tax_details(row, owner_labels)
     return removed
 
 
-def _contents(data: dict[str, Any]) -> bool:
+def _contents(data: dict[str, Any], owner_labels: dict[int | None, str]) -> bool:
     """Edit account and debt rows without a second holdings inventory."""
     # Keep descriptive remove labels available to screen readers.
     st.html("""<style>
@@ -239,7 +297,7 @@ def _contents(data: dict[str, Any]) -> bool:
             strict=True,
         ):
             column.markdown(label)
-    removed = [row["id"] for row in data["accounts"] if _account_row(row)]
+    removed = [row["id"] for row in data["accounts"] if _account_row(row, owner_labels)]
     data["accounts"] = [row for row in data["accounts"] if row["id"] not in removed]
     added = st.button("Add account", key=_key(data, "add_account"))
     if added:
@@ -263,6 +321,23 @@ def _contents(data: dict[str, Any]) -> bool:
             help=f"Remove {row['label'] or 'debt'}",
         ):
             debt_removed.append(row["id"])
+        with st.expander(f"{row['label']} · repayment terms"):
+            payment, interest = st.columns(2)
+            with payment:
+                forms.money(
+                    row,
+                    "annual_payment",
+                    "Annual payment ($)",
+                    _key(row, "annual_payment"),
+                    help_text="Total principal and interest paid per year. Forecasts add this to living costs; exclude it from the spending budget.",
+                )
+            with interest:
+                forms.percent(
+                    row,
+                    "interest_rate",
+                    "Interest rate (%)",
+                    _key(row, "interest_rate"),
+                )
     data["debts"] = [row for row in data["debts"] if row["id"] not in debt_removed]
     debt_added = st.button("Add debt", key=_key(data, "add_debt"))
     if debt_added:
@@ -388,7 +463,7 @@ def wealth_editor_page(dsn: str | None) -> None:
     category_link("All wealth snapshots", "Wealth", target="library", view="library")
     st.title("Edit wealth snapshot" if loaded else "New wealth snapshot")
     _metadata(data, saved=loaded is not None)
-    changed = _contents(data)
+    changed = _contents(data, _owner_labels(dsn))
     if changed:
         st.rerun()
     snapshot = None

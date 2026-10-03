@@ -185,7 +185,7 @@ def _initial(kind: Kind, dsn: str | None) -> PlanningInputs:
 
 
 def _status(inputs: PlanningInputs) -> None:
-    """Show missing capture inputs without claiming an engine can project them."""
+    """Show missing capture inputs and bounded Plan forecast readiness."""
     details = missing_details(inputs)
     st.caption(
         (
@@ -194,12 +194,61 @@ def _status(inputs: PlanningInputs) -> None:
             else "1 item needs input"
         )
         if details
+        else "Scenario selections complete"
+        if isinstance(inputs, PlanningScenario)
         else "Inputs entered"
     )
     if details:
         with st.expander("What still needs input"):
             for detail in details:
                 st.text(detail)
+    elif isinstance(inputs, PlanningScenario):
+        _forecast_readiness(inputs)
+
+
+def _forecast_readiness(plan: PlanningScenario) -> None:
+    """Check completed inputs without generating paths or calculating balances."""
+    from financial_model.forecast import forecast_issues
+    from financial_model.forecast_models import ForecastRequest, ForecastSettings
+
+    if plan.combination_count > 4:
+        st.caption(
+            "Forecast readiness is checked when you select combinations in Forecast. You can compare up to four per run."
+        )
+        return
+    request = ForecastRequest(
+        plans=tuple(plan.combinations()), settings=ForecastSettings(mode="fixed")
+    )
+    issues = forecast_issues(request)
+    if issues:
+        st.caption(
+            f"Forecast: {len(issues)} {'item needs' if len(issues) == 1 else 'items need'} input"
+        )
+        with st.expander("Complete these scenarios for forecasting", expanded=True):
+            for issue in issues:
+                st.text(issue)
+            with st.container(horizontal=True):
+                for category in ("Wealth", "Retirement", "Economy"):
+                    category_link(
+                        f"Edit {category} scenarios",
+                        category,
+                        target="library",
+                        view="library",
+                    )
+    else:
+        st.success("Ready for a fixed forecast")
+    simulation_request = request.model_copy(
+        update={"settings": ForecastSettings(mode="monte_carlo")}
+    )
+    simulation = tuple(
+        issue for issue in forecast_issues(simulation_request) if issue not in issues
+    )
+    if simulation:
+        with st.expander("For Monte Carlo simulation"):
+            for detail in simulation:
+                st.text(detail)
+    elif not issues:
+        st.caption("Monte Carlo assumptions are also complete.")
 
 
 def _summary(inputs: PlanningInputs) -> str:
@@ -1252,6 +1301,18 @@ def _economy(data: dict[str, Any], scope: str) -> None:
         st.caption(
             "Enter both ends. Ranges describe alternative assumptions, not probabilities."
         )
+    st.subheader("Investment income")
+    st.caption(
+        "Dividends and interest are part of total returns above, not extra growth. These yields determine the income taxed each year."
+    )
+    for column, field, label in zip(
+        st.columns(2),
+        ("stock_dividend_yield", "bond_interest_yield"),
+        ("Stock dividend yield (%)", "Bond interest yield (%)"),
+        strict=True,
+    ):
+        with column:
+            forms.percent(data, field, label, f"{field}_{scope}")
     with st.expander("Simulation details (optional)"):
         st.caption(
             "Volatility measures how much yearly returns fluctuate. Correlation measures how they move together. Leave these blank until setting up a simulation."
@@ -1492,6 +1553,160 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
     st.caption(
         "After a death, use the remaining person's total budget, even if they are still working."
     )
+    _retirement_income(data, scope)
+    _retirement_health(data, scope)
+
+
+def _benefit_status(value: Any) -> str:
+    """Distinguish missing benefits, known zero, and entered amounts."""
+    from decimal import Decimal, InvalidOperation
+
+    if value is None:
+        return "unknown"
+    try:
+        amount = Decimal(str(value))
+        if amount.is_zero():
+            return "none"
+        return "positive" if amount.is_finite() and amount > 0 else "invalid"
+    except InvalidOperation:
+        return "invalid"
+
+
+def _pension_choice(adult: dict[str, Any], key: str, amount_key: str) -> None:
+    """Make the no-pension choice explicit and clear a stale amount widget."""
+    choice = st.session_state[key]
+    if choice in {"unknown", "none"}:
+        adult["pension"] = None if choice == "unknown" else "0"
+        st.session_state.pop(amount_key, None)
+
+
+def _pension(adult: dict[str, Any], scope: str) -> None:
+    """Hide pension timing and survivor choices unless a pension is expected."""
+    key = f"pension_choice_{scope}"
+    amount_key = f"pension_{scope}"
+    amount = adult.get("pension")
+    status = _benefit_status(amount)
+    selected = status if status in {"unknown", "none"} else "pension"
+    choices = ("unknown", "none", "pension")
+    choice = st.selectbox(
+        f"{adult['name']} pension",
+        choices,
+        index=choices.index(selected),
+        format_func=lambda value: {
+            "unknown": "Not entered",
+            "none": "No pension",
+            "pension": "Enter pension",
+        }[value],
+        key=key,
+        on_change=_pension_choice,
+        args=(adult, key, amount_key),
+    )
+    if choice != "pension":
+        return
+    forms.money(adult, "pension", "Pension ($/year)", amount_key)
+    if _benefit_status(adult["pension"]) == "positive":
+        with st.container(horizontal=True):
+            forms.number(
+                adult,
+                "pension_start_age",
+                "Pension starts at age",
+                f"pension_age_{scope}",
+                integer=True,
+                minimum=18,
+                maximum=100,
+            )
+            forms.percent(
+                adult,
+                "pension_survivor_fraction",
+                "Pension paid to survivor (%)",
+                f"pension_survivor_{scope}",
+            )
+
+
+def _retirement_income(data: dict[str, Any], scope: str) -> None:
+    """Collect benefits once in the reusable Retirement scenario."""
+    st.subheader("Retirement income")
+    st.caption(
+        f"Annual amounts in {data['money_year'] or 'the scenario money-year'} dollars, before tax. Enter the Social Security estimate for the chosen claiming age; use 0 if none."
+    )
+    for i, adult in enumerate(data["adults"]):
+        key = f"income_{i}_{scope}"
+        adult.setdefault("claiming_age", 67)
+        adult.setdefault("pension_start_age", 65)
+        with st.container(border=True):
+            st.text(adult["name"])
+            with st.container(horizontal=True):
+                forms.money(
+                    adult,
+                    "social_security",
+                    f"{adult['name']} Social Security ($/year)",
+                    f"social_security_{key}",
+                )
+                if _benefit_status(adult.get("social_security")) == "positive":
+                    forms.number(
+                        adult,
+                        "claiming_age",
+                        "Social Security claiming age",
+                        f"claiming_age_{key}",
+                        integer=True,
+                        minimum=62,
+                        maximum=70,
+                    )
+            _pension(adult, key)
+
+
+def _retirement_health(data: dict[str, Any], scope: str) -> None:
+    """Explain and record the health-cost portion of retirement budgets."""
+    st.subheader("Retirement health costs")
+    st.caption(
+        "Annual costs per retired person, including insurance and out-of-pocket care. Normally these are already included in the household living costs above. A breakdown is only needed for HSA withdrawals or extra health spending."
+    )
+    data.setdefault("health_costs_in_budget", "included")
+    forms.choice(
+        data,
+        "health_costs_in_budget",
+        "These health costs are",
+        ("included", "additional"),
+        f"health_budget_{scope}",
+        labels={
+            "included": "Already in household living costs",
+            "additional": "Extra spending on top of household living costs",
+        },
+    )
+    forms.table_header(
+        ("Person", "Before age 65 ($/year)", "From age 65 ($/year)"), (2, 3, 3)
+    )
+    for i, adult in enumerate(data["adults"]):
+        person, before, after = st.columns((2, 3, 3))
+        person.text(adult["name"])
+        for column, field, label in (
+            (before, "health_before_65", "before age 65"),
+            (after, "health_from_65", "from age 65"),
+        ):
+            with column:
+                forms.money(
+                    adult,
+                    field,
+                    f"{adult['name']} health costs {label} ($/year)",
+                    f"{field}_{i}_{scope}",
+                    compact=True,
+                )
+    with st.expander("HSA spending (if using an HSA)"):
+        st.caption(
+            "The part of the health costs above eligible for HSA withdrawals. These amounts do not add spending. Enter 0 if none."
+        )
+        for i, adult in enumerate(data["adults"]):
+            with st.container(horizontal=True):
+                for field, label in (
+                    ("hsa_eligible_before_65", "before age 65"),
+                    ("hsa_eligible_from_65", "from age 65"),
+                ):
+                    forms.money(
+                        adult,
+                        field,
+                        f"{adult['name']} HSA-eligible costs {label} ($/year)",
+                        f"{field}_{i}_{scope}",
+                    )
 
 
 def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
@@ -1553,8 +1768,13 @@ def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
                         )
                     elif current.revision != selection["source_revision"]:
                         st.caption(
-                            "Newer version available. Choose it below to update this copy."
+                            "Newer version available. Update this copy, then save the Plan."
                         )
+                        if st.button(
+                            "Update this copy",
+                            key=f"refresh_{selection['source_id']}_{scope}",
+                        ):
+                            _refresh_profile_copy(data, current)
                 with st.container(horizontal=True):
                     if current and st.button(
                         "Edit source", key=f"source_{selection['source_id']}_{scope}"
@@ -1626,6 +1846,10 @@ def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
                     if current_wealth is None
                     else "Newer version available."
                 )
+                if current_wealth and st.button(
+                    "Update Wealth copy", key=f"refresh_wealth_{scope}"
+                ):
+                    _apply_wealth(data, current_wealth)
             if st.button("Remove Wealth selection", key=f"remove_wealth_{scope}"):
                 _apply_wealth(data, None)
         wealth_choices = {str(r.id): r for r in wealth}
@@ -1691,6 +1915,25 @@ def _apply_replacement(data: dict[str, Any], document: SavedPlanningDocument) ->
     plan = PlanningScenario(name="Selection", components=data["components"])
     updated = replace_profile(plan, document)
     data["components"] = updated.model_dump(mode="json")["components"]
+    _changed_rows()
+
+
+def _refresh_profile_copy(
+    data: dict[str, Any], document: SavedPlanningDocument
+) -> None:
+    """Refresh one saved source while retaining alternatives and unchanged people."""
+    index = next(
+        i
+        for i, component in enumerate(data["components"])
+        if component["source_id"] == str(document.id)
+    )
+    previous = data["components"][index]
+    replacement = select_profile(document).model_dump(mode="json")
+    old_names = tuple(a["name"] for a in previous["inputs"].get("adults", ()))
+    new_names = tuple(a["name"] for a in replacement["inputs"].get("adults", ()))
+    if old_names and old_names == new_names:
+        replacement["adult_mapping"] = previous["adult_mapping"]
+    data["components"][index] = replacement
     _changed_rows()
 
 

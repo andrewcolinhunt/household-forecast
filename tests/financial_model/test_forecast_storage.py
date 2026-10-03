@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
+from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from financial_model.forecast_models import (
-    ForecastDetails,
     ForecastPoint,
     ForecastRequest,
     ForecastSummary,
@@ -49,7 +51,7 @@ def saved_forecast() -> SavedForecast:
     return SavedForecast(
         numpy_version="test",
         tax_engine_version="test",
-        request=ForecastRequest(plans=(plan,), details=ForecastDetails()),
+        request=ForecastRequest(plans=(plan,)),
         summaries=(
             ForecastSummary(
                 name=plan.name,
@@ -78,7 +80,7 @@ def test_forecast_backup_preserves_exact_inputs_and_identity(saved_forecast) -> 
     [
         {"document_type": "planning_document"},
         {"schema_version": True},
-        {"schema_version": 2},
+        {"schema_version": 1},
         {"model_version": "unknown"},
         {"summaries": []},
     ],
@@ -93,6 +95,12 @@ def test_forecast_backup_rejects_wrong_envelopes(saved_forecast, change) -> None
 def test_forecast_backup_rejects_invalid_json_and_size(data: bytes) -> None:
     with pytest.raises(ValueError):
         import_forecast_backup(data)
+
+
+def test_forecast_backup_explains_unsupported_version(saved_forecast) -> None:
+    raw = saved_forecast.model_dump(mode="json") | {"schema_version": 1}
+    with pytest.raises(ValueError, match="Unsupported forecast schema version 1"):
+        import_forecast_backup(json.dumps(raw).encode())
 
 
 @pytest.mark.integration
@@ -112,4 +120,33 @@ def test_forecast_storage_does_not_create_tables(database_url) -> None:
     with psycopg.connect(database_url) as connection:
         connection.execute("DROP TABLE forecast_runs")
     with pytest.raises(psycopg.errors.UndefinedTable):
+        list_forecasts(database_url)
+
+
+@pytest.mark.integration
+def test_forecast_schema_reapply_preserves_legacy_runs(database_url, saved_forecast):
+    legacy = saved_forecast.model_dump(mode="json") | {
+        "schema_version": 1,
+        "model_version": "1",
+    }
+    schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, "
+            "ADD CONSTRAINT forecast_runs_document_check1 "
+            "CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1')"
+        )
+        connection.execute(
+            "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
+            (saved_forecast.id, Jsonb(legacy), saved_forecast.created_at),
+        )
+        connection.execute(schema)
+        connection.execute(schema)
+        assert (
+            connection.execute("SELECT document FROM forecast_runs").fetchone()[0]
+            == legacy
+        )
+    current = saved_forecast.model_copy(update={"id": uuid4()})
+    create_forecast(database_url, current)
+    with pytest.raises(ValueError, match="Unsupported forecast schema version 1"):
         list_forecasts(database_url)

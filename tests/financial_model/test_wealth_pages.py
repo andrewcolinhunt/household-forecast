@@ -163,7 +163,77 @@ def test_wealth_has_only_snapshot_and_projection_fields():
         "tax_treatment",
         "invested_in",
         "mix",
+        "owner",
+        "cost_basis",
     }
+
+
+def test_wealth_forecast_details_survive_navigation_and_validation():
+    page = press(library(), "New snapshot")
+    press(page, "Add account")
+    field(page, "selectbox", "Tax treatment").select("hsa").run()
+    field(page, "selectbox", "Account owner").select(2).run()
+    field(page, "text_input", "California HSA cost basis ($)").set_value("100.01").run()
+    press(page, "Add debt")
+    field(page, "text_input", "Annual payment ($)").set_value("1200.02").run()
+    field(page, "text_input", "Interest rate (%)").set_value("5.75").run()
+    go(page, "scenarios")
+    go(page, "wealth")
+    press(page, next(b.label for b in page.button if b.label.startswith("Resume")))
+    assert field(page, "selectbox", "Account owner").value == 2
+    assert field(page, "text_input", "California HSA cost basis ($)").value == "100.01"
+    assert field(page, "text_input", "Annual payment ($)").value == "1200.02"
+    assert field(page, "text_input", "Interest rate (%)").value == "5.75"
+    assert raw(page)["debts"][0]["interest_rate"] == "0.0575"
+    field(page, "text_input", "California HSA cost basis ($)").set_value("-1").run()
+    assert page.error
+    field(page, "text_input", "California HSA cost basis ($)").set_value("").run()
+    assert raw(page)["accounts"][0]["cost_basis"] is None
+    assert not page.error
+
+
+def test_wealth_owner_labels_show_household_names_with_slot_numbers():
+    from financial_model.schemas import Household
+
+    page = library()
+    page.session_state["local_household"] = Household(
+        tax_year=2026,
+        adults=({"name": "Alex", "age": 40}, {"name": "Sam", "age": 41}),
+    )
+    press(page, "New snapshot")
+    press(page, "Add account")
+    field(page, "selectbox", "Tax treatment").select("roth").run()
+    assert field(page, "selectbox", "Account owner").options == [
+        "Not entered",
+        "Alex (adult 1)",
+        "Sam (adult 2)",
+    ]
+
+
+@pytest.mark.integration
+def test_wealth_forecast_details_save_and_reload(database_url, monkeypatch):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = press(library(), "New snapshot")
+    press(page, "Add account")
+    field(page, "selectbox", "Tax treatment").select("hsa").run()
+    field(page, "selectbox", "Account owner").select(1).run()
+    field(page, "text_input", "California HSA cost basis ($)").set_value("234.56").run()
+    press(page, "Add debt")
+    field(page, "text_input", "Annual payment ($)").set_value("789.01").run()
+    field(page, "text_input", "Interest rate (%)").set_value("5.5").run()
+    press(page, "Save snapshot")
+    saved = list_wealth_snapshots(database_url)[0]
+    assert saved.snapshot.accounts[0].owner == 1
+    assert saved.snapshot.accounts[0].cost_basis == Decimal("234.56")
+    assert saved.snapshot.debts[0].annual_payment == Decimal("789.01")
+    assert saved.snapshot.debts[0].interest_rate == Decimal("0.055")
+    reloaded = press(library(), "Edit")
+    assert field(reloaded, "selectbox", "Account owner").value == 1
+    assert (
+        field(reloaded, "text_input", "California HSA cost basis ($)").value == "234.56"
+    )
+    assert field(reloaded, "text_input", "Annual payment ($)").value == "789.01"
+    assert field(reloaded, "text_input", "Interest rate (%)").value == "5.5"
 
 
 def test_wealth_backup_import_is_new_draft_and_invalid_upload_keeps_edits(

@@ -127,11 +127,7 @@ def calculation_calls(monkeypatch):
         )
 
     module.calculate_forecast = calculate
-    module.forecast_issues = (
-        lambda request: ()
-        if request.details.assumptions_confirmed
-        else ("Review assumptions before running.",)
-    )
+    module.forecast_issues = lambda request: ()
     monkeypatch.setitem(sys.modules, "financial_model.forecast", module)
     monkeypatch.setattr(app, "_database_url", lambda: None)
     return calls
@@ -171,19 +167,17 @@ def test_forecast_does_not_calculate_until_requested(
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
     assert not page.exception
-    assert field(page, "button", "Run forecast").disabled
-    assert field(page, "text_input", "Taxable cost basis ($)").value == ""
-    assert field(page, "selectbox", "Account owner").value is None
-    assert field(page, "text_input", "Annual debt payment ($)").value == ""
+    assert not field(page, "button", "Run forecast").disabled
+    assert [widget.label for widget in page.text_input] == ["Forecast name"]
+    assert not page.checkbox
     assert not calculation_calls
-    field(
-        page,
-        "checkbox",
-        "I have reviewed the tax, annual timing, benefit, and withdrawal assumptions",
-    ).check().run()
     field(page, "button", "Run forecast").click().run()
     assert not page.exception
     assert len(calculation_calls) == 1
+    assert calculation_calls[0].plans == tuple(
+        forecast_pages.plan_options((plan_record,)).values()
+    )
+    assert "details" not in calculation_calls[0].model_dump()
     assert len(page.get("vega_lite_chart")) == 1
     assert field(page, "button", "Save forecast").disabled
     assert page.get("download_button")
@@ -197,12 +191,12 @@ def test_forecast_invalid_edits_and_selection_survive_navigation(
 ) -> None:
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
-    field(page, "text_input", "Taxable cost basis ($)").set_value("unfinished")
+    field(page, "text_input", "Forecast name").set_value("")
     page.switch_page("src/financial_model/pages/compare.py").run()
     page.switch_page(PAGE).run()
     assert not page.exception
     assert page.multiselect[0].value == [f"{plan_record.id}:0"]
-    assert field(page, "text_input", "Taxable cost basis ($)").value == "unfinished"
+    assert field(page, "text_input", "Forecast name").value == ""
     assert page.error
     assert field(page, "button", "Run forecast").disabled
     assert not calculation_calls
@@ -225,11 +219,6 @@ def test_forecast_saved_run_reuses_frozen_plans_without_library(
 ) -> None:
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
-    field(
-        page,
-        "checkbox",
-        "I have reviewed the tax, annual timing, benefit, and withdrawal assumptions",
-    ).check().run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
     page.session_state["planning_records"] = {}
@@ -246,11 +235,6 @@ def test_forecast_failed_rerun_preserves_previous_result(
 ) -> None:
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
-    field(
-        page,
-        "checkbox",
-        "I have reviewed the tax, annual timing, benefit, and withdrawal assumptions",
-    ).check().run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
 
@@ -280,11 +264,6 @@ def test_forecast_duplicate_names_have_distinct_plot_series(
     page.session_state["planning_records"] = {"plan": (plan_record, duplicate)}
     page.run()
     page.multiselect[0].select(f"{plan_record.id}:0").select(f"{duplicate.id}:0").run()
-    field(
-        page,
-        "checkbox",
-        "I have reviewed the tax, annual timing, benefit, and withdrawal assumptions",
-    ).check().run()
     field(page, "button", "Run forecast").click().run()
     assert not page.exception
     assert len(specs) == 2
@@ -296,27 +275,24 @@ def test_forecast_duplicate_names_have_distinct_plot_series(
         }
 
 
-def test_forecast_hsa_requires_explicit_eligible_health_and_ca_basis(
-    plan_record, calculation_calls
+def test_forecast_missing_inputs_link_to_scenarios(
+    monkeypatch, plan_record, calculation_calls
 ) -> None:
-    data = plan_record.model_dump(mode="json")
-    data["inputs"]["wealth"]["snapshot"]["accounts"].append(
-        {
-            "label": "HSA",
-            "balance": 500,
-            "tax_treatment": "hsa",
-            "invested_in": "stocks",
-        }
+    monkeypatch.setattr(
+        sys.modules["financial_model.forecast"],
+        "forecast_issues",
+        lambda request: ("Compare choices: Wealth: taxable cost basis is missing.",),
     )
-    data["inputs"]["household"]["residence"] = [{"year": 2026, "location": "CA"}]
-    record = SavedPlanningDocument.model_validate(data)
-    page = open_page(record)
-    page.multiselect[0].select(f"{record.id}:0").run()
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
     assert not page.exception
-    assert field(page, "text_input", "California HSA cost basis ($)").value == ""
-    eligible = [item for item in page.text_input if "HSA-eligible" in item.label]
-    assert len(eligible) == 4
-    assert all(item.value == "" for item in eligible)
+    assert field(page, "button", "Run forecast").disabled
+    assert any("taxable cost basis" in item.value for item in page.markdown)
+    field(page, "button", "Open Wealth").click().run()
+    assert not page.exception
+    assert page.session_state["scenario_category"] == "Wealth"
+    page.switch_page(PAGE).run()
+    assert page.multiselect[0].value == [f"{plan_record.id}:0"]
     assert not calculation_calls
 
 

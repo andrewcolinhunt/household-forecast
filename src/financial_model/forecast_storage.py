@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from psycopg.types.json import Jsonb
 
@@ -28,7 +29,27 @@ def list_forecasts(dsn: str) -> tuple[SavedForecast, ...]:
         rows = connection.execute(
             "SELECT document FROM forecast_runs ORDER BY created_at DESC, id"
         ).fetchall()
-    return tuple(SavedForecast.model_validate(row["document"]) for row in rows)
+    return tuple(_read_document(row["document"]) for row in rows)
+
+
+def _read_document(raw: Any) -> SavedForecast:
+    """Reject unsupported frozen formats explicitly, without rewriting old runs."""
+    if (
+        not isinstance(raw, dict)
+        or raw.get("document_type") != "forecast"
+        or type(raw.get("schema_version")) is not int
+    ):
+        msg = "A forecast backup must declare its document type and schema version."
+        raise ValueError(msg)
+    current = SavedForecast.model_fields["schema_version"].default
+    if raw["schema_version"] != current:
+        msg = (
+            f"Unsupported forecast schema version {raw['schema_version']}; "
+            f"this app reads version {current}. The saved run is unchanged. "
+            "Create a new forecast from updated Plans."
+        )
+        raise ValueError(msg)
+    return SavedForecast.model_validate(raw)
 
 
 def import_forecast_backup(data: bytes) -> SavedForecast:
@@ -46,12 +67,4 @@ def import_forecast_backup(data: bytes) -> SavedForecast:
     if len(data) > MAX_FORECAST_BYTES:
         msg = "Forecast backup exceeds the 10 MB limit."
         raise ValueError(msg)
-    raw = json.loads(data)
-    if (
-        not isinstance(raw, dict)
-        or raw.get("document_type") != "forecast"
-        or type(raw.get("schema_version")) is not int
-    ):
-        msg = "A forecast backup must declare its document type and schema version."
-        raise ValueError(msg)
-    return SavedForecast.model_validate(raw)
+    return _read_document(json.loads(data))

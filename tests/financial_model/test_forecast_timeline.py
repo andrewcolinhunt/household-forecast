@@ -297,7 +297,7 @@ def test_compile_plan_allocation_interpolation_and_final_hold(
     assert annual[4].allocation == annual[6].allocation == (0.4, 0.6, 0)
 
 
-def test_compile_plan_first_partial_year_events_require_explicit_treatment(
+def test_compile_plan_opening_year_events_remain_scheduled_without_extra_choice(
     timeline_plan,
 ):
     data = timeline_plan.model_dump()
@@ -314,14 +314,10 @@ def test_compile_plan_first_partial_year_events_require_explicit_treatment(
             }
         ],
     )
-    with pytest.raises(ValueError, match="Part-year one-time spending"):
-        compile_plan(plan)
-    remaining = compile_plan(plan, first_year_events="remaining").annual[0]
-    already = compile_plan(plan, first_year_events="already_in_snapshot").annual[0]
+    remaining = compile_plan(plan).annual[0]
     assert remaining.year_fraction == 183 / 365
     assert remaining.recurring_spending == 1000
     assert remaining.one_time_spending == 50
-    assert already.one_time_spending == 0
     assert remaining.adults[0].cash_pay == 100
 
 
@@ -336,10 +332,8 @@ def test_compile_plan_partial_year_options_and_postretirement_exercise(timeline_
         for year in (2026, 2028)
     ]
     plan = PlanningScenario.model_validate(data)
-    with pytest.raises(ValueError, match="Part-year option events"):
-        compile_plan(plan)
-    annual = compile_plan(plan, first_year_events="already_in_snapshot").annual
-    assert annual[0].adults[0].options == ()
+    annual = compile_plan(plan).annual
+    assert annual[0].adults[0].options[0].exercise.cost == 20
     assert annual[2].adults[0].options[0].exercise.cost == 20
     work["adults"][0]["options"] = [{"year": 2028, "award": {"vesting_shares": 10}}]
     with pytest.raises(ValueError, match="new option awards after retirement"):
