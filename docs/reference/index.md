@@ -35,8 +35,8 @@ constraints. Saving them does not run a projection or tax calculation.
 | Type | Content |
 | --- | --- |
 | `AssetMix` | Equities, fixed-income, and cash fractions totaling exactly 1; shared with future allocation targets |
-| `AccountPosition` | Local UUID, label, nullable balance, tax treatment, `invested_in`, and optional mixed allocation |
-| `DebtPosition` | Local UUID, label, nullable amount owed |
+| `AccountPosition` | Local UUID, label, nullable balance, tax treatment, `invested_in`, optional mixed allocation, owner slot, and cost basis |
+| `DebtPosition` | Local UUID, label, nullable amount owed, annual payment, and interest rate |
 | `WealthSnapshot` | Name, one `as_of` date, USD currency, optional note, accounts, debts |
 | `SavedWealthSnapshot` | `document_type="wealth_snapshot"`, schema version 2, UUID, revision, save timestamp, and snapshot |
 
@@ -52,10 +52,12 @@ amounts from explicit zeros. `missing_details` asks for balances, tax treatment,
 and investment mix; known zero balances need no classification.
 
 Amounts serialize as decimal strings; unknown is `null`. IDs must be distinct
-across accounts and debts. Saved copies retain independent contents. Owners,
-security identifiers, nested holdings, per-account dates, and account-type
-classifications are not part of this schema. Separate `ForecastDetails` supply
-ownership and cost basis for the forecasting ledger's withdrawals and taxes.
+across accounts and debts. Saved copies retain independent contents. Account
+`owner` is household slot 1 or 2; `cost_basis`, debt `annual_payment`, and debt
+`interest_rate` remain unknown until entered. Existing schema 2 records load
+with these optional fields blank. Forecast readiness checks require them only
+where needed. Security identifiers, nested holdings, per-account dates, and
+account-type classifications are not part of this schema.
 
 ## Planning input models
 
@@ -69,8 +71,8 @@ these models calculates financial outcomes or calls the annual tax engine.
 | `WorkAssumptions` | Money year, two ordered adult work slots, employment phases, vesting, dated option events and RSU tax funding |
 | `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions |
 | `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and nullable `reserved_cash` |
-| `EconomicAssumptions` | Inflation and compound returns after fees and before tax; optional annual volatility and correlation |
-| `RetirementAssumptions` | Two adult slots with retirement years and planning ages; one-person, both-retired and after-death household budgets; optional mortality-sampling intent |
+| `EconomicAssumptions` | Inflation and compound returns after fees and before tax; dividend and bond-interest yields; optional annual volatility and correlation |
+| `RetirementAssumptions` | Two adult slots with retirement years and planning ages; benefits and health costs; one-person, both-retired and after-death household budgets; included/additional health treatment; optional mortality-sampling intent |
 | `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
 | `ProfileSelection` | Source UUID/revision/name plus an exact validated copy and optional reviewed adult mapping |
 | `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed Work/Retirement adult mappings |
@@ -318,9 +320,10 @@ inputs used, rather than resolving mutable library IDs on display.
 ## Forecasting
 
 `ForecastRequest` holds one to four selected `PlanningScenario` combinations,
-`ForecastDetails`, and `ForecastSettings`. Accounts and debts must share the same
-opening snapshot across alternatives. Supplemental details retain unknowns until
-`forecast_issues(request)` confirms the request is ready to calculate.
+a name, and `ForecastSettings`. Financial inputs belong to each Plan's Wealth,
+Retirement, and Economy copies. Accounts and debts must share the same opening
+snapshot across alternatives. `forecast_issues(request)` reports missing or
+unsupported material inputs before calculation; unknown values are not zeros.
 
 `calculate_forecast(request, progress=None) -> ForecastCalculation` compiles annual
 schedules, generates matching economic paths, carries account and debt balances,
@@ -335,7 +338,7 @@ and stress modes produce one path. Historical replay produces all full windows;
 Monte Carlo and bootstrap use `count`. `parse_history_csv(text)` validates jointly
 observed rates in consecutive calendar years.
 
-`SavedForecast` version 1 stores the frozen request, model and dependency versions,
+`SavedForecast` schema and model version 2 stores the frozen request, model and dependency versions,
 per-scenario percentile curves, funding statistics, and an example ledger.
 Difference percentiles are absent outside the baseline's planning horizon.
 `create_forecast(dsn, document)` inserts an immutable run into `forecast_runs`;

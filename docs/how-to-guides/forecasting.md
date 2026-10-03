@@ -7,36 +7,43 @@ snapshot and matching economic futures.
 
 ## Prepare and run a comparison
 
-1. Save your Work, Spending, Retirement, Investments, and Economy inputs, then
-   select them in a combined Plan under **Scenarios → Plans**. Enter both
-   planning ages and a budget for the surviving person. Retirement means the
-   first calendar year without employment income.
-2. Open **Forecast** and select up to four combinations. Categories with saved
+1. Complete financial inputs in **Scenarios**:
+   - **Wealth** owns account balances, retirement-account owners, taxable cost
+     basis, and debt payment terms.
+   - **Retirement** owns retirement dates, planning ages, living budgets,
+     Social Security, pensions, and retirement health costs.
+   - **Economy** owns total returns, inflation, dividend and interest yields,
+     and simulation volatility and correlation.
+   Use zero for a known zero and leave unknown facts blank. Choose **No pension**
+   when appropriate; pension timing is then unnecessary.
+2. Select these saved scenarios, plus Work and Spending, in a combined Plan
+   under **Scenarios → Plans**. Review its forecast readiness. When a source
+   changes, choose **Update this copy** or **Update Wealth copy**, then save the
+   Plan. Other Plans retain their own copies.
+3. Open **Forecast** and select up to four combinations. Categories with saved
    alternatives produce separate choices. The first selected combination is
    the baseline for the difference chart. Compared choices must share their
    dated accounts, debts, and household demographics; residence may differ.
-3. Complete the forecast details. Enter owners for retirement accounts, taxable
-   cost basis, debt payment terms, retirement benefits, and additional retirement
-   health costs. Use zero for a known zero; leave unknown facts blank until you
-   can supply them. These details do not change the saved Wealth inventory.
-4. If you have an HSA, enter the part of those health costs eligible for payment
-   from the available HSA accounts. For California scenarios, also enter the
-   HSA's California cost basis. Health costs here are **additional to** the
-   saved living budget; do not enter the same expense twice.
-5. Enter stock dividend and bond interest yields. These describe the taxable
-   distribution component of total returns; the model does not add them again
-   to investment growth. Review and confirm the displayed assumptions.
-6. Start with **Fixed assumptions** to check your cash flows. Then choose
-   **Monte Carlo** for uncertainty bands. Complete all four volatilities and
-   the correlation matrix in the Economy profile first, then replace its frozen
-   copy in the combined Plan and save that Plan. The default
-   is 10,000 simulated futures. Select **Run forecast** and allow the annual
-   tax calculations to finish.
+4. Start with **Fixed assumptions** to check your cash flows. Then choose
+   **Monte Carlo** for uncertainty bands. The default is 10,000 simulated
+   futures. Select **Run forecast** and allow the annual tax calculations to
+   finish. Missing inputs link back to Scenarios.
+
+Health costs are included in the retirement living budget by default. Choose
+**Extra spending on top of household living costs** only when your budget excludes
+those costs. With an HSA, enter the eligible portion of health spending; it does
+not add another expense. Without an HSA, an included health-cost breakdown is
+optional. California HSA investments also need a state cost basis in Wealth.
+
+Dividend and interest yields are parts of total returns, not additional growth.
+Debt payments are modeled separately from living costs; exclude them from your
+spending budgets.
 
 Forecasting currently starts from a 2026 snapshot with amounts expressed in
 2026 purchasing power. A part-year snapshot receives only the remaining year's
-recurring activity. If an expense occurs once in that calendar year, explicitly
-choose whether it has already happened or remains to be paid.
+recurring activity. One-time expenses listed for that opening year are planned
+expenses at year end. Remove expenses that have already happened from the Plan;
+there is no separate opening-year setting.
 
 ## Read the results
 
@@ -81,8 +88,8 @@ the central economic outlook.
 ## Save and reproduce a run
 
 Save the forecast to the shared database or download its JSON file. A saved run
-contains the selected Plan copies, Wealth snapshot, supplemental details,
-economic settings, seed, model versions, summary results, and example ledger.
+contains the selected Plan copies, including Wealth and all financial assumptions,
+simulation settings, seed, model versions, summary results, and example ledger.
 Later library edits do not change it. Rerunning creates a separate result.
 
 Open a saved forecast to review its frozen results. Rerun its saved inputs to
@@ -92,7 +99,10 @@ database saving is unavailable; imports are limited to 10 MB.
 
 For an existing database, its owner must reapply `scripts/schema.sql` and grant
 the runtime role `SELECT` and `INSERT` on `forecast_runs`. This creates an
-additional table without rewriting existing household inputs.
+additional table and updates its version constraint without rewriting household
+inputs. New runs use forecast format and model version 2. Version 1 runs remain
+stored but cannot be opened by this version; their inputs must be recreated in
+Scenarios before running a new forecast.
 
 See [forecast methodology and limits](#forecast-method) for the accounting and
 tax assumptions behind the results.

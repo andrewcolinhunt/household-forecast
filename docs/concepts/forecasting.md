@@ -15,7 +15,9 @@ return; pay, contributions, benefits, spending, and withdrawals occur at year en
 New savings first earn returns the following year. Recurring cash flows use the
 price level at the beginning of the year; plotted balances use the year-end
 price level. A partial first year compounds only the remaining fraction of
-annual returns and prorates recurring flows.
+annual returns and prorates recurring flows. One-time expenses listed for the
+opening calendar year are treated as still planned at year end. Expenses from
+earlier years are excluded.
 
 Every annual ledger checks:
 
@@ -40,6 +42,12 @@ Surplus replenishes the cash reserve and follows saved saving priorities.
 Retirement saving above payroll contribution limits goes to taxable investments.
 Regular 2026 contribution caps rise with the model's price level; catch-up
 contributions and new IRA/HSA contributions are outside the current scope.
+
+Retirement health costs are part of the living budget unless the Retirement
+scenario explicitly marks them additional. HSA-eligible costs are a subset of
+those health costs. HSA payments reduce the remaining spending need; they do not
+create a second expense. Retirement benefits and health costs follow the Plan's
+reviewed person mapping. Each Plan supplies its own benefit and yield assumptions.
 
 ## Economic simulations and comparisons
 

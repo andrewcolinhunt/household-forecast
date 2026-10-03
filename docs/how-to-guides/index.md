@@ -8,12 +8,12 @@ Under **Scenarios**, save the inputs you want to reuse, then combine them in Pla
 | --- | --- |
 | Plans | Which scenarios to hold fixed and which alternatives to compare; existing annual plans |
 | Household | Names, ages, children, residence, and personal tax elections |
-| Wealth | Dated account balances, tax treatment, investment mix, and debts |
+| Wealth | Dated balances, tax treatment, investment mix, account owners, cost basis, and debt terms |
 | Work | Pay, salary growth, contributions, and equity compensation |
 | Spending | Regular living costs, changes to that budget, and extra expenses |
-| Retirement | Retirement dates, living costs with one or both retired, lifespans, and costs after one person dies |
+| Retirement | Retirement dates, living costs, benefits, health costs, lifespans, and costs after one person dies |
 | Investments | Saving destinations, cash reserves, and portfolio allocation over time |
-| Economy | Inflation and stock, bond, and cash returns after fees |
+| Economy | Inflation, stock/bond/cash returns after fees, taxable yields, and simulation variability |
 | Goals | Shared names for saving purposes |
 
 Choose **New** in a category, enter known values, and **Save inputs**. A blank
@@ -100,7 +100,10 @@ Use **Edit plan Household** to review family facts and match the people in each
 Work and Retirement choice. Household and Wealth remain fixed within that Plan.
 Return to Plans and save.
 
-Each choice is a saved copy. Editing or deleting a library scenario does not change
+Each choice is a saved copy. Use **Update this copy** to bring a newer source
+revision into one selection, or **Update Wealth copy** for starting balances.
+Then save the Plan. Its forecast readiness shows what still needs attention.
+Editing or deleting a library scenario does not change
 a saved Plan. **Use only this scenario** replaces all choices in that category;
 **Remove** removes one. A new Work or Retirement selection needs its person mapping
 reviewed. Replacing Wealth changes the starting balances and keeps the selected
@@ -159,7 +162,13 @@ unknown balance blank; enter `0` only for a known zero. Incomplete inputs can be
 saved. **What still needs input** asks for missing balances, tax treatment, or
 investment mix. Empty accounts do not need a tax or investment classification.
 
-Under **Debts**, enter a name and positive amount owed. Debt is subtracted once.
+Open an account's **tax details** to enter its owner and cost basis where needed
+for forecasting. Owner slots refer to the two people in the Plan's household.
+California HSA investments need a separate state cost basis.
+
+Under **Debts**, enter a name and positive amount owed. Its **repayment terms**
+record the annual payment and interest rate. Debt payments are separate from
+living costs, so exclude them from spending budgets. Debt is subtracted once.
 **Net recorded wealth** is the recorded assets less debts; it does not certify
 that every household asset has been included. Use the optional snapshot note for
 anything left out.
@@ -191,8 +200,8 @@ competing edits; they do not provide an archive of every previous edit.
 
 Wealth snapshots serve as a saved inventory and can be copied into combined Plans.
 Annual scenarios and goal allocations remain independent. Forecasts carry the
-starting balances forward using selected Plans and separate owner and basis
-details. Future vesting belongs in Work and must not also be counted as opening
+starting balances forward using the selected Plans, with owners and cost basis
+recorded in Wealth. Future vesting belongs in Work and must not also be counted as opening
 account balances. Individual tax-lot accounting and assigning existing assets
 to goals remain outside this simplified snapshot.
 
