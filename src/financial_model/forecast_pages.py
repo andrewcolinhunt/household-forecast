@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from typing import Any
 
 import psycopg
@@ -298,6 +299,19 @@ def _run(request: ForecastRequest) -> None:
 def _chart(document: SavedForecast, *, differences: bool = False) -> None:
     """Plot pointwise percentile intervals and median curves on a shared dollar scale."""
     suffix = "_difference" if differences else ""
+    household = document.request.plans[0].household
+    birth_years = [
+        household.reference_year - adult.age
+        if household.reference_year is not None and adult.age is not None
+        else None
+        for adult in household.adults
+    ]
+    age_labels = [
+        f"{json.dumps(adult.name + ' ')} + format(datum.value - {birth_year}, 'd')"
+        if birth_year is not None
+        else json.dumps(adult.name + " —")
+        for adult, birth_year in zip(household.adults, birth_years, strict=True)
+    ]
     values = [
         {
             "scenario": f"{index + 1}. {summary.name}",
@@ -305,6 +319,10 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
             "lower": getattr(point, "lower" + suffix),
             "median": getattr(point, "median" + suffix),
             "upper": getattr(point, "upper" + suffix),
+            **{
+                f"age_{i}": point.year - birth_year if birth_year is not None else None
+                for i, birth_year in enumerate(birth_years)
+            },
         }
         for index, summary in enumerate(document.summaries)
         for point in summary.points
@@ -314,13 +332,33 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
         for index, summary in enumerate(document.summaries)
         for year in set(summary.retirement_years)
     ]
-    encoding = {
+    encoding: dict[str, Any] = {
         "x": {
             "field": "year",
             "type": "quantitative",
-            "axis": {"format": "d", "title": "Year"},
+            "scale": {"zero": False},
+            "axis": {
+                "title": "Year · age at year end",
+                "titlePadding": 16,
+                "labelExpr": "[format(datum.value, 'd'), "
+                + ", ".join(age_labels)
+                + "]",
+                "labelAngle": 0,
+                "labelFontSize": 12,
+                "labelLineHeight": 18,
+                "labelPadding": 10,
+                "labelFlush": False,
+                "tickCount": {"expr": "max(2, floor(width / 130))"},
+                "tickMinStep": 1,
+                "grid": False,
+            },
         },
-        "color": {"field": "scenario", "type": "nominal", "title": "Plan"},
+        "color": {
+            "field": "scenario",
+            "type": "nominal",
+            "title": "Plan",
+            "legend": None,
+        },
     }
     st.vega_lite_chart(
         {
@@ -343,13 +381,41 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
                 },
                 {
                     "data": {"values": values},
-                    "mark": "line",
+                    "mark": {"type": "line", "strokeWidth": 2.5},
                     "encoding": encoding
                     | {
+                        "color": encoding["color"]
+                        | {
+                            "legend": {
+                                "title": None,
+                                "orient": "top",
+                                "direction": "horizontal",
+                                "columns": {"expr": "max(1, floor(width / 360))"},
+                                "columnPadding": 24,
+                                "rowPadding": 8,
+                                "labelFontSize": 12,
+                                "labelLimit": {
+                                    "expr": "max(120, min(300, width - 48))"
+                                },
+                                "symbolType": "stroke",
+                                "symbolOpacity": 1,
+                                "symbolStrokeWidth": 2.5,
+                                "symbolSize": 400,
+                                "symbolDash": [],
+                            }
+                        },
                         "y": {"field": "median", "type": "quantitative"},
                         "tooltip": [
                             {"field": "scenario"},
                             {"field": "year", "format": "d"},
+                            *[
+                                {
+                                    "field": f"age_{i}",
+                                    "title": f"{adult.name} age",
+                                    "format": "d",
+                                }
+                                for i, adult in enumerate(household.adults)
+                            ],
                             {"field": "median", "format": "$,.0f"},
                             {"field": "lower", "format": "$,.0f"},
                             {"field": "upper", "format": "$,.0f"},
@@ -368,6 +434,7 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
                     },
                 },
             ],
+            "resolve": {"legend": {"color": "independent"}},
             "height": 360,
         },
         width="stretch",
