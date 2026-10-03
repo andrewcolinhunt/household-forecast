@@ -149,6 +149,7 @@ Add one row per named account:
 | Balance | The account's total value in USD |
 | Tax treatment | Taxable, Pretax retirement, Roth, HSA, or Not entered |
 | Invested in | Cash, Stocks, Bonds, Mixed, or Not entered |
+| Owner | The person who owns a retirement or HSA account; taxable accounts do not need an owner for forecasting |
 
 **Invested in** determines which return assumptions a forecast uses.
 Choose **Mixed** to enter stock, bond, and cash percentages totaling 100%.
@@ -162,9 +163,10 @@ unknown balance blank; enter `0` only for a known zero. Incomplete inputs can be
 saved. **What still needs input** asks for missing balances, tax treatment, or
 investment mix. Empty accounts do not need a tax or investment classification.
 
-Open an account's **tax details** to enter its owner and cost basis where needed
-for forecasting. Owner slots refer to the two people in the Plan's household.
-California HSA investments need a separate state cost basis.
+Use the **Owner** dropdown in each retirement or HSA account row. Owner slots
+refer to the two people in the Plan's household. Open an account's **tax details**
+to enter cost basis where needed for forecasting. California HSA investments
+need a separate state cost basis.
 
 Under **Debts**, enter a name and positive amount owed. Its **repayment terms**
 record the annual payment and interest rate. Debt payments are separate from

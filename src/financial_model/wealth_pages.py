@@ -185,47 +185,33 @@ def _owner_labels(dsn: str | None) -> dict[int | None, str]:
     return labels
 
 
-def _account_tax_details(
-    row: dict[str, Any], owner_labels: dict[int | None, str]
-) -> None:
-    """Keep forecast ownership and basis with the balance they describe."""
-    retirement = row["tax_treatment"] in {"tax_deferred", "roth", "hsa"}
+def _account_tax_details(row: dict[str, Any]) -> None:
+    """Keep cost basis with the balance it describes."""
     basis = row["tax_treatment"] == "hsa" or (
         row["tax_treatment"] == "taxable" and row["invested_in"] != "cash"
     )
-    if not retirement and not basis:
+    if not basis:
         return
     with st.expander(f"{row['label']} · tax details"):
-        if retirement:
-            forms.choice(
-                row,
-                "owner",
-                "Account owner",
-                (None, 1, 2),
-                _key(row, "owner"),
-                labels=owner_labels,
-                help_text="Adult 1 and Adult 2 refer to the first and second people in the Plan's household.",
+        hsa = row["tax_treatment"] == "hsa"
+        forms.money(
+            row,
+            "cost_basis",
+            "California HSA cost basis ($)" if hsa else "Taxable cost basis ($)",
+            _key(row, "cost_basis"),
+            help_text=(
+                "California tax basis for this HSA, needed when a Plan includes California. "
+                if hsa
+                else "Total purchase cost adjusted for prior transactions, used to calculate gains on sale. "
             )
-        if basis:
-            hsa = row["tax_treatment"] == "hsa"
-            forms.money(
-                row,
-                "cost_basis",
-                "California HSA cost basis ($)" if hsa else "Taxable cost basis ($)",
-                _key(row, "cost_basis"),
-                help_text=(
-                    "California tax basis for this HSA, needed when a Plan includes California. "
-                    if hsa
-                    else "Total purchase cost adjusted for prior transactions, used to calculate gains on sale. "
-                )
-                + "Include cash at face value in the total. Leave blank if unknown.",
-            )
+            + "Include cash at face value in the total. Leave blank if unknown.",
+        )
 
 
 def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bool:
-    """Keep the four account fields together and open percentages only for Mixed."""
-    name, balance, tax, investment, remove = st.columns(
-        [3, 2, 2, 2, 0.5], vertical_alignment="center"
+    """Keep ownership visible beside the account's balance and classification."""
+    name, balance, tax, investment, owner, remove = st.columns(
+        [3, 2, 2, 2, 2, 0.5], vertical_alignment="center"
     )
     with name:
         forms.text(row, "label", "Account", _key(row, "label"), compact=True)
@@ -252,6 +238,20 @@ def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bo
             args=(row,),
             label_visibility="collapsed",
         )
+    with owner:
+        if row["tax_treatment"] in {"tax_deferred", "roth", "hsa"}:
+            forms.choice(
+                row,
+                "owner",
+                "Account owner",
+                (None, 1, 2),
+                _key(row, "owner"),
+                labels=owner_labels,
+                compact=True,
+                help_text="Adult 1 and Adult 2 refer to the first and second people in the Plan's household.",
+            )
+        else:
+            st.caption("Not needed" if row["tax_treatment"] == "taxable" else "—")
     removed = remove.button(
         f"Remove {row['label'] or 'account'}",
         icon=":material/close:",
@@ -272,7 +272,7 @@ def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bo
                     forms.percent(
                         row["mix"], field, f"{_label(field)} (%)", _key(row, field)
                     )
-    _account_tax_details(row, owner_labels)
+    _account_tax_details(row)
     return removed
 
 
@@ -290,10 +290,13 @@ def _contents(data: dict[str, Any], owner_labels: dict[int | None, str]) -> bool
     st.caption(
         "Invested in chooses the return assumptions used in a future projection. Use Mixed for a stocks, bonds, and cash split."
     )
+    st.caption(
+        "Choose an owner for each retirement or HSA account. Taxable accounts are pooled for forecasting and do not need an owner."
+    )
     if data["accounts"]:
         for column, label in zip(
-            st.columns([3, 2, 2, 2, 0.5]),
-            ("Account", "Balance ($)", "Tax treatment", "Invested in", ""),
+            st.columns([3, 2, 2, 2, 2, 0.5]),
+            ("Account", "Balance ($)", "Tax treatment", "Invested in", "Owner", ""),
             strict=True,
         ):
             column.markdown(label)
