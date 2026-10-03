@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 from typing import Any
 
 import psycopg
@@ -307,10 +306,8 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
         for adult in household.adults
     ]
     age_labels = [
-        f"{json.dumps(adult.name + ' ')} + format(datum.value - {birth_year}, 'd')"
-        if birth_year is not None
-        else json.dumps(adult.name + " —")
-        for adult, birth_year in zip(household.adults, birth_years, strict=True)
+        f"format(datum.value - {birth_year}, 'd')" if birth_year is not None else "'—'"
+        for birth_year in birth_years
     ]
     values = [
         {
@@ -338,16 +335,25 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
             "type": "quantitative",
             "scale": {"zero": False},
             "axis": {
-                "title": "Year · age at year end",
-                "titlePadding": 16,
+                "title": ["Year", *[f"{adult.name} age" for adult in household.adults]],
+                "titleX": -24,
+                "titleY": 12,
+                "titleAngle": 0,
+                "titleAlign": "right",
+                "titleBaseline": "top",
+                "titleFontSize": 12,
+                "titleFontWeight": "normal",
+                "titleLineHeight": 18,
                 "labelExpr": "[format(datum.value, 'd'), "
                 + ", ".join(age_labels)
                 + "]",
                 "labelAngle": 0,
                 "labelFontSize": 12,
                 "labelLineHeight": 18,
-                "labelPadding": 10,
+                "labelBaseline": "top",
+                "labelPadding": 12,
                 "labelFlush": False,
+                "tickSize": 0,
                 "tickCount": {"expr": "max(2, floor(width / 130))"},
                 "tickMinStep": 1,
                 "grid": False,
@@ -388,10 +394,9 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
                         | {
                             "legend": {
                                 "title": None,
-                                "orient": "top",
-                                "direction": "horizontal",
-                                "columns": {"expr": "max(1, floor(width / 360))"},
-                                "columnPadding": 24,
+                                "orient": "top-left",
+                                "direction": "vertical",
+                                "offset": 12,
                                 "rowPadding": 8,
                                 "labelFontSize": 12,
                                 "labelLimit": {
@@ -435,7 +440,8 @@ def _chart(document: SavedForecast, *, differences: bool = False) -> None:
                 },
             ],
             "resolve": {"legend": {"color": "independent"}},
-            "height": 360,
+            "params": [{"name": "height", "expr": "width * 0.9"}],
+            "autosize": {"type": "fit-x", "contains": "padding", "resize": True},
         },
         width="stretch",
     )

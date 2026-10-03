@@ -61,9 +61,11 @@ there is no separate opening-year setting.
 The main chart shows median net wealth and the middle 80% of modeled outcomes
 at each year end, in 2026 purchasing power. Retirement dates appear as vertical
 marks. The band is neither a worst-case boundary nor a lifetime guarantee.
-Each time-axis label shows the year and both people's year-end ages, using the
-household saved with the forecast. Hover over a median line for exact ages and
-balances. Solid legend samples match the median lines.
+The time axis has three aligned numeric rows: year and both people's year-end
+ages, with row labels on the left. Ages use the household saved with the forecast.
+Hover over a median line for exact ages and balances. The full-width chart keeps
+a nearly square shape as the window changes. Its legend sits inside the upper-left
+corner, with solid samples matching the median lines.
 
 Read the funding summary and annual table alongside the chart. Positive total
 wealth can coexist with a spending shortfall when money remains in inaccessible
