@@ -2,8 +2,9 @@
 
 The annual model is the first calculation step in
 [planning decisions and their future impact](#decision-planning). It compares
-the immediate consequences of a job or location choice. Carrying those
-consequences into future account balances and retirement is planned work.
+the immediate consequences of a job or location choice. The separate
+[forecast model](#forecast-method) carries saved Plans into future account
+balances and retirement outcomes.
 
 The model follows one household through one calendar year. It separates cash,
 retirement contributions, vested RSUs, and purchased option shares. Average

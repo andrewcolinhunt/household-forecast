@@ -1,8 +1,8 @@
 # financial-model
 
 Understand how household decisions affect cash today, future wealth, and
-retirement options. The current app compares annual job and location scenarios;
-multi-year and retirement projections are planned. Simplifi remains the tool
+retirement options. Compare annual job and location scenarios or project saved
+Plans through retirement with [scenario forecasts](#run-forecast). Simplifi remains the tool
 for tracking expenses and accounts.
 
 Read the [planning objective](#decision-planning) or start with the existing

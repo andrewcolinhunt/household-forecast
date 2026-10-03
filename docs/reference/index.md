@@ -54,8 +54,8 @@ and investment mix; known zero balances need no classification.
 Amounts serialize as decimal strings; unknown is `null`. IDs must be distinct
 across accounts and debts. Saved copies retain independent contents. Owners,
 security identifiers, nested holdings, per-account dates, and account-type
-classifications are not part of this schema. Household pooling does not model
-person-specific retirement withdrawals. Cost basis is not yet captured.
+classifications are not part of this schema. Separate `ForecastDetails` supply
+ownership and cost basis for the forecasting ledger's withdrawals and taxes.
 
 ## Planning input models
 
@@ -312,5 +312,36 @@ No snapshot operation modifies scenarios, household defaults, or goal assignment
 `import_wealth_backup(bytes) -> WealthSnapshot` validates the wealth document
 type and schema, enforces the 1 MB limit, and returns contents without database
 identity. The UI opens those contents as an unsaved draft. Backups and PostgreSQL
-use the same document shape. Future saved projections must embed the exact wealth
-and scenario inputs used, rather than resolving mutable library IDs on display.
+use the same document shape. Saved forecasts embed the exact wealth and scenario
+inputs used, rather than resolving mutable library IDs on display.
+
+## Forecasting
+
+`ForecastRequest` holds one to four selected `PlanningScenario` combinations,
+`ForecastDetails`, and `ForecastSettings`. Accounts and debts must share the same
+opening snapshot across alternatives. Supplemental details retain unknowns until
+`forecast_issues(request)` confirms the request is ready to calculate.
+
+`calculate_forecast(request, progress=None) -> ForecastCalculation` compiles annual
+schedules, generates matching economic paths, carries account and debt balances,
+and returns a portable `SavedForecast` in `.document`. The optional callback
+receives a description and completion fraction. `.inspect(scenario_index,
+path_index)` returns a nominal annual ledger; both indices are zero-based.
+
+`generate_paths(economy, years, *, count=10000, seed=42, mode="monte_carlo", ...)`
+returns a NumPy array with dimensions `(paths, years, 4)`. The final axis is
+stocks, bonds, cash, inflation. Values are nominal simple annual rates. Fixed
+and stress modes produce one path. Historical replay produces all full windows;
+Monte Carlo and bootstrap use `count`. `parse_history_csv(text)` validates jointly
+observed rates in consecutive calendar years.
+
+`SavedForecast` version 1 stores the frozen request, model and dependency versions,
+per-scenario percentile curves, funding statistics, and an example ledger.
+Difference percentiles are absent outside the baseline's planning horizon.
+`create_forecast(dsn, document)` inserts an immutable run into `forecast_runs`;
+`list_forecasts(dsn)` reads runs in reverse creation order.
+`import_forecast_backup(bytes)` validates an exported document up to 10 MB and
+preserves its identity. There are no update or delete APIs for saved runs.
+
+See [forecast methodology](#forecast-method) for conventions, limitations, and
+the distinction between simulated outcome bands and guarantees.

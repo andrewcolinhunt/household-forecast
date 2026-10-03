@@ -23,9 +23,11 @@ project:
     - title: How-to Guides
       children:
         - file: how-to-guides/index.md
+        - file: how-to-guides/forecasting.md
     - title: Concepts
       children:
         - file: concepts/decision-planning.md
+        - file: concepts/forecasting.md
         - file: concepts/index.md
     - title: Reference
       children:

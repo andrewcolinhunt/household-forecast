@@ -8,8 +8,8 @@ This tool helps the household understand how decisions such as moving or
 changing jobs affect current cash, future wealth, and retirement options.
 Simplifi handles expense and account tracking. Develop this app around comparing
 decisions and explaining their consequences; imports serve that planning work.
-The current implementation compares a single year. Multi-year and retirement
-projections are intended next capabilities, not existing behavior. See
+The app compares a single year and forecasts saved Plans through retirement,
+with explicit account, benefit, economic, and future-tax assumptions. See
 `docs/concepts/decision-planning.md` and the current direction in `_dev/README.md`.
 
 ---

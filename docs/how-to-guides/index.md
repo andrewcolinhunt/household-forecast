@@ -75,13 +75,14 @@ inline up/down arrows to change funding priority without changing amounts.
 **Surplus goes to** chooses the goal for cash left after taxes, contributions,
 planned spending, cash-reserve top-ups, and fixed cash goals. Choose Retirement to
 save all that remains. Retirement is a goal, not a promise that all saving fits
-into tax-advantaged accounts. These are saved instructions for the future forecast.
+into tax-advantaged accounts. **Forecast** applies these saved instructions.
 
 In Economy, enter inflation and average yearly compound returns. Returns include
 inflation and are **after fees, before tax**. Ranges are alternative assumptions,
 not probabilities or limits on one-year market movements. Optional simulation
 details record volatility (yearly fluctuations) and correlation (how returns move
-together). Leave them blank until the simulation method is chosen.
+together). Monte Carlo forecasts require these inputs; fixed forecasts do not.
+See [forecast methodology](#forecast-method) for their precise definitions.
 
 ### Hold some choices fixed and vary others
 
@@ -91,7 +92,8 @@ selected scenarios and whether each category is fixed or varying.
 One selected scenario holds that category fixed.
 **Add alternative** varies it. For example, two Work choices and three Spending
 choices make six combinations when Retirement, Investments, and Economy are fixed.
-**Preview combinations** shows the selections; it does not calculate forecasts.
+**Preview combinations** shows the selections. Save the Plan, then open
+**Forecast** to [calculate selected combinations](#run-forecast).
 Numeric ranges remain available for later analysis and are not expanded here.
 
 Use **Edit plan Household** to review family facts and match the people in each
@@ -145,7 +147,7 @@ Add one row per named account:
 | Tax treatment | Taxable, Pretax retirement, Roth, HSA, or Not entered |
 | Invested in | Cash, Stocks, Bonds, Mixed, or Not entered |
 
-**Invested in** determines which return assumptions a future projection would use.
+**Invested in** determines which return assumptions a forecast uses.
 Choose **Mixed** to enter stock, bond, and cash percentages totaling 100%.
 Individual holdings and tickers are not needed. A fund's name or its tax treatment
 does not establish its investment mix. Accounts with both pretax and Roth balances
@@ -188,11 +190,11 @@ cannot be deleted until you refresh and review it again. Revisions detect
 competing edits; they do not provide an archive of every previous edit.
 
 Wealth snapshots serve as a saved inventory and can be copied into combined Plans.
-Annual scenarios and goal allocations remain independent. Projecting from starting wealth, assigning
-existing assets to goals, investment growth, and retirement projections are future
-work. Future vesting belongs in Work and must not also be counted as opening
-account balances. Owner-specific retirement withdrawals and tax-lot accounting
-are outside this simplified snapshot.
+Annual scenarios and goal allocations remain independent. Forecasts carry the
+starting balances forward using selected Plans and separate owner and basis
+details. Future vesting belongs in Work and must not also be counted as opening
+account balances. Individual tax-lot accounting and assigning existing assets
+to goals remain outside this simplified snapshot.
 
 ## Create and edit annual plans
 
@@ -436,7 +438,8 @@ console or a PostgreSQL client. The app never creates or migrates tables on
 startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on
 `scenarios`, `goals`, `scenario_goals`, `household`, `wealth_snapshots`, and
 `planning_documents`,
-plus schema usage and database connection rights. Use a separate owner for
+plus `SELECT` and `INSERT` on `forecast_runs`, schema usage, and database connection
+rights. Use a separate owner for
 schema changes.
 
 Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, then replace
@@ -450,9 +453,10 @@ verify that it can load it. Use a separate test database for automated tests;
 never use the family database for testing.
 
 For an existing version-two database, reapply `scripts/schema.sql` as its owner
-to add missing `wealth_snapshots` and `planning_documents` tables, then grant those
+to add missing `wealth_snapshots`, `planning_documents`, and `forecast_runs` tables, then grant those
 four privileges on the new tables to
-the runtime role. This is an additive setup step; it does not rewrite scenarios,
+the runtime role for Wealth and Plans; forecasts need only `SELECT` and `INSERT`.
+This is an additive setup step; it does not rewrite scenarios,
 household defaults, or goals. If a new table or its permissions are missing, that category reports the read
 failure and retains session drafts; other categories remain available. The app
 does not apply schema changes automatically.

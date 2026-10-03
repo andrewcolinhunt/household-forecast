@@ -13,7 +13,8 @@ take longer than later calculations. No tax-service account is required.
 
 Open **Scenarios**. Its sub-tabs collect Plans, Household, Wealth, Work,
 Spending, Retirement, Investments, Economy, and Goals. **Compare annual plans**
-remains a separate results page.
+remains a separate results page. **Forecast** projects saved combined Plans
+through retirement.
 
 For a one-year calculation, choose **Plans → New scenario** in the Annual plans
 section. Enter the label and tax year, then follow **Edit Household**, **Edit Work**,
@@ -29,8 +30,9 @@ To collect longer-term assumptions, create reusable profiles in **Work**, **Spen
 **Retirement**, **Investments**, and **Economy**. Use **All Work assumptions** or the
 corresponding action to leave an annual editing context. Then choose **Plans → New
 combined plan** and select a Wealth snapshot. Choose one scenario per category to
-hold it fixed, or **Add alternative** to vary it. The app previews the combinations;
-it does not yet calculate future wealth or retirement outcomes.
+hold it fixed, or **Add alternative** to vary it. Save the Plan, then open
+**Forecast** to select combinations and enter the additional account and benefit
+details needed to [project future wealth](#run-forecast).
 
 Without a database connection, drafts last for the browser session. Use
 **Backups → Download calculated scenario** for annual results, or the category's

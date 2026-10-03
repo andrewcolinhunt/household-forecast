@@ -9,11 +9,11 @@ This tool connects a proposed decision to changes in compensation, taxes,
 expenses, saving, and ultimately future outcomes. Imports can provide starting
 facts; transaction tracking is outside the product's purpose.
 
-The current version compares one year's income, living costs, taxes, cash
-savings, and retained equity across California and Washington scenarios.
-Multi-year and retirement projections are planned, not implemented. See
+Compare one year's income, living costs, taxes, cash savings, and retained equity
+across California and Washington scenarios, or forecast saved Plans through
+retirement with shared market simulations and visible funding shortfalls. See
 [the planning objective](docs/concepts/decision-planning.md) and
-[the annual calculation model](docs/concepts/index.md).
+[the forecasting guide](docs/how-to-guides/forecasting.md).
 
 Pydantic validates inputs and saved results; a pinned PolicyEngine module
 calculates federal, state, and employee payroll taxes.
@@ -50,12 +50,16 @@ out of Git.
 
 ## Scope
 
-Supports 2025 and 2026, married filing jointly, adults aged 18–64, qualifying
+The annual model supports 2025 and 2026, married filing jointly, adults aged 18–64, qualifying
 children, full-year CA/WA wage income, traditional 401(k) contributions, RSUs,
 and qualifying ISO exercise-and-hold. The app uses standard deductions.
 **2026 California income-tax parameters are projected in the pinned engine.**
-Moving-year returns, stock sales, Simplifi imports, and retirement projections
-are outside this version. See the calculation reference before using a scenario.
+Forecasts start from a 2026 Wealth snapshot and use an explicit frozen-real-2026
+tax policy, account withdrawal rules, retirement benefits, and fixed planning
+lifetimes. Fixed, Monte Carlo, supplied historical, bootstrap, and stress modes
+share the same account ledger. Moving-year tax returns, detailed tax lots,
+forecast option exercises, and retirement-age optimization remain outside scope.
+Read [forecast assumptions](docs/concepts/forecasting.md) before using results.
 
 ## Development
 

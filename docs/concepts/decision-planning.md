@@ -11,9 +11,9 @@ The intended calculation follows this sequence:
 **Decision → compensation, taxes, and expenses → saving by account and asset
 type → future balances → retirement options.**
 
-The current app implements the annual comparison at the beginning of this
-sequence. It also saves reusable assumptions and named combinations in Scenarios.
-Multi-year balances and retirement outcomes remain planned work.
+The app implements annual comparisons and multi-year forecasts from saved
+Plans. Forecasts connect starting Wealth, work, spending, retirement, investments,
+and economic assumptions through both people's planning lifetimes.
 
 ## Compare decisions from the same starting point
 
@@ -24,14 +24,14 @@ employer retirement contributions, housing, childcare, state, and the date
 the change takes effect.
 
 The annual calculation estimates the resulting taxes, cash surplus or shortfall,
-retirement contributions, and retained shares. The planned projection will
+retirement contributions, and retained shares. The forecast
 carry these amounts forward to compare future balances under the same economic
 assumptions. This connects the difference in outcomes to the decision being
 compared.
 
 A higher compensation total need not provide more spendable cash. Employer
 shares and retirement contributions must remain distinguishable from cash
-throughout the comparison. Future projections also need explicit assumptions
+throughout the comparison. Forecasts use explicit assumptions
 about investment returns, share sales, and withdrawals before those assets can
 fund spending.
 
@@ -59,15 +59,17 @@ income, expense, tax, or asset assumption.
 | Planning question | Status |
 | --- | --- |
 | How do supported job and full-year CA/WA alternatives change annual cash, taxes, saving, and equity? | Implemented in the annual model. |
-| Can we save and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as input collection and saved combinations; no projection is calculated. |
-| How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Planned: projecting from captured balances, dated changes and growth assumptions, with multi-year tax treatment. |
-| Can each scenario fund a specified retirement lifestyle, and for how long? | Planned: retirement income, account withdrawals, taxes, and spending over time. |
-| How sensitive is the comparison to returns, inflation, employment changes, or employer-share values? | Planned: comparable alternative assumptions, followed by simulations where useful. |
+| Can we save and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as saved combinations, selectable in Forecast. |
+| How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Implemented with annual account balances and an explicit future-tax assumption. |
+| Can each scenario fund a specified retirement lifestyle, and for how long? | Implemented with retirement income, eligible withdrawals, taxes, and visible shortfalls. |
+| How sensitive is the comparison to returns and inflation? | Implemented with shared Monte Carlo futures, supplied historical observations, and illustrative stresses. |
+| What must change to make a target retirement age feasible? | Planned: parameter search through the same forecast evaluator. |
 
 See [how the annual model works](index.md) for implemented accounting and tax
 coverage. In particular, an annual full-year state comparison does not calculate
-the transition year of a move. Existing inputs also do not cover future tax
-years, retirement withdrawals, or stock sales.
+the transition year of a move. Forecasts also assume full-year residence and
+apply a documented planning policy for future taxes. See
+[forecast methodology and limits](#forecast-method).
 
 ## What makes a result useful
 
@@ -84,9 +86,8 @@ retire.
 
 A combined Plan can hold categories fixed while varying others: two Work choices
 and three Spending choices create six combinations under the same retirement and
-economic assumptions. The current app saves and previews these combinations.
-Future forecasts will show wealth over time and whether funds last through both
-lifetimes.
+economic assumptions. Save these combinations and select up to four in Forecast
+to compare wealth over time and whether funds last through both lifetimes.
 
 A combined Plan embeds its selected inputs. A later library edit does not change
 that plan; replacing a selection is explicit. This makes alternatives reproducible
@@ -94,14 +95,12 @@ while allowing the same source assumptions to be reused. Household, Work, Spendi
 Retirement, Investments, and Economy retain separate meanings. Saving instructions
 allocate additions to goals; portfolio targets and cash reserves describe future choices; Wealth records
 named account balances, tax treatment, and starting stock/bond/cash mixes. Balances
-are pooled for household planning; person-specific withdrawal rules remain future
-work.
+are pooled for household planning; forecast details supply the ownership and cost
+basis needed for withdrawals and taxes.
 
 Missing values remain unknown. Input completeness does not establish retirement
 feasibility. Captured lifespan assumptions are different from a future calculated
 age of funding exhaustion, and exploratory ranges are different from calibrated
 probability distributions.
 
-The next calculation capability is a reconciled projection from today's balances and
-the existing annual scenarios. Detailed implementation choices and the proposed
-sequence belong in the private development notes under `_dev`.
+Detailed implementation choices and development notes live under `_dev`.
