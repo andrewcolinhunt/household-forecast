@@ -179,9 +179,13 @@ def test_economy_rejects_invalid_correlation(matrix):
         EconomicAssumptions(name="Invalid", correlation=matrix)
 
 
-def test_economy_optional_statistics_remain_unknown():
-    assert EconomicAssumptions(name="Unknown").correlation is None
-    assert EconomicAssumptions(name="Unknown").volatility == (None,) * 4
+def test_economy_explicit_missing_or_custom_statistics_are_preserved():
+    missing = EconomicAssumptions(
+        name="Unknown", volatility=(None,) * 4, correlation=None
+    )
+    assert missing.correlation is None
+    assert missing.volatility == (None,) * 4
+    assert EconomicAssumptions.model_validate_json(missing.model_dump_json()) == missing
     valid = EconomicAssumptions(
         name="Synthetic",
         correlation=[[1 if i == j else 0 for j in range(4)] for i in range(4)],

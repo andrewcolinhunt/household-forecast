@@ -1267,7 +1267,7 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
 
 
 def _economy(data: dict[str, Any], scope: str) -> None:
-    """Capture sourced compound outlooks separately from optional annual variability."""
+    """Capture compound outlooks separately from editable simulation assumptions."""
     st.caption(
         "Enter average yearly growth after investment fees and before tax. Returns include inflation; do not subtract it here."
     )
@@ -1313,9 +1313,23 @@ def _economy(data: dict[str, Any], scope: str) -> None:
     ):
         with column:
             forms.percent(data, field, label, f"{field}_{scope}")
-    with st.expander("Simulation details (optional)"):
+    st.subheader("Forecast uncertainty")
+    _simulation_summary(data)
+    st.caption(
+        "The default 10th to 90th percentile band shows the middle 80% of simulated balances in each year. The lower/upper ranges above describe alternative assumptions, not this outcome band."
+    )
+    with st.expander("Advanced simulation settings"):
         st.caption(
-            "Volatility measures how much yearly returns fluctuate. Correlation measures how they move together. Leave these blank until setting up a simulation."
+            "Volatility measures how much yearly returns fluctuate. Correlation measures how they move together. These settings affect Monte Carlo forecasts."
+        )
+        st.caption(
+            "Preset sources: [Vanguard volatility forecasts](https://www.vanguardsouthamerica.com/en/home/insights/economic-market-outlook/vanguard-capital-markets-model-forecasts-2026) and [JPMorgan 2026 correlations](https://am.jpmorgan.com/content/dam/jpm-am-aem/global/en/insights/portfolio-insights/ltcma/noindex/ltcma-full-report.pdf#page=82). Values are rounded and adapted for this model."
+        )
+        st.button(
+            "Use recommended simulation settings",
+            key=f"reset_simulation_{scope}",
+            on_click=_reset_simulation,
+            args=(data, scope),
         )
         # Use a retained row dictionary so callbacks can capture tuple elements too.
         for i, label in enumerate(("Equities", "Fixed income", "Cash", "Inflation")):
@@ -1332,7 +1346,7 @@ def _economy(data: dict[str, Any], scope: str) -> None:
             if data["correlation"] is None:
                 data["correlation"] = [[None] * 4 for _ in range(4)]
             st.caption(
-                "Rows and columns: equities, fixed income, cash, inflation. Enter all 16 values, including the diagonal; use -1 to 1, not percent."
+                "Correlations apply to log gross returns (log of 1 + the annual rate). Rows and columns: equities, fixed income, cash, inflation. Enter all 16 values, including the diagonal; use -1 to 1, not percent."
             )
             for i, label in enumerate(
                 ("Equities", "Fixed income", "Cash", "Inflation")
@@ -1352,6 +1366,44 @@ def _economy(data: dict[str, Any], scope: str) -> None:
                         data["correlation"][i][j] = forms.blank(value)
         else:
             data["correlation"] = None
+
+
+def _simulation_summary(data: dict[str, Any]) -> None:
+    """Describe the retained statistics without replacing missing or custom values."""
+    try:
+        settings = EconomicAssumptions(
+            name="Simulation summary",
+            volatility=data["volatility"],
+            correlation=data["correlation"],
+        )
+    except ValueError:
+        st.caption("Simulation settings need attention; review the advanced settings.")
+        return
+    parts = [
+        f"{label} {(value * 100).normalize():f}%"
+        if value is not None
+        else f"{label} not entered"
+        for label, value in zip(
+            ("stocks", "bonds", "cash", "inflation"), settings.volatility, strict=True
+        )
+    ]
+    st.caption("Annual volatility: " + "; ".join(parts) + ".")
+    if settings.correlation is None:
+        st.caption("Correlations are not entered; review the advanced settings.")
+
+
+def _reset_simulation(data: dict[str, Any], scope: str) -> None:
+    """Apply the recommended statistics while retaining all other raw edits."""
+    defaults = EconomicAssumptions(name="Recommended simulation").model_dump(
+        mode="json"
+    )
+    for field in ("volatility", "correlation"):
+        data[field] = defaults[field]
+    keys = [f"correlations_{scope}"]
+    keys += [f"volatility_{i}_{scope}" for i in range(4)]
+    keys += [f"corr_{i}_{j}_{scope}" for i in range(4) for j in range(4)]
+    for key in keys:
+        st.session_state.pop(key, None)
 
 
 def _list_capture(row: list[Any], index: int, key: str, percent: bool) -> None:

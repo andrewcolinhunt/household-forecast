@@ -365,8 +365,25 @@ class InvestmentAssumptions(MonetaryAssumptions):
         return self
 
 
+# Rounded annual volatility assumptions; see docs/concepts/forecasting.md for sources.
+DEFAULT_ECONOMIC_VOLATILITY = (
+    Decimal("0.18"),
+    Decimal("0.06"),
+    Decimal("0.01"),
+    Decimal("0.02"),
+)
+# JPM 2026 USD relationships adapted to log gross rates at the documented outlook.
+# Order: equities, fixed income, cash, inflation. These remain editable assumptions.
+DEFAULT_ECONOMIC_CORRELATION = (
+    (Decimal(1), Decimal("0.302"), Decimal("0.010"), Decimal("-0.010")),
+    (Decimal("0.302"), Decimal(1), Decimal("0.100"), Decimal("-0.240")),
+    (Decimal("0.010"), Decimal("0.100"), Decimal(1), Decimal("-0.030")),
+    (Decimal("-0.010"), Decimal("-0.240"), Decimal("-0.030"), Decimal(1)),
+)
+
+
 class EconomicAssumptions(Assumptions):
-    """Nominal compound return outlooks, inflation, and optional statistical inputs."""
+    """Nominal compound outlooks with editable annual simulation defaults."""
 
     kind: Literal["economy"] = "economy"
     inflation: Exploration[Growth] = Field(default_factory=Exploration[Growth])
@@ -381,7 +398,7 @@ class EconomicAssumptions(Assumptions):
     # Order is equities, fixed income, cash, inflation throughout.
     volatility: tuple[
         Nonnegative | None, Nonnegative | None, Nonnegative | None, Nonnegative | None
-    ] = (None, None, None, None)
+    ] = DEFAULT_ECONOMIC_VOLATILITY
     correlation: (
         tuple[
             tuple[Decimal, Decimal, Decimal, Decimal],
@@ -390,7 +407,7 @@ class EconomicAssumptions(Assumptions):
             tuple[Decimal, Decimal, Decimal, Decimal],
         ]
         | None
-    ) = None
+    ) = DEFAULT_ECONOMIC_CORRELATION
 
     @model_validator(mode="after")
     def validate_correlation(self) -> Self:

@@ -70,6 +70,34 @@ def test_generate_paths_moments_match_compound_centers_and_simple_volatility(
     assert (values > -1).all()
 
 
+def test_generate_paths_defaults_match_published_relationship_targets() -> None:
+    economy = EconomicAssumptions(
+        name="Default simulation",
+        equities={"central": "0.06"},
+        fixed_income={"central": "0.045"},
+        cash={"central": "0.03"},
+        inflation={"central": "0.025"},
+    )
+    values = generate_paths(economy, (2026,), count=200_000, seed=86)[:, 0]
+    np.testing.assert_allclose(values.std(axis=0), [0.18, 0.06, 0.01, 0.02], rtol=0.01)
+    # JPM's published relationships are targets for simple returns, not log rates.
+    np.testing.assert_allclose(
+        np.corrcoef(values, rowvar=False),
+        [
+            [1, 0.30, 0.01, -0.01],
+            [0.30, 1, 0.10, -0.24],
+            [0.01, 0.10, 1, -0.03],
+            [-0.01, -0.24, -0.03, 1],
+        ],
+        atol=0.008,
+    )
+    np.testing.assert_allclose(
+        np.log1p(values).mean(axis=0),
+        np.log1p([0.06, 0.045, 0.03, 0.025]),
+        atol=0.001,
+    )
+
+
 def test_generate_paths_reproducible_and_bounds_unused(
     economy: EconomicAssumptions,
 ) -> None:

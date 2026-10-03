@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
@@ -533,6 +535,111 @@ def test_economy_yields_are_separate_saved_income_portions_of_returns():
     assert data["stock_dividend_yield"] == "0.02"
     assert data["bond_interest_yield"] == "0.04"
     assert not page.error
+
+
+def test_new_economy_shows_recommended_simulation_and_explains_outcome_band():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Economy")
+    press(page, "New Economy assumptions")
+    data = raw(page, "economy")
+    assert [Decimal(v) for v in data["volatility"]] == [
+        Decimal(".18"),
+        Decimal(".06"),
+        Decimal(".01"),
+        Decimal(".02"),
+    ]
+    assert data["correlation"] is not None
+    assert any(e.label == "Advanced simulation settings" for e in page.expander)
+    assert any(
+        "stocks 18%" in c.value and "inflation 2%" in c.value for c in page.caption
+    )
+    assert any(
+        "middle 80%" in c.value and "alternative assumptions" in c.value
+        for c in page.caption
+    )
+    assert any("log gross returns" in c.value for c in page.caption)
+    assert not page.error
+
+
+def test_custom_simulation_statistics_and_zero_survive_navigation():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Economy")
+    press(page, "New Economy assumptions")
+    field(page, "text_input", "Equities annual standard deviation (%)").set_value(
+        "0"
+    ).run()
+    field(page, "text_input", "Fixed income annual standard deviation (%)").set_value(
+        "8"
+    ).run()
+    field(page, "text_input", "Equities / Fixed income").set_value("0.25").run()
+    field(page, "text_input", "Fixed income / Equities").set_value("0.25").run()
+    expected = deepcopy(raw(page, "economy"))
+    tab(page, "Retirement")
+    tab(page, "Economy")
+    assert raw(page, "economy") == expected
+    assert (
+        field(page, "text_input", "Equities annual standard deviation (%)").value == "0"
+    )
+    assert raw(page, "economy")["volatility"][1] == "0.08"
+    assert raw(page, "economy")["correlation"][0][1] == "0.25"
+    assert not page.error
+
+
+def test_missing_simulation_statistics_stay_missing_across_navigation():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Economy")
+    press(page, "New Economy assumptions")
+    field(page, "text_input", "Cash annual standard deviation (%)").set_value("").run()
+    field(page, "checkbox", "Include correlation matrix").uncheck().run()
+    tab(page, "Retirement")
+    tab(page, "Economy")
+    assert raw(page, "economy")["volatility"][2] is None
+    assert raw(page, "economy")["correlation"] is None
+    assert field(page, "text_input", "Cash annual standard deviation (%)").value == ""
+    assert any("cash not entered" in c.value for c in page.caption)
+    assert not page.error
+
+
+def test_recommended_simulation_reset_preserves_financial_edits_and_ranges():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Economy")
+    press(page, "New Economy assumptions")
+    field(page, "text_input", "Stock return (%)").set_value("7").run()
+    field(page, "text_input", "Inflation (%)").set_value("2.5").run()
+    field(page, "text_input", "Stock dividend yield (%)").set_value("1.5").run()
+    field(page, "text_input", "Bond interest yield (%)").set_value("4").run()
+    field(page, "text_area", "Notes").set_value("Keep this source note.").run()
+    field(page, "toggle", "Edit ranges").set_value(True).run()
+    next(w for w in page.text_input if w.key.startswith("lower_equities_")).set_value(
+        "4"
+    ).run()
+    next(w for w in page.text_input if w.key.startswith("upper_equities_")).set_value(
+        "9"
+    ).run()
+    field(page, "text_input", "Equities annual standard deviation (%)").set_value(
+        "invalid"
+    ).run()
+    field(page, "text_input", "Equities / Fixed income").set_value("invalid").run()
+    assert page.error
+    retained = {
+        k: deepcopy(v)
+        for k, v in raw(page, "economy").items()
+        if k not in {"volatility", "correlation"}
+    }
+    press(page, "Use recommended simulation settings")
+    data = raw(page, "economy")
+    assert {
+        k: v for k, v in data.items() if k not in {"volatility", "correlation"}
+    } == retained
+    defaults = EconomicAssumptions(name="Defaults")
+    restored = EconomicAssumptions.model_validate(data)
+    assert restored.volatility == defaults.volatility
+    assert restored.correlation == defaults.correlation
+    assert field(page, "toggle", "Edit ranges").value is True
+    assert not page.error
+    tab(page, "Retirement")
+    tab(page, "Economy")
+    assert EconomicAssumptions.model_validate(raw(page, "economy")) == restored
 
 
 @pytest.mark.parametrize("rename_person", [False, True])

@@ -13,7 +13,8 @@ snapshot and matching economic futures.
    - **Retirement** owns retirement dates, planning ages, living budgets,
      Social Security, and pensions.
    - **Economy** owns total returns, inflation, dividend and interest yields,
-     and simulation volatility and correlation.
+     and simulation volatility and correlation. New Economy scenarios include
+     simulation defaults; review or edit them under **Advanced simulation settings**.
    Use zero for a known zero and leave unknown facts blank. Choose **No pension**
    when appropriate; pension timing is then unnecessary.
 2. Select these saved scenarios, plus Work and Spending, in a combined Plan
@@ -28,6 +29,17 @@ snapshot and matching economic futures.
    **Monte Carlo** for uncertainty bands. The default is 10,000 simulated
    futures. Select **Run forecast** and allow the annual tax calculations to
    finish. Missing inputs link back to Scenarios.
+
+For an older Economy scenario with blank simulation inputs, select **Use
+recommended simulation settings** under **Advanced simulation settings**, then
+save. This sets annual volatility to 18 percentage points for stocks, 6 for bonds,
+1 for cash returns, and 2 for inflation, with a documented correlation preset.
+It leaves your expected returns, exploration ranges, and income yields unchanged.
+Update the Economy copy in each Plan you want to use with these settings.
+
+Lower and upper exploration ranges describe alternative long-term outlooks.
+Monte Carlo uses the central outlook plus annual volatility and correlations;
+the forecast calculates its 10th–90th percentile band from the resulting balances.
 
 Separate health-expense modeling is deferred. Include any health costs you want
 in the forecast in your household living budgets. HSA balances remain invested

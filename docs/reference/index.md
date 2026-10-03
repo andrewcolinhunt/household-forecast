@@ -71,7 +71,7 @@ these models calculates financial outcomes or calls the annual tax engine.
 | `WorkAssumptions` | Money year, two ordered adult work slots, employment phases, vesting, dated option events and RSU tax funding |
 | `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions |
 | `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and nullable `reserved_cash` |
-| `EconomicAssumptions` | Inflation and compound returns after fees and before tax; dividend and bond-interest yields; optional annual volatility and correlation |
+| `EconomicAssumptions` | Inflation and compound returns after fees and before tax; dividend and bond-interest yields; editable defaults for annual volatility and correlation |
 | `RetirementAssumptions` | Two adult slots with retirement years and planning ages; benefits; one-person, both-retired and after-death household budgets; optional mortality-sampling intent |
 | `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
 | `ProfileSelection` | Source UUID/revision/name plus an exact validated copy and optional reviewed adult mapping |
@@ -126,7 +126,9 @@ Economy returns use `nominal_compound_after_fees_before_tax`, distinct
 from arithmetic means of annual random returns. Volatility and correlation order
 is equities, fixed income, cash, inflation. Entered correlation matrices must be
 4×4, finite, symmetric, diagonal 1, bounded by [-1, 1], and positive semidefinite.
-A missing matrix remains unknown.
+New inputs default to annual standard deviations of 0.18, 0.06, 0.01, and 0.02,
+with the [documented correlation preset](#forecast-method). Explicit `None`
+values remain unknown; stored custom values are preserved.
 
 `missing_details(inputs)` reports capture omissions and combination conflicts.
 `select_profile()` and `replace_profile()` copy validated contents. Replacing Work

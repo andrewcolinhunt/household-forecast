@@ -57,6 +57,42 @@ Volatility is the standard deviation of simple annual returns, while correlation
 describes log gross rates. These distinctions matter when entering assumptions.
 Years are independent in this initial parametric model.
 
+New Economy scenarios include editable annual volatility defaults: **18 percentage
+points for stocks, 6 for bonds, 1 for cash returns, and 2 for inflation**. These are
+rounded planning assumptions informed by [Vanguard's 2026 capital-market
+forecasts](https://www.vanguardsouthamerica.com/en/home/insights/economic-market-outlook/vanguard-capital-markets-model-forecasts-2026),
+which list 15.1% volatility for U.S. stocks, 18.9% for non-U.S. stocks, 6.2% for
+U.S. aggregate bonds, 1.1% for cash, and 1.7% for inflation. The defaults describe
+diversified markets; they do not add individual-company risk to employer shares.
+
+The correlation preset adapts the U.S. large-cap, aggregate-bond, cash, and
+inflation relationships in [J.P. Morgan's 2026 USD assumptions, page
+82](https://am.jpmorgan.com/content/dam/jpm-am-aem/global/en/insights/portfolio-insights/ltcma/noindex/ltcma-full-report.pdf#page=82).
+The stored correlations of log gross rates are:
+
+| | Stocks | Bonds | Cash | Inflation |
+|---|---:|---:|---:|---:|
+| Stocks | 1 | 0.302 | 0.010 | −0.010 |
+| Bonds | 0.302 | 1 | 0.100 | −0.240 |
+| Cash | 0.010 | 0.100 | 1 | −0.030 |
+| Inflation | −0.010 | −0.240 | −0.030 | 1 |
+
+We treat the published correlations as simple-return targets and convert them
+to log correlations at compound rates of 6%, 4.5%, 3%, and 2.5%, using the
+volatilities above. The six published pairwise targets, in table order, are
+0.30, 0.01, −0.01, 0.10, −0.24, and −0.03. After rounding to three decimals, the
+matrix remains positive definite and its implied simple-return correlations
+differ from those targets by less than 0.001. This is an approximate planning
+preset, not a reproduction of J.P. Morgan's model: its
+[methodology](https://am.jpmorgan.com/content/dam/jpm-am-aem/global/en/insights/portfolio-insights/ltcma/noindex/ltcma-methodology-handbook.pdf#page=25)
+uses monthly observations and weights economic regimes. The stored log
+correlations remain fixed when you change an outlook; they are not recalibrated
+automatically.
+
+The defaults fill statistical inputs only. They do not choose expected returns,
+change exploration ranges, or replace explicitly saved custom or missing values.
+Saved Plans and forecast runs retain their actual numerical assumptions.
+
 Selected alternatives use common random shocks. If their economic assumptions
 differ, each transforms those shocks using its own growth, volatility, and
 correlation inputs. The same run retains failed paths. Each path is converted
