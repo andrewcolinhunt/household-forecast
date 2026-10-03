@@ -1,0 +1,531 @@
+"""Independently calculated household account and scenario comparisons."""
+
+from __future__ import annotations
+
+from datetime import date
+from uuid import uuid4
+
+import numpy as np
+import pytest
+
+from financial_model.forecast import calculate_forecast, forecast_issues
+from financial_model.forecast_models import ForecastRequest
+from financial_model.forecast_tax import ForecastTaxResult
+from financial_model.planning import PlanningScenario
+from financial_model.schemas import default_allocation_plan
+
+
+def forecast_request(**changes):
+    """Return a complete small fixed-return plan; suitable for UI smoke tests."""
+    account_id = uuid4()
+    profiles = [
+        {
+            "kind": "work",
+            "name": "Retired",
+            "money_year": 2026,
+            "rsu_taxes_from_shares": True,
+            "adults": [
+                {
+                    "slot": slot,
+                    "name": f"Adult {slot}",
+                    "phases": [{"start": 2026, "status": "not_working"}],
+                    "vesting": [{"start": 2026, "end": 2040, "amount": 0}],
+                }
+                for slot in (1, 2)
+            ],
+        },
+        {
+            "kind": "spending",
+            "name": "Spending",
+            "money_year": 2026,
+            "baseline": {"amount": {"central": 1000}},
+        },
+        {
+            "kind": "retirement",
+            "name": "Retirement",
+            "money_year": 2026,
+            "adults": [
+                {
+                    "slot": slot,
+                    "name": f"Adult {slot}",
+                    "retirement": {"central": 2026},
+                    "age": {"central": 62},
+                }
+                for slot in (1, 2)
+            ],
+            "only_adult_1": {"mode": "continue"},
+            "only_adult_2": {"mode": "continue"},
+            "both_retired": {"amount": {"central": 1000}},
+            "survivor": {"amount": {"central": 500}},
+        },
+        {
+            "kind": "investments",
+            "name": "Investments",
+            "money_year": 2026,
+            "policy": "constant",
+            "rebalancing": "flows_only",
+            "reserved_cash": 0,
+            "saving": default_allocation_plan().model_dump(),
+            "checkpoints": [
+                {
+                    "when": {"year": 2026},
+                    "mix": {"equities": 0, "fixed_income": 0, "cash": 1},
+                }
+            ],
+        },
+        {
+            "kind": "economy",
+            "name": "Economy",
+            "inflation": {"central": 0},
+            "equities": {"central": 0},
+            "fixed_income": {"central": 0},
+            "cash": {"central": 0},
+            "volatility": [0, 0, 0, 0],
+        },
+    ]
+    plan = PlanningScenario(
+        name="Synthetic",
+        household={
+            "reference_year": 2026,
+            "adults": [
+                {"name": f"Adult {slot}", "age": 60, "wa_cares_exempt": False}
+                for slot in (1, 2)
+            ],
+            "residence": [{"year": 2026, "location": "WA"}],
+            "filing_status": "married_filing_jointly",
+        },
+        wealth={
+            "snapshot": {
+                "as_of": date(2026, 1, 1),
+                "accounts": [
+                    {
+                        "id": account_id,
+                        "label": "Bank",
+                        "balance": 10000,
+                        "tax_treatment": "taxable",
+                        "invested_in": "cash",
+                    }
+                ],
+            }
+        },
+        components=[
+            {
+                "source_id": uuid4(),
+                "source_revision": 1,
+                "source_name": p["name"],
+                "inputs": p,
+                "adult_mapping": [1, 2]
+                if p["kind"] in {"work", "retirement"}
+                else None,
+            }
+            for p in profiles
+        ],
+    )
+    data = {
+        "plans": [plan],
+        "details": {
+            "assumptions_confirmed": True,
+            "stock_dividend_yield": 0,
+            "bond_interest_yield": 0,
+            "incomes": [
+                {
+                    "owner": slot,
+                    "social_security": 0,
+                    "pension": 0,
+                    "health_before_65": 0,
+                    "health_from_65": 0,
+                }
+                for slot in (1, 2)
+            ],
+        },
+        "settings": {"mode": "fixed"},
+    }
+    data.update(changes)
+    return ForecastRequest.model_validate(data)
+
+
+def _edit(request, callback):
+    data = request.model_dump(mode="json")
+    callback(data)
+    return ForecastRequest.model_validate(data)
+
+
+def _profile(data, kind, index=0):
+    return next(
+        c["inputs"]
+        for c in data["plans"][index]["components"]
+        if c["inputs"]["kind"] == kind
+    )
+
+
+@pytest.fixture
+def zero_tax(monkeypatch):
+    def calculate(**inputs):
+        zero = np.zeros(len(inputs["wages"]))
+        return ForecastTaxResult(*(zero.copy() for _ in range(7)))
+
+    monkeypatch.setattr("financial_model.forecast.yearly_tax", calculate)
+
+
+def test_forecast_cash_account_reconciles_every_year(zero_tax):
+    request = forecast_request()
+    assert forecast_issues(request) == ()
+    result = calculate_forecast(request)
+    rows = result.inspect(0, 0)
+    assert [row["assets"] for row in rows] == [9000, 8000, 7000]
+    assert result.document.summaries[0].funded_fraction == 1
+    assert all(
+        row["opening_assets"]
+        + row["income"]
+        + row["investment_gain"]
+        - row["spending_paid"]
+        - row["tax_paid"]
+        - row["debt_payment"]
+        == row["assets"]
+        for row in rows
+    )
+    with pytest.raises(IndexError):
+        result.inspect(1, 0)
+    with pytest.raises(IndexError):
+        result.inspect(0, 1)
+
+
+def test_forecast_keeps_failed_paths_and_does_not_invent_credit(zero_tax):
+    request = _edit(
+        forecast_request(),
+        lambda d: d["plans"][0]["wealth"]["snapshot"]["accounts"][0].update(
+            balance=1500
+        ),
+    )
+    result = calculate_forecast(request)
+    assert [row["assets"] for row in result.inspect(0, 0)] == [500, 0, 0]
+    assert [row["unfunded"] for row in result.inspect(0, 0)] == [0, 500, 1000]
+    summary = result.document.summaries[0]
+    assert summary.funded_fraction == 0
+    assert summary.first_shortfall_year == 2027
+    assert summary.mean_unfunded_total == 1500
+    assert summary.mean_unfunded_years == 2
+
+
+def test_forecast_employee_and_employer_contributions_added_once_and_capped(zero_tax):
+    def edit(data):
+        retirement = _profile(data, "retirement")
+        for adult in retirement["adults"]:
+            adult["retirement"]["central"] = 2028
+        work = _profile(data, "work")
+        work["adults"][0]["phases"] = [
+            {
+                "start": 2026,
+                "status": "working",
+                "cash_pay": 100000,
+                "real_growth": {"central": 0},
+                "employee_401k": 30000,
+                "employer_retirement_rate": ".6",
+            }
+        ]
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    first, _, retired = result.inspect(0, 0)
+    assert first["employee_contributions"] == 24500
+    assert first["employer_contributions"] == 47500
+    assert first["assets"] == 156500
+    assert retired["employee_contributions"] == retired["employer_contributions"] == 0
+
+
+def test_forecast_pretax_tax_grossup_and_inaccessible_early_retirement(monkeypatch):
+    def flat_tax(**inputs):
+        n = len(inputs["wages"])
+        tax = np.asarray(inputs["ordinary_income"]) * 0.25
+        return ForecastTaxResult(tax, *(np.zeros(n) for _ in range(6)))
+
+    monkeypatch.setattr("financial_model.forecast.yearly_tax", flat_tax)
+
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(tax_treatment="tax_deferred")
+        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+
+    request = _edit(forecast_request(), edit)
+    first = calculate_forecast(request).inspect(0, 0)[0]
+    assert first["withdrawals"] == pytest.approx(1000 / 0.75, abs=0.01)
+    assert first["tax_paid"] == pytest.approx(1000 / 3, abs=0.01)
+    assert first["assets"] == pytest.approx(10000 - 1000 / 0.75, abs=0.01)
+    younger = _edit(
+        request, lambda d: d["plans"][0]["household"]["adults"][0].update(age=59)
+    )
+    first = calculate_forecast(younger).inspect(0, 0)[0]
+    assert first["unfunded"] == 1000
+    assert first["assets"] == 10000
+    assert first["accessible"] == 0
+
+
+def test_forecast_rmd_surplus_is_reinvested(zero_tax):
+    def edit(data):
+        for adult in data["plans"][0]["household"]["adults"]:
+            adult["age"] = 75
+        retirement = _profile(data, "retirement")
+        for adult in retirement["adults"]:
+            adult["age"]["central"] = 75
+        retirement["both_retired"]["amount"]["central"] = 0
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(tax_treatment="tax_deferred", balance=24600)
+        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["required_distributions"] == pytest.approx(1000)
+    assert row["assets"] == 24600
+    assert row["Forecast cash"] == pytest.approx(1000)
+
+
+def test_forecast_debt_payment_nets_principal_and_accounts_interest(zero_tax):
+    debt_id = str(uuid4())
+
+    def edit(data):
+        data["plans"][0]["wealth"]["snapshot"]["debts"] = [
+            {"id": debt_id, "label": "Loan", "amount_owed": 1000}
+        ]
+        data["details"]["debts"] = [
+            {"debt_id": debt_id, "annual_payment": 550, "interest_rate": ".1"}
+        ]
+
+    rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
+    assert rows[0]["debt"] == pytest.approx(550)
+    assert rows[0]["assets"] == pytest.approx(8450)
+    assert rows[0]["net_worth"] == pytest.approx(7900)
+    assert rows[1]["debt"] == pytest.approx(55)
+    assert rows[2]["debt"] == pytest.approx(0)
+    assert rows[2]["debt_payment"] == pytest.approx(60.5)
+
+
+def test_forecast_hsa_only_pays_incremental_health_spending(zero_tax):
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(tax_treatment="hsa")
+        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+        data["details"]["incomes"][0]["health_before_65"] = 400
+        for income in data["details"]["incomes"]:
+            income.update(hsa_eligible_before_65=0, hsa_eligible_from_65=0)
+        data["details"]["incomes"][0]["hsa_eligible_before_65"] = 400
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["hsa_withdrawals"] == 400
+    assert row["assets"] == 9600
+    assert row["unfunded"] == 1000
+
+
+def test_forecast_return_and_real_percentiles_do_not_double_count_yield(zero_tax):
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(invested_in="stocks")
+        data["details"]["accounts"] = [
+            {"account_id": account["id"], "cost_basis": 10000}
+        ]
+        data["details"]["stock_dividend_yield"] = ".02"
+        economy = _profile(data, "economy")
+        economy["equities"]["central"] = ".1"
+        economy["inflation"]["central"] = ".1"
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    row = result.inspect(0, 0)[0]
+    assert row["assets"] == pytest.approx(10000)
+    assert row["investment_gain"] == pytest.approx(1000)
+    assert result.document.summaries[0].points[0].median == pytest.approx(10000 / 1.1)
+
+
+def test_forecast_zero_uncertainty_matches_fixed_and_identical_scenarios(zero_tax):
+    request = forecast_request()
+    fixed = calculate_forecast(request)
+
+    def edit(data):
+        data["settings"].update(mode="monte_carlo", count=20)
+        data["plans"].append(data["plans"][0].copy())
+
+    mc = calculate_forecast(_edit(request, edit))
+    for point, reference in zip(
+        mc.document.summaries[0].points, fixed.document.summaries[0].points, strict=True
+    ):
+        assert point.median == reference.median
+        assert point.lower == point.upper == point.median
+    assert mc.inspect(0, 12) == mc.inspect(1, 12)
+    assert all(
+        point.median_difference == point.lower_difference == point.upper_difference == 0
+        for point in mc.document.summaries[1].points
+    )
+
+
+def test_forecast_partial_year_recurring_flows_are_prorated_once(zero_tax):
+    request = _edit(
+        forecast_request(),
+        lambda d: d["plans"][0]["wealth"]["snapshot"].update(as_of="2026-07-02"),
+    )
+    row = calculate_forecast(request).inspect(0, 0)[0]
+    assert row["spending_paid"] == pytest.approx(1000 * 183 / 365)
+    assert row["assets"] == pytest.approx(10000 - 1000 * 183 / 365)
+
+
+def test_forecast_survivor_inherits_accounts_and_receives_larger_social_security(
+    zero_tax,
+):
+    def edit(data):
+        for adult in data["plans"][0]["household"]["adults"]:
+            adult["age"] = 67
+        retirement = _profile(data, "retirement")
+        retirement["adults"][0]["age"]["central"] = 67
+        retirement["adults"][1]["age"]["central"] = 69
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(tax_treatment="roth")
+        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+        data["details"]["incomes"][0]["social_security"] = 200
+        data["details"]["incomes"][1]["social_security"] = 100
+
+    rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
+    assert rows[0]["social_security"] == 300
+    assert rows[1]["social_security"] == 200
+    assert rows[1]["spending_paid"] == 500
+    assert rows[1]["unfunded"] == 0
+
+
+def test_forecast_unpaid_tax_remains_a_liability(monkeypatch):
+    def tax_due(**inputs):
+        n = len(inputs["wages"])
+        return ForecastTaxResult(np.full(n, 15000), *(np.zeros(n) for _ in range(6)))
+
+    monkeypatch.setattr("financial_model.forecast.yearly_tax", tax_due)
+    rows = calculate_forecast(forecast_request()).inspect(0, 0)
+    assert rows[0]["unpaid_tax_liability"] == 5000
+    assert rows[0]["net_worth"] == -5000
+    assert rows[1]["unpaid_tax_liability"] == 20000
+    assert rows[1]["unfunded"] == 16000
+
+
+def test_forecast_missing_account_basis_and_unsupported_sources_are_visible():
+    request = _edit(
+        forecast_request(),
+        lambda d: d["plans"][0]["wealth"]["snapshot"]["accounts"][0].update(
+            invested_in="stocks"
+        ),
+    )
+    assert any("cost basis" in issue for issue in forecast_issues(request))
+    with pytest.raises(ValueError, match="cost basis"):
+        calculate_forecast(request)
+
+
+def test_forecast_mixed_account_cash_has_face_value_basis(zero_tax):
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(
+            invested_in="mixed", mix={"equities": ".5", "fixed_income": 0, "cash": ".5"}
+        )
+        data["details"]["accounts"] = [
+            {"account_id": account["id"], "cost_basis": 6000}
+        ]
+
+    request = _edit(forecast_request(), edit)
+    row = calculate_forecast(request).inspect(0, 0)[0]
+    assert row["realized_gains"] == 0
+    assert row["taxable_cost_basis"] == 5000
+    invalid = _edit(
+        request, lambda d: d["details"]["accounts"][0].update(cost_basis=4000)
+    )
+    assert any(
+        "less than the cash balance" in issue for issue in forecast_issues(invalid)
+    )
+
+
+def test_forecast_employer_additions_cannot_exceed_total_compensation(zero_tax):
+    def edit(data):
+        retirement = _profile(data, "retirement")
+        retirement["adults"][0]["retirement"]["central"] = 2027
+        work = _profile(data, "work")
+        work["adults"][0]["phases"] = [
+            {
+                "start": 2026,
+                "status": "working",
+                "cash_pay": 20000,
+                "real_growth": {"central": 0},
+                "employee_401k": 20000,
+                "employer_retirement_rate": ".2",
+            }
+        ]
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["employee_contributions"] == 20000
+    assert row["employer_contributions"] == 0
+
+
+def test_forecast_hsa_ineligible_health_costs_require_other_assets(zero_tax):
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(tax_treatment="hsa")
+        data["details"]["accounts"] = [{"account_id": account["id"], "owner": 1}]
+        for income in data["details"]["incomes"]:
+            income.update(hsa_eligible_before_65=0, hsa_eligible_from_65=0)
+        data["details"]["incomes"][0].update(
+            health_before_65=400, hsa_eligible_before_65=100
+        )
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["hsa_withdrawals"] == 100
+    assert row["unfunded"] == 1300
+    assert row["assets"] == 9900
+
+
+def test_forecast_rebalancing_realizes_only_sales_and_preserves_reserve(zero_tax):
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(
+            invested_in="mixed", mix={"equities": ".8", "fixed_income": 0, "cash": ".2"}
+        )
+        data["details"]["accounts"] = [
+            {"account_id": account["id"], "cost_basis": 6000}
+        ]
+        investment = _profile(data, "investments")
+        investment.update(rebalancing="annual", reserved_cash=2000)
+        investment["checkpoints"][0]["mix"] = {
+            "equities": ".5",
+            "fixed_income": ".5",
+            "cash": 0,
+        }
+        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 0
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["realized_gains"] == 2000
+    assert row["cash"] == 2000
+    assert row["assets"] == 10000
+    assert row["reserve_breach"] == 0
+
+
+def test_forecast_difference_unavailable_after_baseline_lifetime(zero_tax):
+    def edit(data):
+        import copy
+
+        longer = copy.deepcopy(data["plans"][0])
+        longer["name"] = "Longer lives"
+        data["plans"].append(longer)
+        for adult in _profile(data, "retirement", 1)["adults"]:
+            adult["age"]["central"] = 64
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    later = result.document.summaries[1].points
+    assert later[2].median_difference == 0
+    assert later[3].median_difference is None
+
+
+def test_forecast_cash_saving_goals_stay_cash_between_rebalances(zero_tax):
+    def edit(data):
+        investment = _profile(data, "investments")
+        investment["rebalancing"] = "annual"
+        investment["checkpoints"][0]["mix"] = {
+            "equities": 1,
+            "fixed_income": 0,
+            "cash": 0,
+        }
+        _profile(data, "economy")["equities"]["central"] = ".1"
+        data["details"]["incomes"][0].update(
+            pension=10000, pension_start_age=60, pension_survivor_fraction=0
+        )
+
+    rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
+    assert rows[0]["Forecast cash"] == 9000
+    assert rows[1]["Forecast cash"] == 18000
+    assert rows[1]["assets"] == pytest.approx(30100)
