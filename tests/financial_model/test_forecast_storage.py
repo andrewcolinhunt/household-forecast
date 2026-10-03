@@ -81,6 +81,7 @@ def test_forecast_backup_preserves_exact_inputs_and_identity(saved_forecast) -> 
         {"document_type": "planning_document"},
         {"schema_version": True},
         {"schema_version": 1},
+        {"schema_version": 2},
         {"model_version": "unknown"},
         {"summaries": []},
     ],
@@ -97,9 +98,12 @@ def test_forecast_backup_rejects_invalid_json_and_size(data: bytes) -> None:
         import_forecast_backup(data)
 
 
-def test_forecast_backup_explains_unsupported_version(saved_forecast) -> None:
-    raw = saved_forecast.model_dump(mode="json") | {"schema_version": 1}
-    with pytest.raises(ValueError, match="Unsupported forecast schema version 1"):
+@pytest.mark.parametrize("version", [1, 2])
+def test_forecast_backup_explains_unsupported_version(saved_forecast, version) -> None:
+    raw = saved_forecast.model_dump(mode="json") | {"schema_version": version}
+    with pytest.raises(
+        ValueError, match=f"Unsupported forecast schema version {version}"
+    ):
         import_forecast_backup(json.dumps(raw).encode())
 
 
@@ -124,18 +128,22 @@ def test_forecast_storage_does_not_create_tables(database_url) -> None:
 
 
 @pytest.mark.integration
-def test_forecast_schema_reapply_preserves_legacy_runs(database_url, saved_forecast):
+@pytest.mark.parametrize("version", [1, 2])
+def test_forecast_schema_reapply_preserves_legacy_runs(
+    database_url, saved_forecast, version
+):
     legacy = saved_forecast.model_dump(mode="json") | {
-        "schema_version": 1,
-        "model_version": "1",
+        "schema_version": version,
+        "model_version": str(version),
     }
     schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
     with psycopg.connect(database_url) as connection:
-        connection.execute(
-            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, "
-            "ADD CONSTRAINT forecast_runs_document_check1 "
-            "CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1')"
-        )
+        if version == 1:
+            connection.execute(
+                "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, "
+                "ADD CONSTRAINT forecast_runs_document_check1 "
+                "CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1')"
+            )
         connection.execute(
             "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
             (saved_forecast.id, Jsonb(legacy), saved_forecast.created_at),
@@ -148,5 +156,4 @@ def test_forecast_schema_reapply_preserves_legacy_runs(database_url, saved_forec
         )
     current = saved_forecast.model_copy(update={"id": uuid4()})
     create_forecast(database_url, current)
-    with pytest.raises(ValueError, match="Unsupported forecast schema version 1"):
-        list_forecasts(database_url)
+    assert list_forecasts(database_url) == (current,)

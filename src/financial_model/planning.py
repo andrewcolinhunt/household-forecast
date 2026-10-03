@@ -412,7 +412,7 @@ class EconomicAssumptions(Assumptions):
 
 
 class AdultRetirement(ValueModel):
-    """One adult's retirement timing, benefits, health costs, and lifespan."""
+    """One adult's retirement timing, benefits, and lifespan."""
 
     slot: Slot
     name: Label
@@ -426,22 +426,6 @@ class AdultRetirement(ValueModel):
     pension: Money | None = None
     pension_start_age: Annotated[int, Field(ge=18, le=100)] = 65
     pension_survivor_fraction: Rate | None = None
-    health_before_65: Money | None = None
-    health_from_65: Money | None = None
-    hsa_eligible_before_65: Money | None = None
-    hsa_eligible_from_65: Money | None = None
-
-    @model_validator(mode="after")
-    def validate_health(self) -> Self:
-        """Keep HSA-eligible expenses within each person's health budget."""
-        for health, eligible in (
-            (self.health_before_65, self.hsa_eligible_before_65),
-            (self.health_from_65, self.hsa_eligible_from_65),
-        ):
-            if eligible is not None and health is not None and eligible > health:
-                msg = "HSA-eligible expenses cannot exceed the health budget."
-                raise ValueError(msg)
-        return self
 
 
 class RetirementBudget(ValueModel):
@@ -472,7 +456,6 @@ class RetirementAssumptions(MonetaryAssumptions):
     only_adult_2: RetirementBudget = Field(default_factory=RetirementBudget)
     both_retired: Budget = Field(default_factory=Budget)
     survivor: Budget | None = None
-    health_costs_in_budget: Literal["included", "additional"] = "included"
     table_basis: Literal["period", "cohort", "unknown"] = "unknown"
 
     @model_validator(mode="after")

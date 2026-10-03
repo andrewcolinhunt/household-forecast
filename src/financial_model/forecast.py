@@ -103,10 +103,8 @@ def _plan_issues(
     assert plan.wealth is not None
     snapshot = plan.wealth.snapshot
     has_ca = any(y.state == "CA" for y in compiled.annual)
-    has_hsa = any(a.tax_treatment == "hsa" and a.balance for a in snapshot.accounts)
-    retirement = cast(RetirementAssumptions, _profile(plan, "retirement"))
     incomes = _retirement_people(plan)
-    issues.extend(_benefit_issues(plan, compiled, retirement, incomes, has_hsa))
+    issues.extend(_benefit_issues(plan, compiled, incomes))
     if compiled.money_year != 2026 or snapshot.as_of.year != 2026:
         issues.append(
             "Forecasting currently requires 2026 money reference years and a 2026 Wealth snapshot."
@@ -267,9 +265,7 @@ def _retirement_people(
 def _benefit_issues(
     plan: PlanningScenario,
     compiled: CompiledPlan,
-    retirement: RetirementAssumptions,
     incomes: tuple[AdultRetirement, AdultRetirement],
-    has_hsa: bool,
 ) -> list[str]:
     issues = []
     for owner, income in enumerate(incomes):
@@ -295,42 +291,6 @@ def _benefit_issues(
             and any(not p.alive and p.age >= income.pension_start_age for p in people)
         ):
             issues.append(f"{label}: enter the pension survivor fraction.")
-        for band in ("before_65", "from_65"):
-            if not any(
-                p.alive and p.retired and (p.age < 65) == (band == "before_65")
-                for p in people
-            ):
-                continue
-            health = getattr(income, f"health_{band}")
-            eligible = getattr(income, f"hsa_eligible_{band}")
-            age_label = "before 65" if band == "before_65" else "from 65"
-            if (
-                retirement.health_costs_in_budget == "additional" or has_hsa
-            ) and health is None:
-                issues.append(
-                    f"{label}: enter health costs {age_label}, including an explicit zero."
-                )
-            if has_hsa and health and eligible is None:
-                issues.append(
-                    f"{label}: enter HSA-eligible health costs {age_label}, including an explicit zero."
-                )
-    if retirement.health_costs_in_budget == "included":
-        for annual in compiled.annual:
-            health = sum(
-                float(
-                    getattr(
-                        income,
-                        "health_before_65" if adult.age < 65 else "health_from_65",
-                    )
-                    or 0
-                )
-                for adult, income in zip(annual.adults, incomes, strict=True)
-                if adult.alive and adult.retired
-            )
-            if health > float(annual.recurring_spending):
-                issues.append(
-                    f"Retirement: included health costs exceed the living budget in {annual.year}."
-                )
     return issues
 
 
@@ -573,10 +533,9 @@ def _withdraw(
 
 
 def _mandatory(
-    accounts: _Accounts, annual: AnnualInputs, opening: FloatArray, health: FloatArray
-) -> tuple[FloatArray, FloatArray]:
-    required = np.zeros(len(health))
-    hsa = np.zeros(len(health))
+    accounts: _Accounts, annual: AnnualInputs, opening: FloatArray
+) -> FloatArray:
+    required = np.zeros(len(opening))
     for index, treatment in enumerate(accounts.treatment):
         owner = accounts.owners[index]
         if owner is None:
@@ -586,18 +545,13 @@ def _mandatory(
             annual.year - adult.age
         ):
             need = opening[:, index] / rmd_divisor(adult.age) * annual.year_fraction
-        elif treatment == "hsa":
-            need = np.maximum(health - hsa, 0)
         else:
             continue
         for asset in (2, 1, 0):
             sale, _ = _sell(accounts, index, asset, need)
             need -= sale
-            if treatment == "hsa":
-                hsa += sale
-            else:
-                required += sale
-    return required, hsa
+            required += sale
+    return required
 
 
 def _survivor_waiting_to_claim(
@@ -614,8 +568,8 @@ def _benefits(
     incomes: tuple[AdultRetirement, AdultRetirement],
     annual: AnnualInputs,
     price: FloatArray,
-) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
-    pensions, social, health, eligible_health = 0.0, [], 0.0, 0.0
+) -> tuple[FloatArray, FloatArray]:
+    pensions, social = 0.0, []
     alive = tuple(a.alive for a in annual.adults)
     for adult, detail in zip(annual.adults, incomes, strict=True):
         social.append(
@@ -629,24 +583,11 @@ def _benefits(
         pensions += pension * (
             1 if adult.alive else float(detail.pension_survivor_fraction or 0)
         )
-        if adult.alive and adult.retired:
-            health += float(
-                (detail.health_before_65 if adult.age < 65 else detail.health_from_65)
-                or 0
-            )
-            eligible_health += float(
-                (
-                    detail.hsa_eligible_before_65
-                    if adult.age < 65
-                    else detail.hsa_eligible_from_65
-                )
-                or 0
-            )
     ss = sum(social) if all(alive) else max(social)
     if _survivor_waiting_to_claim(annual, incomes):
         ss = 0.0
     factor = price * annual.year_fraction
-    return pensions * factor, ss * factor, health * factor, eligible_health * factor
+    return pensions * factor, ss * factor
 
 
 def _pay(
@@ -808,7 +749,6 @@ def _forecast(
     investment = cast(InvestmentAssumptions, _profile(plan, "investments"))
     work = cast(WorkAssumptions, _profile(plan, "work"))
     economy = cast(EconomicAssumptions, _profile(plan, "economy"))
-    retirement = cast(RetirementAssumptions, _profile(plan, "retirement"))
     incomes = _retirement_people(plan)
     trace: Trace = []
     previously_alive: tuple[bool, ...] = (True, True)
@@ -840,7 +780,7 @@ def _forecast(
         growth, dividend, interest = _growth(
             accounts, paths[:, index], annual.year_fraction, economy
         )
-        pensions, social, health, eligible_health = _benefits(incomes, annual, price)
+        pensions, social = _benefits(incomes, annual, price)
         cash_pay, rsu, contributions, employer = _pay(annual, price)
         for owner, target in enumerate(accounts.retirement):
             _buy(
@@ -849,7 +789,7 @@ def _forecast(
                 (contributions[:, owner] + employer[:, owner])[:, None]
                 * np.asarray(annual.allocation),
             )
-        mandatory, hsa = _mandatory(accounts, annual, opening_accounts, eligible_health)
+        mandatory = _mandatory(accounts, annual, opening_accounts)
         ordinary = pensions + mandatory
         cash = (
             cash_pay.sum(axis=1)
@@ -857,14 +797,11 @@ def _forecast(
             + pensions
             + social
             + mandatory
-            + hsa
         )
         spending = (
             float(annual.recurring_spending) * annual.year_fraction
             + float(annual.one_time_spending)
         ) * price
-        if retirement.health_costs_in_budget == "additional":
-            spending += health
         debt_interest = debts * ((1 + debt_rates) ** annual.year_fraction - 1)
         debts += debt_interest
         due_debt = np.minimum(debts, payments * annual.year_fraction)
@@ -992,10 +929,8 @@ def _forecast(
             "employer_contributions": employer.sum(axis=1),
             "pensions": pensions,
             "social_security": social,
-            "health_spending": health,
             "required_distributions": mandatory,
-            "hsa_withdrawals": hsa,
-            "withdrawals": withdrawals + mandatory + hsa,
+            "withdrawals": withdrawals + mandatory,
             "realized_gains": gains,
             "assets": ending_assets,
             "debt": debts.sum(axis=1),

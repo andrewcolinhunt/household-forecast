@@ -72,7 +72,7 @@ these models calculates financial outcomes or calls the annual tax engine.
 | `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions |
 | `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and nullable `reserved_cash` |
 | `EconomicAssumptions` | Inflation and compound returns after fees and before tax; dividend and bond-interest yields; optional annual volatility and correlation |
-| `RetirementAssumptions` | Two adult slots with retirement years and planning ages; benefits and health costs; one-person, both-retired and after-death household budgets; included/additional health treatment; optional mortality-sampling intent |
+| `RetirementAssumptions` | Two adult slots with retirement years and planning ages; benefits; one-person, both-retired and after-death household budgets; optional mortality-sampling intent |
 | `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
 | `ProfileSelection` | Source UUID/revision/name plus an exact validated copy and optional reviewed adult mapping |
 | `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed Work/Retirement adult mappings |

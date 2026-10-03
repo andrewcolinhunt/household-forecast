@@ -77,4 +77,4 @@ ALTER TABLE forecast_runs
     DROP CONSTRAINT IF EXISTS forecast_runs_document_check1,
     DROP CONSTRAINT IF EXISTS forecast_runs_schema_version,
     ADD CONSTRAINT forecast_runs_schema_version
-        CHECK ((document ->> 'schema_version' IN ('1', '2')) IS TRUE);
+        CHECK ((document ->> 'schema_version' IN ('1', '2', '3')) IS TRUE);

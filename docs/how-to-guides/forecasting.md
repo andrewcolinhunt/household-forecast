@@ -11,7 +11,7 @@ snapshot and matching economic futures.
    - **Wealth** owns account balances, retirement-account owners, taxable cost
      basis, and debt payment terms.
    - **Retirement** owns retirement dates, planning ages, living budgets,
-     Social Security, pensions, and retirement health costs.
+     Social Security, and pensions.
    - **Economy** owns total returns, inflation, dividend and interest yields,
      and simulation volatility and correlation.
    Use zero for a known zero and leave unknown facts blank. Choose **No pension**
@@ -29,11 +29,10 @@ snapshot and matching economic futures.
    futures. Select **Run forecast** and allow the annual tax calculations to
    finish. Missing inputs link back to Scenarios.
 
-Health costs are included in the retirement living budget by default. Choose
-**Extra spending on top of household living costs** only when your budget excludes
-those costs. With an HSA, enter the eligible portion of health spending; it does
-not add another expense. Without an HSA, an included health-cost breakdown is
-optional. California HSA investments also need a state cost basis in Wealth.
+Separate health-expense modeling is deferred. Include any health costs you want
+in the forecast in your household living budgets. HSA balances remain invested
+and count toward total wealth, but do not fund spending. California HSA
+investments still need a state cost basis in Wealth.
 
 Dividend and interest yields are parts of total returns, not additional growth.
 Debt payments are modeled separately from living costs; exclude them from your
@@ -54,7 +53,7 @@ marks. The band is neither a worst-case boundary nor a lifetime guarantee.
 Read the funding summary and annual table alongside the chart. Positive total
 wealth can coexist with a spending shortfall when money remains in inaccessible
 retirement accounts. Accessible balances are gross of future withdrawal taxes;
-HSA funds are reserved for eligible modeled health costs. Cash means taxable
+HSA funds are excluded from accessible balances. Cash means taxable
 cash available to the household.
 
 The difference chart compares each alternative with the baseline **within the
@@ -100,7 +99,7 @@ database saving is unavailable; imports are limited to 10 MB.
 For an existing database, its owner must reapply `scripts/schema.sql` and grant
 the runtime role `SELECT` and `INSERT` on `forecast_runs`. This creates an
 additional table and updates its version constraint without rewriting household
-inputs. New runs use forecast format and model version 2. Version 1 runs remain
+inputs. New runs use forecast format and model version 3. Version 1 and 2 runs remain
 stored but cannot be opened by this version; their inputs must be recreated in
 Scenarios before running a new forecast.
 

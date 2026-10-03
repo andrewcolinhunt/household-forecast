@@ -30,8 +30,7 @@ existing money; they do not create wealth. Net wealth subtracts remaining debt
 and unpaid tax liabilities. Debt interest increases the contractual balance;
 unpaid tax is carried without estimating penalties or interest.
 
-The model meets required distributions, uses eligible HSA funds for explicitly
-eligible health costs, then funds remaining needs from taxable cash, taxable
+The model meets required distributions, then funds needs from taxable cash, taxable
 investments, eligible pretax accounts, and Roth accounts. Withdrawals generate
 additional tax where applicable; the calculation solves for enough gross
 withdrawal to cover that tax. Cash reserves can be spent. Taxes receive payment
@@ -43,11 +42,11 @@ Retirement saving above payroll contribution limits goes to taxable investments.
 Regular 2026 contribution caps rise with the model's price level; catch-up
 contributions and new IRA/HSA contributions are outside the current scope.
 
-Retirement health costs are part of the living budget unless the Retirement
-scenario explicitly marks them additional. HSA-eligible costs are a subset of
-those health costs. HSA payments reduce the remaining spending need; they do not
-create a second expense. Retirement benefits and health costs follow the Plan's
-reviewed person mapping. Each Plan supplies its own benefit and yield assumptions.
+Separate health-expense modeling is deferred. Household living budgets provide
+all recurring spending; the model adds no separate health costs. HSA balances
+remain invested and count toward total wealth, but are unavailable for spending.
+Retirement benefits follow the Plan's reviewed person mapping. Each Plan supplies
+its own benefit and yield assumptions.
 
 ## Economic simulations and comparisons
 
@@ -94,8 +93,7 @@ Taxable sales use proportional average basis and long-term treatment. Taxable
 cash has basis equal to its balance. All stocks, including employer shares,
 follow the broad stock return series. This omits individual stock risk and
 short-term holding-period effects. California HSA earnings and sales use a
-separate state basis; federal HSA withdrawals cover only the explicitly
-eligible portion of health costs. See [IRS HSA expense rules](https://www.irs.gov/publications/p969).
+separate state basis. HSA withdrawals are outside the current scope.
 
 Pretax retirement balances are fully taxable. Ordinary retirement access starts
 at age 60 in this annual model, and Roth withdrawals are assumed qualified.

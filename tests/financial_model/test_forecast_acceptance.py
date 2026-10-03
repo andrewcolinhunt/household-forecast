@@ -239,40 +239,47 @@ def test_forecast_actual_wage_taxes_and_saving_conserve_household_money():
 
 
 @pytest.mark.parametrize("state", ["CA", "WA"])
-def test_forecast_hsa_growth_and_qualified_withdrawal_use_state_basis(state):
+@pytest.mark.parametrize("rebalance", [False, True])
+def test_forecast_retained_hsa_growth_uses_state_tax_treatment(state, rebalance):
     def edit(data):
         hsa = _account("HSA", 100000, "hsa", "stocks")
         data["plans"][0]["wealth"]["snapshot"]["accounts"].append(hsa)
         data["plans"][0]["household"]["residence"][0]["location"] = state
         hsa.update(owner=1, cost_basis=50000)
         _profile(data, "economy")["stock_dividend_yield"] = ".02"
-        _profile(data, "retirement")["health_costs_in_budget"] = "additional"
-        for income in _profile(data, "retirement")["adults"]:
-            income.update(hsa_eligible_before_65=0, hsa_eligible_from_65=0)
+        if rebalance:
+            investment = _profile(data, "investments")
+            investment.update(rebalancing="annual", reserved_cash=10000)
+            investment["checkpoints"][0]["mix"] = {
+                "equities": ".5",
+                "fixed_income": ".5",
+                "cash": 0,
+            }
         _profile(data, "retirement")["adults"][0].update(
             pension=100000,
             pension_start_age=60,
             pension_survivor_fraction=0,
-            health_before_65=10000,
-            hsa_eligible_before_65=10000,
         )
         _profile(data, "economy")["equities"]["central"] = ".1"
 
     row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
-    # Dividend2k is part of totalreturn10k, reinvested and added to CA basis.
-    # Selling10k from110k with52k basis realizes10k*(1-52/110).
-    ca_earnings = 2000 + 10000 * (1 - 52000 / 110000)
+    # Rebalancing sells half the stock with half its $50,000 basis. Its remaining
+    # dividends are reinvested, included in total return, and taxable only in CA.
+    ca_gains = 25000 if rebalance else 0
+    dividend = 1000 if rebalance else 2000
+    growth = 5000 if rebalance else 10000
     state_reference = yearly_tax(
         wages=np.zeros((1, 2)),
         contributions=np.zeros((1, 2)),
-        ordinary_income=100000 + (ca_earnings if state == "CA" else 0),
+        ordinary_income=100000 + (ca_gains + dividend if state == "CA" else 0),
         ages=(60, 60),
         state=state,
     )
     expected_tax = 7640 + state_reference.state_income_tax[0]
     assert row["taxes"] == pytest.approx(expected_tax, abs=0.05)
-    assert row["hsa_withdrawals"] == 10000
-    assert _balance(row, "HSA") == pytest.approx(100000)
+    assert row["ca_hsa_income"] == dividend
+    assert row["ca_hsa_gains"] == ca_gains
+    assert _balance(row, "HSA") == pytest.approx(100000 + growth)
     assert row["assets"] == pytest.approx(
-        110000 + 100000 + 10000 - 11000 - expected_tax, abs=0.05
+        110000 + 100000 + growth - 1000 - expected_tax, abs=0.05
     )

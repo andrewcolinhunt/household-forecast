@@ -52,8 +52,6 @@ def forecast_request(**changes):
                     "age": {"central": 62},
                     "social_security": 0,
                     "pension": 0,
-                    "health_before_65": 0,
-                    "health_from_65": 0,
                 }
                 for slot in (1, 2)
             ],
@@ -291,21 +289,24 @@ def test_forecast_debt_payment_nets_principal_and_accounts_interest(zero_tax):
     assert rows[2]["debt_payment"] == pytest.approx(60.5)
 
 
-def test_forecast_hsa_only_pays_incremental_health_spending(zero_tax):
+@pytest.mark.parametrize("age", [60, 75])
+def test_forecast_preserves_hsa_without_funding_general_expenses(zero_tax, age):
     def edit(data):
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
-        account.update(tax_treatment="hsa")
-        account["owner"] = 1
-        _profile(data, "retirement")["adults"][0]["health_before_65"] = 400
-        _profile(data, "retirement")["health_costs_in_budget"] = "additional"
-        for income in _profile(data, "retirement")["adults"]:
-            income.update(hsa_eligible_before_65=0, hsa_eligible_from_65=0)
-        _profile(data, "retirement")["adults"][0]["hsa_eligible_before_65"] = 400
+        account.update(tax_treatment="hsa", owner=1)
+        for person in data["plans"][0]["household"]["adults"]:
+            person["age"] = age
+        for person in _profile(data, "retirement")["adults"]:
+            person["age"]["central"] = age + 2
 
-    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
-    assert row["hsa_withdrawals"] == 400
-    assert row["assets"] == 9600
-    assert row["unfunded"] == 1000
+    request = _edit(forecast_request(), edit)
+    assert forecast_issues(request) == ()
+    rows = calculate_forecast(request).inspect(0, 0)
+    for row in rows:
+        assert row["withdrawals"] == row["required_distributions"] == 0
+        assert row["assets"] == 10000
+        assert row["accessible"] == row["spending_paid"] == 0
+        assert row["spending_planned"] == row["unfunded"] == 1000
 
 
 def test_forecast_return_and_real_percentiles_do_not_double_count_yield(zero_tax):
@@ -447,24 +448,6 @@ def test_forecast_employer_additions_cannot_exceed_total_compensation(zero_tax):
     assert row["employer_contributions"] == 0
 
 
-def test_forecast_hsa_ineligible_health_costs_require_other_assets(zero_tax):
-    def edit(data):
-        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
-        account.update(tax_treatment="hsa")
-        account["owner"] = 1
-        _profile(data, "retirement")["health_costs_in_budget"] = "additional"
-        for income in _profile(data, "retirement")["adults"]:
-            income.update(hsa_eligible_before_65=0, hsa_eligible_from_65=0)
-        _profile(data, "retirement")["adults"][0].update(
-            health_before_65=400, hsa_eligible_before_65=100
-        )
-
-    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
-    assert row["hsa_withdrawals"] == 100
-    assert row["unfunded"] == 1300
-    assert row["assets"] == 9900
-
-
 def test_forecast_rebalancing_realizes_only_sales_and_preserves_reserve(zero_tax):
     def edit(data):
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
@@ -524,71 +507,19 @@ def test_forecast_cash_saving_goals_stay_cash_between_rebalances(zero_tax):
     assert rows[1]["assets"] == pytest.approx(30100)
 
 
-@pytest.mark.parametrize(
-    ("treatment", "total", "shortfall"),
-    [("included", 1000, 600), ("additional", 1400, 1000)],
-)
-def test_forecast_retirement_health_costs_are_counted_once(
-    zero_tax, treatment, total, shortfall
-):
-    def edit(data):
-        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
-        account.update(tax_treatment="hsa", owner=1)
-        retirement = _profile(data, "retirement")
-        retirement["health_costs_in_budget"] = treatment
-        for person in retirement["adults"]:
-            person.update(hsa_eligible_before_65=0)
-        retirement["adults"][0].update(health_before_65=400, hsa_eligible_before_65=400)
-
-    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
-    assert row["spending_planned"] == total
-    assert row["hsa_withdrawals"] == 400
-    assert row["spending_paid"] == 400
-    assert row["unfunded"] == shortfall
-    assert row["assets"] == 9600
-
-
-def test_forecast_included_health_costs_must_fit_each_active_living_budget():
-    def edit(data):
-        retirement = _profile(data, "retirement")
-        retirement["adults"][0]["health_before_65"] = 1100
-
-    request = _edit(forecast_request(), edit)
-    assert any(
-        "included health costs exceed the living budget" in issue
-        for issue in forecast_issues(request)
-    )
-
-
 def test_forecast_only_requires_fields_that_affect_modeled_cash_flows(zero_tax):
     def edit(data):
         economy = _profile(data, "economy")
         economy.update(stock_dividend_yield=None, bond_interest_yield=None)
         for adult in _profile(data, "retirement")["adults"]:
-            adult.update(
-                social_security=None,
-                pension=None,
-                health_before_65=None,
-                health_from_65=None,
-            )
+            adult.update(social_security=None, pension=None)
 
     request = _edit(forecast_request(), edit)
     assert forecast_issues(request) == ()
     assert calculate_forecast(request).inspect(0, 0)[0]["assets"] == 9000
 
 
-def test_forecast_additional_health_only_requires_modeled_age_band():
-    def edit(data):
-        retirement = _profile(data, "retirement")
-        retirement["health_costs_in_budget"] = "additional"
-        retirement["adults"][0].update(health_before_65=None, health_from_65=None)
-
-    issues = forecast_issues(_edit(forecast_request(), edit))
-    assert any("health costs before 65" in issue for issue in issues)
-    assert not any("health costs from 65" in issue for issue in issues)
-
-
-def test_forecast_retirement_income_and_health_follow_household_mapping(zero_tax):
+def test_forecast_retirement_income_follows_household_mapping(zero_tax):
     def edit(data):
         data["plans"][0]["household"]["adults"][0]["age"] = 65
         retirement = _profile(data, "retirement")
@@ -598,8 +529,6 @@ def test_forecast_retirement_income_and_health_follow_household_mapping(zero_tax
             pension_start_age=62,
             social_security=200,
             claiming_age=62,
-            health_before_65=200,
-            health_from_65=900,
         )
         retirement["adults"][1].update(
             age={"central": 65},
@@ -607,8 +536,6 @@ def test_forecast_retirement_income_and_health_follow_household_mapping(zero_tax
             pension_start_age=65,
             social_security=100,
             claiming_age=65,
-            health_before_65=900,
-            health_from_65=300,
         )
         selection = next(
             c
@@ -619,7 +546,6 @@ def test_forecast_retirement_income_and_health_follow_household_mapping(zero_tax
 
     row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
     assert row["pensions"] == row["social_security"] == 100
-    assert row["health_spending"] == 500
     assert row["spending_planned"] == 1000
     assert row["assets"] == 9200
 
@@ -685,19 +611,6 @@ def test_forecast_partial_year_event_occurs_once_without_timing_question(zero_ta
     assert rows[1]["spending_planned"] == 1000
 
 
-def test_forecast_zero_health_costs_do_not_need_redundant_hsa_eligibility(zero_tax):
-    request = _edit(
-        forecast_request(),
-        lambda data: data["plans"][0]["wealth"]["snapshot"]["accounts"][0].update(
-            tax_treatment="hsa", owner=1
-        ),
-    )
-    assert forecast_issues(request) == ()
-    row = calculate_forecast(request).inspect(0, 0)[0]
-    assert row["hsa_withdrawals"] == 0
-    assert row["unfunded"] == 1000
-
-
 def test_forecast_deceased_benefits_are_optional_when_no_survivor_payment_is_modeled(
     zero_tax,
 ):
@@ -747,30 +660,19 @@ def test_forecast_still_requires_deceased_social_security_when_survivor_can_clai
     )
 
 
-def test_forecast_partial_year_included_hsa_expenses_inflate_and_prorate_together(
+def test_forecast_partial_year_living_expenses_do_not_consume_hsa(
     zero_tax,
 ):
     def edit(data):
         snapshot = data["plans"][0]["wealth"]["snapshot"]
         snapshot["as_of"] = "2026-07-02"
         snapshot["accounts"][0].update(tax_treatment="hsa", owner=1)
-        _profile(data, "retirement")["adults"][0].update(
-            health_before_65=400, hsa_eligible_before_65=400
-        )
         _profile(data, "economy")["inflation"]["central"] = ".1"
 
     rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
     fraction = 183 / 365
     assert rows[0]["spending_planned"] == pytest.approx(1000 * fraction)
-    assert (
-        rows[0]["health_spending"]
-        == rows[0]["hsa_withdrawals"]
-        == pytest.approx(400 * fraction)
-    )
-    assert rows[0]["unfunded"] == pytest.approx(600 * fraction)
+    assert rows[0]["unfunded"] == pytest.approx(1000 * fraction)
     assert rows[1]["spending_planned"] == pytest.approx(1000 * 1.1**fraction)
-    assert (
-        rows[1]["health_spending"]
-        == rows[1]["hsa_withdrawals"]
-        == pytest.approx(400 * 1.1**fraction)
-    )
+    assert rows[1]["unfunded"] == pytest.approx(1000 * 1.1**fraction)
+    assert all(row["assets"] == 10000 for row in rows)

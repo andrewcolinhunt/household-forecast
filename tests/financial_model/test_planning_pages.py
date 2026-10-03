@@ -486,7 +486,7 @@ def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation
     assert not page.error
 
 
-def test_retirement_benefits_and_health_preserve_inputs_across_navigation():
+def test_retirement_benefits_preserve_inputs_without_separate_health_controls():
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Retirement")
     press(page, "New Retirement assumptions")
@@ -499,10 +499,9 @@ def test_retirement_benefits_and_health_preserve_inputs_across_navigation():
     field(page, "number_input", "Pension starts at age").set_value(60).run()
     field(page, "text_input", "Pension paid to survivor (%)").set_value("50").run()
     field(page, "selectbox", "Adult 2 pension").select("none").run()
-    field(page, "text_input", "Adult 1 health costs before age 65 ($/year)").set_value(
-        "10000"
-    ).run()
-    assert field(page, "selectbox", "These health costs are").value == "included"
+    assert not any("health" in w.label.lower() for w in page.text_input)
+    assert not any("HSA" in w.label for w in page.expander)
+    assert not any(s.value == "Retirement health costs" for s in page.subheader)
     tab(page, "Economy")
     tab(page, "Retirement")
     data = raw(page, "retirement")
@@ -510,7 +509,6 @@ def test_retirement_benefits_and_health_preserve_inputs_across_navigation():
     assert data["adults"][0]["claiming_age"] == 70
     assert data["adults"][0]["pension_start_age"] == 60
     assert data["adults"][0]["pension_survivor_fraction"] == "0.5"
-    assert data["adults"][0]["health_before_65"] == "10000"
     assert data["adults"][1]["pension"] == "0"
     assert (
         len([w for w in page.number_input if w.label == "Pension starts at age"]) == 1
@@ -602,14 +600,15 @@ def test_plan_readiness_distinguishes_fixed_and_simulated_requirements(monkeypat
     retirement = next(
         c["inputs"] for c in data["components"] if c["inputs"]["kind"] == "retirement"
     )
-    retirement["adults"][0]["health_before_65"] = None
-    retirement["health_costs_in_budget"] = "additional"
+    retirement["adults"][0].update(pension=None, pension_start_age=60)
     page = AppTest.from_function(
         _readiness_app, args=(PlanningScenario.model_validate(data).model_dump_json(),)
     ).run()
     assert not page.exception
     assert not page.success
-    assert any("Retirement:" in t.value and "health" in t.value for t in page.text)
+    assert any(
+        "Retirement:" in t.value and "pension income" in t.value for t in page.text
+    )
 
 
 def test_large_plan_defers_forecast_readiness_until_combinations_are_selected(

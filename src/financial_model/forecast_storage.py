@@ -24,10 +24,12 @@ def create_forecast(dsn: str, document: SavedForecast) -> SavedForecast:
 
 
 def list_forecasts(dsn: str) -> tuple[SavedForecast, ...]:
-    """Read saved runs in creation order without changing any source Plans."""
+    """Read supported runs in creation order, leaving older formats stored intact."""
     with _connect(dsn) as connection:
         rows = connection.execute(
-            "SELECT document FROM forecast_runs ORDER BY created_at DESC, id"
+            "SELECT document FROM forecast_runs "
+            "WHERE document ->> 'schema_version' = %s ORDER BY created_at DESC, id",
+            (str(SavedForecast.model_fields["schema_version"].default),),
         ).fetchall()
     return tuple(_read_document(row["document"]) for row in rows)
 

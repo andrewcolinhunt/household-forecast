@@ -11,7 +11,7 @@ Under **Scenarios**, save the inputs you want to reuse, then combine them in Pla
 | Wealth | Dated balances, tax treatment, investment mix, account owners, cost basis, and debt terms |
 | Work | Pay, salary growth, contributions, and equity compensation |
 | Spending | Regular living costs, changes to that budget, and extra expenses |
-| Retirement | Retirement dates, living costs, benefits, health costs, lifespans, and costs after one person dies |
+| Retirement | Retirement dates, living costs, benefits, lifespans, and costs after one person dies |
 | Investments | Saving destinations, cash reserves, and portfolio allocation over time |
 | Economy | Inflation, stock/bond/cash returns after fees, taxable yields, and simulation variability |
 | Goals | Shared names for saving purposes |

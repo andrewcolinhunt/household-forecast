@@ -1463,7 +1463,7 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
                 _range_details(adult["age"], "Planning age", f"age_{i}_{scope}", "age")
     st.subheader("Household living costs")
     st.caption(
-        "Total household costs replace regular living costs. Dated extra expenses continue separately."
+        "Total household costs replace regular living costs. Dated extra expenses continue separately. Include any health costs you want forecast in these budgets until separate health-expense modeling is added."
     )
     forms.table_header(
         ("Household situation", "Budget", "Annual amount ($)", ""), (2.5, 3, 2, 1.2)
@@ -1554,7 +1554,6 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
         "After a death, use the remaining person's total budget, even if they are still working."
     )
     _retirement_income(data, scope)
-    _retirement_health(data, scope)
 
 
 def _benefit_status(value: Any) -> str:
@@ -1653,60 +1652,6 @@ def _retirement_income(data: dict[str, Any], scope: str) -> None:
                         maximum=70,
                     )
             _pension(adult, key)
-
-
-def _retirement_health(data: dict[str, Any], scope: str) -> None:
-    """Explain and record the health-cost portion of retirement budgets."""
-    st.subheader("Retirement health costs")
-    st.caption(
-        "Annual costs per retired person, including insurance and out-of-pocket care. Normally these are already included in the household living costs above. A breakdown is only needed for HSA withdrawals or extra health spending."
-    )
-    data.setdefault("health_costs_in_budget", "included")
-    forms.choice(
-        data,
-        "health_costs_in_budget",
-        "These health costs are",
-        ("included", "additional"),
-        f"health_budget_{scope}",
-        labels={
-            "included": "Already in household living costs",
-            "additional": "Extra spending on top of household living costs",
-        },
-    )
-    forms.table_header(
-        ("Person", "Before age 65 ($/year)", "From age 65 ($/year)"), (2, 3, 3)
-    )
-    for i, adult in enumerate(data["adults"]):
-        person, before, after = st.columns((2, 3, 3))
-        person.text(adult["name"])
-        for column, field, label in (
-            (before, "health_before_65", "before age 65"),
-            (after, "health_from_65", "from age 65"),
-        ):
-            with column:
-                forms.money(
-                    adult,
-                    field,
-                    f"{adult['name']} health costs {label} ($/year)",
-                    f"{field}_{i}_{scope}",
-                    compact=True,
-                )
-    with st.expander("HSA spending (if using an HSA)"):
-        st.caption(
-            "The part of the health costs above eligible for HSA withdrawals. These amounts do not add spending. Enter 0 if none."
-        )
-        for i, adult in enumerate(data["adults"]):
-            with st.container(horizontal=True):
-                for field, label in (
-                    ("hsa_eligible_before_65", "before age 65"),
-                    ("hsa_eligible_from_65", "from age 65"),
-                ):
-                    forms.money(
-                        adult,
-                        field,
-                        f"{adult['name']} HSA-eligible costs {label} ($/year)",
-                        f"{field}_{i}_{scope}",
-                    )
 
 
 def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
