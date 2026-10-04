@@ -87,7 +87,7 @@ def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
     except (psycopg.Error, ValidationError, ValueError):
         st.session_state["store_available"] = False
         st.error(
-            "Saved scenarios could not be read. Your draft is still available; try Refresh."
+            "Saved annual plans could not be read. Your draft is still available; try Refresh annual plans."
         )
         return tuple(st.session_state.get("last_records", ()))
 
@@ -207,7 +207,7 @@ def _input_error(error: ValueError) -> None:
             include_input=False, include_context=False, include_url=False
         ):
             location = " → ".join(str(part) for part in item["loc"])
-            st.error(f"{location or 'Scenario'}: {item['msg']}")
+            st.error(f"{location or 'Annual plan'}: {item['msg']}")
     else:
         st.error("Enter children's ages as whole numbers separated by commas.")
 
@@ -232,7 +232,7 @@ def _save(dsn: str, document: SavedScenario, *, new: bool) -> None:
     if not st.session_state.get("loaded_record"):
         st.session_state["drafts"].pop(str(st.session_state["draft_id"]), None)
     _set_editor(saved.inputs, saved)
-    st.session_state["notice"] = "Scenario saved."
+    st.session_state["notice"] = "Annual plan saved."
     st.rerun()
 
 
@@ -386,14 +386,14 @@ def compare_page() -> None:
         if len(selected) < 4:
             selected.append(pending)
         else:
-            st.info(f"Remove one scenario to include {displays[pending].label}.")
+            st.info(f"Remove one annual plan to include {displays[pending].label}.")
     st.session_state["comparison_selection"] = selected
     _comparison_checklist(displays, selected)
     if len(selected) < 2:
         st.info(
-            "Select at least two scenarios."
+            "Select at least two annual plans."
             if len(choices) >= 2
-            else "Create or duplicate a scenario to compare two sets of results."
+            else "Create or duplicate an annual plan in Plans, then calculate it to compare results."
         )
         return
     _comparison(
@@ -449,7 +449,7 @@ def _comparison_checklist(
                 if key in selected:
                     _comparison_arrows(key, display, selected)
     if len(selected) == 4:
-        st.caption("Four selected. Uncheck a scenario to choose another.")
+        st.caption("Four selected. Uncheck an annual plan to choose another.")
 
 
 def _move_comparison(key: str, direction: int) -> None:
@@ -489,12 +489,12 @@ def _comparison(
     """Render the approved views only for comparable calculation snapshots."""
     if len({record.inputs.tax_year for record in documents}) != 1:
         st.info(
-            "Choose scenarios from the same tax year for a like-for-like comparison."
+            "Choose annual plans from the same tax year for a like-for-like comparison."
         )
         return
     if not all(_current(record.result) for record in documents):
         st.info(
-            "Recalculate and save scenarios with the current rules before comparing them."
+            "Recalculate and save annual plans with the current rules before comparing them."
         )
         return
     _financial_views(documents, displays)
@@ -507,8 +507,12 @@ def _financial_views(
     """Use the same definitions for an individual result and all comparisons."""
     period = cast(
         Period,
-        st.radio(
-            "Amounts", ["Monthly", "Annual"], horizontal=True, key="display_period"
+        st.segmented_control(
+            "Amounts",
+            ["Monthly", "Annual"],
+            default="Monthly",
+            required=True,
+            key="display_period",
         ),
     )
     st.caption(
@@ -541,13 +545,13 @@ def _backups(document: SavedScenario | None) -> None:
     with st.expander("Backups"):
         if document:
             st.download_button(
-                "Download calculated scenario",
+                "Download calculated annual plan",
                 document.model_dump_json(indent=2),
                 file_name=f"{document.id}.scenario.json",
                 mime="application/json",
             )
         upload = st.file_uploader(
-            "Import a scenario backup", type=["json"], max_upload_size=1
+            "Import an annual plan backup", type=["json"], max_upload_size=1
         )
         inputs = None
         ready = upload is not None
@@ -641,21 +645,21 @@ def _draft_status() -> tuple[bool, bool]:
     )
 
 
-@st.dialog("Delete scenario?", dismissible=False)
+@st.dialog("Delete annual plan?", dismissible=False)
 def _confirm_delete(record: SavedScenario) -> None:
     """Require confirmation of a specific saved revision before deleting it."""
     st.html(_document_display(record).html())
     st.caption(
-        "This removes the scenario for both of you, including its draft in this session. It cannot be undone."
+        "This removes the annual plan for both of you, including its draft in this session. It cannot be undone."
     )
     cancel, confirm = st.columns(2)
     if cancel.button("Cancel", width="stretch"):
         st.session_state.pop("pending_delete", None)
         st.rerun()
-    if confirm.button("Delete scenario", type="primary", width="stretch"):
+    if confirm.button("Delete annual plan", type="primary", width="stretch"):
         dsn = _database_url()
         if not dsn:
-            st.error("The saved scenario store is unavailable.")
+            st.error("Saved annual plans are unavailable.")
             return
         try:
             delete_scenario(dsn, record.id, record.revision)
@@ -663,11 +667,11 @@ def _confirm_delete(record: SavedScenario) -> None:
             st.warning(str(error))
             return
         except psycopg.Error:
-            st.error("Delete failed. The scenario has not been removed; try again.")
+            st.error("Delete failed. The annual plan has not been removed; try again.")
             return
         _forget_scenario(record)
         st.session_state.pop("pending_delete", None)
-        st.session_state["notice"] = "Scenario deleted."
+        st.session_state["notice"] = "Annual plan deleted."
         st.rerun()
 
 
@@ -722,12 +726,14 @@ def scenarios_page() -> None:
     """List saved household scenarios and provide entry points to their drafts."""
     st.subheader("Annual plans")
     with st.container(horizontal=True):
-        if st.button("New scenario", type="primary"):
+        if st.button("New annual plan", type="primary"):
             _open_editor()
-        st.button("Refresh annual plans", help="Read the latest saved scenarios.")
+        st.button("Refresh annual plans", help="Read the latest saved annual plans.")
     records = st.session_state["records"]
     if not records:
-        st.info("No saved scenarios yet. Create one to get started.")
+        st.info(
+            "No saved annual plans yet. Create one to compare a single year's cash, equity, and taxes."
+        )
     if records:
         forms.table_header(
             ("Annual plan", "Cash surplus / deficit ($/year)", "Spending ($/year)", ""),
@@ -741,9 +747,10 @@ def scenarios_page() -> None:
         if draft["loaded_record"] is None
     ]
     if drafts:
-        with st.expander("Unsaved drafts"):
+        with st.container(border=True):
+            st.markdown("**Continue editing annual plans**")
             for draft in drafts:
-                label = draft["draft_data"].get("name") or "New scenario"
+                label = draft["draft_data"].get("name") or "New annual plan"
                 try:
                     inputs = _parse_inputs(draft["draft_data"], draft["draft_ages"])
                     label = ScenarioDisplay(inputs, "Unsaved draft").label

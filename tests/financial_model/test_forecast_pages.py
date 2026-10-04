@@ -7,6 +7,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
+import psycopg
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -207,7 +208,7 @@ def test_forecast_history_requires_explicit_provenance(
 ) -> None:
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
-    field(page, "selectbox", "Forecast method").select("historical").run()
+    page.button_group(key="mode_0").set_value("historical").run()
     assert not page.exception
     assert any("history source" in message.value for message in page.error)
     assert field(page, "button", "Run forecast").disabled
@@ -223,7 +224,7 @@ def test_forecast_saved_run_reuses_frozen_plans_without_library(
     original = page.session_state["forecast_document"]
     page.session_state["planning_records"] = {}
     page.run()
-    field(page, "button", "Rerun saved inputs").click().run()
+    field(page, "button", "Rerun these inputs").click().run()
     assert not page.exception
     assert len(calculation_calls) == 2
     assert calculation_calls[1] == original.request
@@ -245,11 +246,72 @@ def test_forecast_failed_rerun_preserves_previous_result(
     monkeypatch.setattr(
         sys.modules["financial_model.forecast"], "calculate_forecast", failed
     )
-    field(page, "button", "Rerun saved inputs").click().run()
+    field(page, "button", "Rerun these inputs").click().run()
     assert not page.exception
     assert any("Synthetic accounting mismatch" in item.value for item in page.error)
     assert page.session_state["forecast_document"] == original
     assert page.get("download_button")
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        "forecast_runs_document_check",
+        "forecast_runs_document_check1",
+        "forecast_runs_schema_version",
+        "forecast_runs_document_id",
+    ],
+)
+def test_forecast_save_failure_preserves_run_and_can_retry(
+    monkeypatch, plan_record, calculation_calls, constraint
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    field(page, "button", "Run forecast").click().run()
+    original = page.session_state["forecast_document"]
+    records = []
+    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: tuple(records))
+    monkeypatch.setattr(
+        forecast_pages, "list_planning_documents", lambda dsn, kind: (plan_record,)
+    )
+
+    def failed(dsn, document):
+        message = "Private database detail"
+        raise psycopg.errors.CheckViolation(
+            message, info={ord("n"): constraint.encode()}
+        )
+
+    monkeypatch.setattr(forecast_pages, "create_forecast", failed)
+    page.run()
+    field(page, "button", "Save forecast").click().run()
+    assert not page.exception
+    assert page.session_state["forecast_document"] == original
+    assert not page.session_state["forecast_saved_ids"]
+    assert not field(page, "button", "Save forecast").disabled
+    assert page.get("download_button")
+    assert "Private database detail" not in page.error[0].value
+    if constraint == "forecast_runs_document_id":
+        assert "could not be saved" in page.error[0].value
+    else:
+        assert "database needs an update" in page.error[0].value
+
+    monkeypatch.setattr(
+        forecast_pages,
+        "create_forecast",
+        lambda dsn, document: records.append(document),
+    )
+    field(page, "button", "Save forecast").click().run()
+    assert not page.exception
+    assert records == [original]
+    assert str(original.id) in page.session_state["forecast_saved_ids"]
+    assert any("Forecast saved" in item.value for item in page.success)
+    page.run()
+    assert field(page, "button", "Save forecast").disabled
+    field(page, "button", "Open saved run").click().run()
+    assert not page.exception
+    assert page.session_state["forecast_document"] == original
+    assert len(calculation_calls) == 1
 
 
 def test_forecast_duplicate_names_have_distinct_plot_series(
@@ -266,13 +328,18 @@ def test_forecast_duplicate_names_have_distinct_plot_series(
     page.multiselect[0].select(f"{plan_record.id}:0").select(f"{duplicate.id}:0").run()
     field(page, "button", "Run forecast").click().run()
     assert not page.exception
-    assert len(specs) == 2
+    assert len(specs) == 1
     for spec in specs:
         rows = spec["layer"][0]["data"]["values"]
         assert {row["scenario"] for row in rows} == {
             "1. Compare choices",
             "2. Compare choices",
         }
+    inspector = next(w for w in page.button_group if w.label == "Plan to inspect")
+    inspector.set_value(1).run()
+    assert page.dataframe[-1].value.iloc[0]["scenario"] == 1
+    page.button_group(key=inspector.key).set_value(0).run()
+    assert page.dataframe[-1].value.iloc[0]["scenario"] == 0
 
 
 def test_forecast_missing_inputs_link_to_scenarios(
@@ -288,6 +355,7 @@ def test_forecast_missing_inputs_link_to_scenarios(
     assert not page.exception
     assert field(page, "button", "Run forecast").disabled
     assert any("taxable cost basis" in item.value for item in page.markdown)
+    assert not any("inputs need attention" in item.label for item in page.expander)
     field(page, "button", "Open Wealth").click().run()
     assert not page.exception
     assert page.session_state["scenario_category"] == "Wealth"
@@ -305,3 +373,70 @@ def test_forecast_selection_survives_immediate_navigation(
     page.switch_page(PAGE).run()
     assert not page.exception
     assert page.multiselect[0].value == [f"{plan_record.id}:0"]
+
+
+def test_forecast_method_survives_immediate_navigation(
+    plan_record, calculation_calls
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    page.button_group(key="mode_0").set_value("fixed")
+    page.switch_page("src/financial_model/pages/compare.py").run()
+    page.switch_page(PAGE).run()
+    assert not page.exception
+    assert page.button_group(key="mode_0").value == "fixed"
+    assert not any(widget.label == "Simulated futures" for widget in page.number_input)
+    assert not calculation_calls
+    field(page, "button", "Run forecast").click().run()
+    assert calculation_calls[0].settings.mode == "fixed"
+
+
+def test_forecast_invalid_edit_identifies_previous_results(
+    plan_record, calculation_calls
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    field(page, "button", "Run forecast").click().run()
+    original = page.session_state["forecast_document"]
+    assert not any("previous run" in message.value for message in page.info)
+    field(page, "text_input", "Forecast name").set_value("").run()
+    assert not page.exception
+    assert field(page, "button", "Run forecast").disabled
+    assert any("previous run" in message.value for message in page.info)
+    assert page.session_state["forecast_document"] == original
+    assert not any(widget.label == "Scenario" for widget in page.selectbox)
+    assert len(calculation_calls) == 1
+
+
+@pytest.mark.parametrize("funded", [True, False])
+def test_forecast_single_future_shows_outcome_without_probability(
+    plan_record, calculation_calls, funded
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    page.button_group(key="mode_0").set_value("fixed").run()
+    field(page, "button", "Run forecast").click().run()
+    document = page.session_state["forecast_document"]
+    summary = document.summaries[0].model_copy(
+        update={
+            "paths": 1,
+            "funded_fraction": int(funded),
+            "first_shortfall_year": None if funded else 2026,
+            "mean_unfunded_total": 0 if funded else 800,
+            "mean_unfunded_years": 0 if funded else 1,
+        }
+    )
+    page.session_state["forecast_document"] = document.model_copy(
+        update={"summaries": (summary,)}
+    )
+    page.run()
+    assert not page.exception
+    outcomes = page.dataframe[0].value
+    assert outcomes.iloc[0]["Expenses funded through lifetime"] == (
+        "Yes" if funded else "No"
+    )
+    assert outcomes.iloc[0]["Unpaid expenses ($)"] == (0 if funded else 800)
+    assert "Fully funded futures (%)" not in outcomes.columns
+    assert any("not a probability" in caption.value for caption in page.caption)
+    assert not any("shading covers" in caption.value for caption in page.caption)
+    assert len(calculation_calls) == 1

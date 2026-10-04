@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from financial_model.forecast_models import (
@@ -128,32 +129,53 @@ def test_forecast_storage_does_not_create_tables(database_url) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize(
+    ("version", "constraint"),
+    [
+        (1, "forecast_runs_document_check"),
+        (1, "forecast_runs_document_check1"),
+        (2, "forecast_runs_schema_version"),
+    ],
+)
 def test_forecast_schema_reapply_preserves_legacy_runs(
-    database_url, saved_forecast, version
+    database_url, saved_forecast, version, constraint
 ):
     legacy = saved_forecast.model_dump(mode="json") | {
         "schema_version": version,
         "model_version": str(version),
     }
+    current = saved_forecast.model_copy(update={"id": uuid4()})
     schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
     with psycopg.connect(database_url) as connection:
-        if version == 1:
-            connection.execute(
-                "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, "
-                "ADD CONSTRAINT forecast_runs_document_check1 "
-                "CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '1')"
-            )
+        check = sql.SQL(
+            "(document ->> 'schema_version') IS NOT DISTINCT FROM '1'"
+            if version == 1
+            else "(document ->> 'schema_version' IN ('1', '2')) IS TRUE"
+        )
+        connection.execute(
+            sql.SQL(
+                "ALTER TABLE forecast_runs DROP CONSTRAINT IF EXISTS {}, "
+                "ADD CONSTRAINT {} CHECK ({})"
+            ).format(sql.Identifier(constraint), sql.Identifier(constraint), check)
+        )
         connection.execute(
             "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
             (saved_forecast.id, Jsonb(legacy), saved_forecast.created_at),
         )
+        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+            connection.execute(
+                "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
+                (
+                    current.id,
+                    Jsonb(current.model_dump(mode="json")),
+                    current.created_at,
+                ),
+            )
         connection.execute(schema)
         connection.execute(schema)
         assert (
             connection.execute("SELECT document FROM forecast_runs").fetchone()[0]
             == legacy
         )
-    current = saved_forecast.model_copy(update={"id": uuid4()})
     create_forecast(database_url, current)
     assert list_forecasts(database_url) == (current,)

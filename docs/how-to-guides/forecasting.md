@@ -13,20 +13,19 @@ snapshot and matching economic futures.
    - **Retirement** owns retirement dates, planning ages, living budgets,
      Social Security, and pensions.
    - **Economy** owns total returns, inflation, dividend and interest yields,
-     and simulation volatility and correlation. New Economy scenarios include
+     and simulation volatility and correlation. New Economy assumptions include
      simulation defaults; review or edit them under **Advanced simulation settings**.
    Use zero for a known zero and leave unknown facts blank. Choose **No pension**
    when appropriate; pension timing is then unnecessary.
-2. Select these saved scenarios, plus Work and Spending, in a combined Plan
+2. Select these saved assumptions, plus Work, Spending, and Investments, in a combined Plan
    under **Scenarios → Plans**. Review its forecast readiness. When a source
    changes, choose **Update this copy** or **Update Wealth copy**, then save the
    Plan. Other Plans retain their own copies.
 3. Open **Forecast** and select up to four combinations. Categories with saved
-   alternatives produce separate choices. The first selected combination is
-   the baseline for the difference chart. Compared choices must share their
+   alternatives produce separate choices. Compared choices must share their
    dated accounts, debts, and household demographics; residence may differ.
 4. Start with **Fixed assumptions** to check your cash flows. Then choose
-   **Monte Carlo** for uncertainty bands. The default is 10,000 simulated
+   **Simulated returns** (Monte Carlo) for uncertainty bands. The default is 10,000 simulated
    futures. Select **Run forecast** and allow the annual tax calculations to
    finish. Missing inputs link back to Scenarios.
 
@@ -58,13 +57,18 @@ there is no separate opening-year setting.
 
 ## Read the results
 
-The main chart shows median net wealth and the middle 80% of modeled outcomes
-at each year end, in 2026 purchasing power. Retirement dates appear as vertical
-marks. The band is neither a worst-case boundary nor a lifetime guarantee.
+Start with **Lifetime funding**. A single projected future shows whether expenses
+are funded and any unpaid expenses; it is not a probability. Runs with multiple
+futures show the funded fraction and average shortfalls.
+
+The main chart shows net wealth at each year end, in 2026 purchasing power.
+For multiple futures, it shows the median and middle 80% of modeled outcomes.
+Retirement dates appear as vertical marks. The band is neither a worst-case
+boundary nor a lifetime guarantee.
 The time axis has three aligned numeric rows: year and both people's year-end
 ages, with row labels on the left. Ages use the household saved with the forecast.
-Hover over a median line for exact ages and balances. The full-width chart keeps
-a nearly square shape as the window changes. Its legend sits inside the upper-left
+Hover over a line for exact ages and balances. The full-width chart limits its
+height to keep the following results within reach. Its legend sits inside the upper-left
 corner, with solid samples matching the median lines.
 
 Read the funding summary and annual table alongside the chart. Positive total
@@ -73,9 +77,7 @@ retirement accounts. Accessible balances are gross of future withdrawal taxes;
 HSA funds are excluded from accessible balances. Cash means taxable
 cash available to the household.
 
-The difference chart compares each alternative with the baseline **within the
-same simulated future**, then summarizes those differences. Differences stop
-when either comparison horizon ends. Inspect an individual path to see nominal
+Inspect an individual path to see nominal
 account balances and the annual reconciliation. The saved example is **Future 1**,
 not an invented path through each year's median.
 
@@ -108,7 +110,7 @@ contains the selected Plan copies, including Wealth and all financial assumption
 simulation settings, seed, model versions, summary results, and example ledger.
 Later library edits do not change it. Rerunning creates a separate result.
 
-Open a saved forecast to review its frozen results. Rerun its saved inputs to
+Open a saved forecast to review its frozen results. Choose **Rerun these inputs** to
 inspect other individual paths. Exact reproduction requires the same model and
 numerical dependencies recorded by the run. JSON downloads also work when
 database saving is unavailable; imports are limited to 10 MB.

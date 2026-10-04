@@ -113,21 +113,27 @@ def choice(
     labels: dict[Any, str] | None = None,
     help_text: str | None = None,
     compact: bool = False,
+    segmented: bool = False,
 ) -> None:
     """Choose an explicit meaning without inferring other fields."""
-    row[field] = st.selectbox(
-        label,
-        options,
-        index=options.index(row.get(field)),
-        format_func=lambda value: labels.get(value, str(value))
+    shared: dict[str, Any] = {
+        "format_func": lambda value: labels.get(value, str(value))
         if labels
         else str(value).replace("_", " ").capitalize(),
-        key=key,
-        help=help_text,
-        label_visibility="collapsed" if compact else "visible",
-        on_change=capture,
-        args=(row, field, key),
-    )
+        "key": key,
+        "help": help_text,
+        "label_visibility": "collapsed" if compact else "visible",
+        "on_change": capture,
+        "args": (row, field, key),
+    }
+    if segmented:
+        row[field] = st.segmented_control(
+            label, options, default=row.get(field), required=True, wrap=True, **shared
+        )
+    else:
+        row[field] = st.selectbox(
+            label, options, index=options.index(row.get(field)), **shared
+        )
 
 
 def check(
@@ -243,7 +249,7 @@ def compensation(data: dict[str, Any], scope: str, *, annual: bool) -> dict[str,
         check(
             data,
             "not_working",
-            "Not working in this scenario",
+            "Not working in this annual plan",
             f"not_working_{scope}",
             help_text="Does not change compensation amounts. Set those separately below.",
         )
@@ -264,6 +270,12 @@ def compensation(data: dict[str, Any], scope: str, *, annual: bool) -> dict[str,
             "Employment status",
             ("unknown", "working", "not_working"),
             f"status_{scope}",
+            labels={
+                "unknown": "Not entered",
+                "working": "Working",
+                "not_working": "Not working",
+            },
+            segmented=True,
         )
         text(data, "employer", "Employer", f"employer_{scope}", optional=True)
     money(
@@ -281,66 +293,49 @@ def compensation(data: dict[str, Any], scope: str, *, annual: bool) -> dict[str,
             f"rsu_vesting_{scope}",
             annual=True,
         )
-    try:
-        by_rate = not annual and data["contribution_basis"] == "pay_fraction"
-        employee_value = data.get("contribution_rate" if by_rate else "employee_401k")
-        employee = (
-            "Not entered"
-            if employee_value is None
-            else f"{Decimal(str(employee_value)) * 100:g}% of pay"
-            if by_rate
-            else f"${Decimal(str(employee_value)):,.0f}/year"
+    st.markdown("**401(k) contributions**")
+    if not annual:
+        choice(
+            data,
+            "contribution_basis",
+            "Employee contribution over time",
+            ("real", "nominal", "pay_fraction"),
+            f"contribution_basis_{scope}",
+            labels={
+                "real": "Keep purchasing power",
+                "nominal": "Keep dollar amount",
+                "pay_fraction": "Percent of pay",
+            },
+            help_text="Keep purchasing power increases the dollar amount with inflation. Keep dollar amount leaves it unchanged.",
+            segmented=True,
         )
-        employer_value = data.get("employer_retirement_rate")
-        employer = (
-            "Not entered"
-            if employer_value is None
-            else f"{Decimal(str(employer_value)) * 100:g}% of pay"
-        )
-        st.caption(f"401(k): {employee} · Employer: {employer}")
-    except InvalidOperation:
-        st.caption("Retirement contributions need review.")
-    with st.expander("Retirement contributions"):
-        if not annual:
-            choice(
-                data,
-                "contribution_basis",
-                "Employee contribution convention",
-                ("real", "nominal", "pay_fraction"),
-                f"contribution_basis_{scope}",
-                labels={
-                    "real": "Constant purchasing power",
-                    "nominal": "Constant nominal dollars",
-                    "pay_fraction": "Percentage of salary and bonus",
-                },
-            )
-        if not annual and data["contribution_basis"] == "pay_fraction":
-            data["employee_401k"] = None
-            percent(
-                data,
-                "contribution_rate",
-                "Employee contribution (% of salary and bonus)",
-                f"contribution_rate_{scope}",
-            )
-        else:
-            if not annual:
-                data["contribution_rate"] = None
-            money(
-                data,
-                "employee_401k",
-                "Annual employee 401(k) contributions ($)",
-                f"employee_401k_{scope}",
-                annual=annual,
-                help_text="Traditional pretax contributions. Future limits are not evaluated here.",
-            )
-        if annual:
-            data.setdefault("employer_retirement_rate", "0")
+    if not annual and data["contribution_basis"] == "pay_fraction":
+        data["employee_401k"] = None
         percent(
             data,
-            "employer_retirement_rate",
-            "Employer 401(k) contributions (% of salary and bonus)",
-            f"employer_retirement_rate_{scope}",
+            "contribution_rate",
+            "Employee contribution (% of salary and bonus)",
+            f"contribution_rate_{scope}",
         )
+    else:
+        if not annual:
+            data["contribution_rate"] = None
+        money(
+            data,
+            "employee_401k",
+            "Annual employee 401(k) contributions ($)",
+            f"employee_401k_{scope}",
+            annual=annual,
+            help_text="Traditional pretax contributions. Future limits are not evaluated here.",
+        )
+    if annual:
+        data.setdefault("employer_retirement_rate", "0")
+    percent(
+        data,
+        "employer_retirement_rate",
+        "Employer 401(k) contributions (% of salary and bonus)",
+        f"employer_retirement_rate_{scope}",
+    )
     return data
 
 
@@ -369,7 +364,14 @@ def rsu_funding(data: dict[str, Any], scope: str, *, annual: bool) -> None:
 
 def option_award(data: dict[str, Any], scope: str) -> None:
     """Capture an informational annual award independently of an exercise."""
-    choice(data, "kind", "Option type", ("ISO", "NSO"), f"award_kind_{scope}")
+    choice(
+        data,
+        "kind",
+        "Option type",
+        ("ISO", "NSO"),
+        f"award_kind_{scope}",
+        segmented=True,
+    )
     number(
         data,
         "vesting_shares",
@@ -434,18 +436,17 @@ def optional_section(
 
 def annual_options(adult: dict[str, Any], scope: str) -> None:
     """Retain annual award and exercise controls in the Work category."""
-    with st.expander("Stock option award"):
-        if optional_section(
-            adult,
-            "option_award",
-            "Include an option award",
-            f"award_enabled_{scope}",
-            {"kind": "ISO"},
-        ):
-            st.caption(
-                "This year's vesting only. Award estimates do not enter cash, tax or saving totals."
-            )
-            option_award(adult["option_award"], scope)
+    if optional_section(
+        adult,
+        "option_award",
+        "Include a stock option award",
+        f"award_enabled_{scope}",
+        {"kind": "ISO"},
+    ):
+        st.caption(
+            "This year's vesting only. Award estimates do not enter cash, tax or saving totals."
+        )
+        option_award(adult["option_award"], scope)
     with st.expander("ISO exercise and hold"):
         st.caption(
             "Qualifying ISOs exercised and held through year end. NSO exercises and share sales are not supported."
@@ -463,6 +464,7 @@ def annual_household(data: dict[str, Any], ages: dict[str, Any], scope: str) -> 
         ("WA", "CA"),
         f"state_{scope}",
         labels={"WA": "Washington", "CA": "California"},
+        segmented=True,
     )
     st.caption("Married filing jointly. Ages are at the annual plan's tax-year end.")
     table_header(("Person", "Age at year end", "WA Cares"), (3, 1.5, 2))
@@ -552,17 +554,18 @@ def saving_instructions(
     catalogue = {str(g.id): g for g in goals}
     rows = data["rows"]
     rows.sort(key=lambda r: r["cash_amount"] is None)
-    unit = st.radio(
+    unit = st.segmented_control(
         "Savings amounts",
         ["Monthly", "Annual"],
-        horizontal=True,
+        default="Monthly",
+        required=True,
         key=f"allocation_unit_{scope}",
     )
     factor = 12 if unit == "Monthly" else 1
     st.caption(
         "Surplus is cash left after taxes, contributions, planned spending, and topping up the cash reserve. Fixed cash goals are funded first."
         if surplus
-        else "Cash goals are funded in order. Available to spend is unallocated cash, not an addition to the Spending budget."
+        else "Cash goals are funded from top to bottom. Available to spend is cash left after these goals and your Spending budget."
     )
     changed = False
     remove_id = move_id = None
@@ -684,7 +687,7 @@ def saving_instructions(
             format_func=lambda key: unused[key].name,
             key=f"allocation_add_{scope}",
         )
-        if st.button("Add goal to scenario", key=f"add_goal_{scope}"):
+        if st.button("Add goal to plan", key=f"add_goal_{scope}"):
             rows.append(
                 {
                     "goal": unused[selected].model_dump(mode="json"),

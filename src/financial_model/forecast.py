@@ -1004,7 +1004,7 @@ def _fund(
     high, high_error = available.copy(), np.full_like(cash, np.nan)
     candidate = np.minimum(np.maximum(deficit, 0), available)
     previous, previous_error = np.zeros_like(cash), -deficit
-    for _ in range(40):
+    for iteration in range(80):
         # Trials must not irrevocably consume a tax-free account or sell excess
         # shares when crossing a tax bracket or realizing a deductible loss.
         accounts.holdings[:] = holdings
@@ -1070,12 +1070,20 @@ def _fund(
         near_edge = (next_candidate - low < 0.1 * (high - low)) | (
             high - next_candidate < 0.1 * (high - low)
         )
-        bisect = stalled | (np.isfinite(high_error) & near_edge & (slope > 3))
+        bisect = stalled | (np.isfinite(high_error) & near_edge)
         next_candidate = np.where(bisect, (low + high) / 2, next_candidate)
+        if iteration >= 7:
+            # Tax steps can keep interpolation on one side indefinitely. After
+            # eight fast trials, halve the funded bracket on every trial. Test
+            # all available funds first if no funded upper bound exists yet.
+            next_candidate = np.where(np.isfinite(high_error), (low + high) / 2, high)
         next_candidate = np.where(narrow, high, next_candidate)
         previous, previous_error = sale, error
         candidate = np.where(finished, sale, next_candidate)
-    msg = f"Withdrawal taxes did not converge in {annual.year}."
+    msg = (
+        f"The forecast could not calculate withdrawals and their taxes for {annual.year}. "
+        "The run stopped without producing updated results."
+    )
     raise RuntimeError(msg)
 
 

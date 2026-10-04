@@ -6,7 +6,7 @@ Under **Scenarios**, save the inputs you want to reuse, then combine them in Pla
 
 | Sub-tab | What you enter |
 | --- | --- |
-| Plans | Which scenarios to hold fixed and which alternatives to compare; existing annual plans |
+| Plans | Which assumptions to combine or compare in forecasts; existing annual plans |
 | Household | Names, ages, children, residence, and personal tax elections |
 | Wealth | Dated balances, tax treatment, investment mix, account owners, cost basis, and debt terms |
 | Work | Pay, salary growth, contributions, and equity compensation |
@@ -20,23 +20,24 @@ Choose **New** in a category, enter known values, and **Save inputs**. A blank
 amount means unknown; zero means a known zero. Dollar amounts use the purchasing
 power of the year shown above the form, unless explicitly labeled nominal.
 
-Saved scenarios appear as compact rows. Use the pencil to edit, the copy button
-to duplicate, or the trash button to delete. A missing-input count opens the
-specific items to complete.
+Saved assumptions appear as compact rows. Use the pencil to edit, the copy button
+to duplicate, or the trash button to delete. Open an incomplete entry to see the
+specific inputs to complete.
 
-Editors keep the main values visible in rows. **Details** opens timing, notes,
-and other settings for that row. **Ranges** opens lower and upper alternatives;
-in Economy, **Edit ranges** shows their columns for all four rates. Closing these
-controls keeps the values. **Remove range** clears both bounds. Notes and sources
-are optional and collapsed.
+Editors keep amounts, dates, and required choices visible together. In Spending
+and Retirement, **Edit ranges, essential costs, and notes** shows optional fields;
+in Economy, **Edit ranges** shows lower and upper alternatives for all four rates.
+Hiding these fields keeps their values. **Remove range** clears both bounds.
+Source notes, backups, and advanced settings remain in named expandable sections.
 
 ### Enter work, spending, and retirement
 
 Work keeps each person's compensation separate. Salary growth is above inflation:
 0% means pay keeps pace with inflation. A work phase includes its start year and
 excludes its end year. A blank end continues until the selected retirement year.
-Vesting and option exercises have their own schedules. Contribution summaries
-stay visible; open **Retirement contributions** to change their settings.
+Vesting and option exercises have their own schedules under **Dated equity events
+(optional)**. Entered schedules open automatically. The **401(k) contributions**
+fields stay visible with compensation.
 
 In Spending, **Regular living costs** is the total annual household budget,
 excluding taxes and saving. **Change regular living costs** replaces that budget
@@ -52,14 +53,14 @@ keep their own end dates.
 **Living costs after one person dies** is the remaining person's total household
 budget. It can apply before retirement too. Enter it explicitly; the app does not
 halve a two-person budget. **Plan through age** sits beside each person's
-retirement year, with optional ranges. **Lifespan settings** holds the option to
-use a mortality model later; no samples run yet.
+retirement year, with optional ranges. **Mortality assumptions (advanced)** holds
+inputs for a future mortality model; current forecasts require planning ages.
 
 ### Enter investments and economic assumptions
 
 In Investments, saving instructions assign new money to goals. Portfolio strategy
 sets the mix of stocks, bonds, and cash, totaling 100%. Choose a constant mix or a
-**Glide path**: enter a starting mix and a final mix with their dates. Choose
+**Change the mix over time**: enter a starting mix and a final mix with their dates. Choose
 **Linear** for steady change, **Logarithmic** for faster change at the beginning,
 or **Exponential** for faster change near the end. Each reaches the final mix on
 the finish date and holds it afterward. Extra dated targets use the same shape
@@ -69,8 +70,8 @@ later retirement date. Starting balances and their investment mix remain in Weal
 Enter the cash reserve here: cash kept outside the portfolio allocation, in the
 scenario's reference-year dollars. It is already part of Wealth, not an extra asset
 or expense. Enter zero if none. All accounts in the chosen snapshot are included.
-Each allocation row shows its starting time and stock, bond, and cash percentages.
-Use **Details** to change its date or retirement anchor. Saving instructions use
+Each allocation target shows its date or retirement anchor and stock, bond, and
+cash percentages together. Saving instructions use
 inline up/down arrows to change funding priority without changing amounts.
 **Surplus goes to** chooses the goal for cash left after taxes, contributions,
 planned spending, cash-reserve top-ups, and fixed cash goals. Choose Retirement to
@@ -87,13 +88,14 @@ See [forecast methodology](#forecast-method) for their precise definitions.
 ### Hold some choices fixed and vary others
 
 Choose **Plans → New combined plan**, select a Wealth snapshot, and choose saved
-scenarios from each category using **Change** in that row. The table shows the
-selected scenarios and whether each category is fixed or varying.
-One selected scenario holds that category fixed.
+assumptions from each category's library. **Use these assumptions** adds the
+selection to the Plan. Each category shows the inputs currently in the Plan.
+One selection holds that category fixed.
 **Add alternative** varies it. For example, two Work choices and three Spending
 choices make six combinations when Retirement, Investments, and Economy are fixed.
-**Preview combinations** shows the selections. Save the Plan, then open
-**Forecast** to [calculate selected combinations](#run-forecast).
+Multiple combinations appear in a preview table. Choose **Save plan**, then **Open
+Forecast** to
+[calculate selected combinations](#run-forecast).
 Numeric ranges remain available for later analysis and are not expanded here.
 
 Use **Edit plan Household** to review family facts and match the people in each
@@ -103,13 +105,13 @@ Return to Plans and save.
 Each choice is a saved copy. Use **Update this copy** to bring a newer source
 revision into one selection, or **Update Wealth copy** for starting balances.
 Then save the Plan. Its forecast readiness shows what still needs attention.
-Editing or deleting a library scenario does not change
-a saved Plan. **Use only this scenario** replaces all choices in that category;
+Editing or deleting saved assumptions does not change
+a saved Plan. **Replace selection** replaces all choices in that category;
 **Remove** removes one. A new Work or Retirement selection needs its person mapping
 reviewed. Replacing Wealth changes the starting balances and keeps the selected
 Investment scenarios, including their cash reserves.
 
-**What still needs input** lists unknown values and conflicts across the selected
+The editor lists unknown values and conflicts across the selected
 combinations. Saving inputs does not run a projection, tax calculation, or retirement
 analysis. Annual calculations remain available separately under Plans.
 
@@ -125,9 +127,9 @@ It does not copy calculated taxes or cash surplus as income.
 
 ## Household and goals
 
-Under Scenarios, **Household → Shared Household defaults** holds names and ages for a specified year end, qualifying children's
-ages, and the supported filing status. Save these defaults once. New scenarios copy
-them; existing scenarios, duplicates, imports, and open drafts keep their own facts.
+Under Scenarios, **Household → Shared household defaults** holds names and ages for a specified year end, qualifying children's
+ages, and the supported filing status. Save these defaults once. New plans copy
+them; existing plans, duplicates, imports, and open drafts keep their own facts.
 Changing defaults does not update a saved financial calculation.
 
 **Goals** manages shared purposes. Add, rename, or delete unused goals here. Renaming
@@ -141,9 +143,9 @@ Spending is the automatic cash remainder, separate from editable goals.
 Open **Wealth → New snapshot**. Enter one date for all balances and an optional
 name. Without a name, the date becomes the title.
 
-Add one row per named account:
+Add one entry per named account:
 
-| Column | What to enter |
+| Field | What to enter |
 | --- | --- |
 | Account | A recognizable name, such as Example checking |
 | Balance | The account's total value in USD |
@@ -160,16 +162,16 @@ again as another row.
 
 Enter amounts without commas or currency symbols, such as `1250.00`. Leave an
 unknown balance blank; enter `0` only for a known zero. Incomplete inputs can be
-saved. **What still needs input** asks for missing balances, tax treatment, or
+saved. **Inputs still needed for forecasting** lists missing balances, tax treatment, or
 investment mix. Empty accounts do not need a tax or investment classification.
 
-Use the **Owner** dropdown in each retirement or HSA account row. Owner slots
-refer to the two people in the Plan's household. Open an account's **tax details**
-to enter cost basis where needed for forecasting. California HSA investments
+Use **Owner** in each retirement or HSA account. Owner slots
+refer to the two people in the Plan's household. Cost basis appears directly
+where needed for forecasting. California HSA investments
 need a separate state cost basis.
 
-Under **Debts**, enter a name and positive amount owed. Its **repayment terms**
-record the annual payment and interest rate. Debt payments are separate from
+Under **Debts**, enter a name, positive amount owed, annual payment, and interest
+rate together. Debt payments are separate from
 living costs, so exclude them from spending budgets. Debt is subtracted once.
 **Net recorded wealth** is the recorded assets less debts; it does not certify
 that every household asset has been included. Use the optional snapshot note for
@@ -185,7 +187,7 @@ duplicate remains unsaved until you save it. **Save as new snapshot** also keeps
 an independent copy of current edits. Changing one snapshot never changes another.
 
 Edits survive navigation between pages within the browser session. Return through
-**Edit** or **Session drafts**. If someone else changed or deleted the record,
+**Edit** or **Continue editing**. If someone else changed or deleted the record,
 saving cannot overwrite their change. Save a new copy, or choose **Reload saved
 snapshot → Discard edits and reload wealth**. **Refresh** updates the library.
 
@@ -213,7 +215,7 @@ Open **Scenarios → Plans → Annual plans**. Each saved scenario shows its tit
 location, tax year, each person's employer, annual cash surplus or deficit,
 and cash available for spending after funding goals.
 
-- Choose **New scenario** to start from scratch, or **Duplicate** to
+- Choose **New annual plan** to start from scratch, or **Duplicate** to
   start from an existing scenario. A duplicate stays unsaved until you save it.
 - Choose **Edit** to open an annual plan. Plans owns its label, year and calculation
   actions. Edit family and residence facts in Household, compensation in Work,
@@ -224,16 +226,16 @@ and cash available for spending after funding goals.
 - **Unsaved changes** identifies edits that are not in the shared database.
   A separate notice identifies results that need recalculation.
 
-Leave **Custom label (optional)** blank to use the state as the heading.
+Leave **Annual plan name (optional)** blank to use the state as the heading.
 Employment details appear beneath it, without an extra work-status category.
 
 Enter a label such as “Higher rent” when useful. Labels need not be unique and
 stay as written when inputs change. Clear a label to return to the automatic
 title. Existing names remain custom labels until cleared. Duplicate and
-**Save as new scenario** preserve the label, including a blank one.
+**Save as new annual plan** preserve the label, including a blank one.
 
 Enter **Employer** within each person's section. Use a short name for table
-headings; leave it blank if unknown. Select **Not working in this scenario** to
+headings; leave it blank if unknown. Select **Not working in this annual plan** to
 show that status explicitly. A blank employer or zero salary does not mean
 someone is not working. Checking the box removes the current employer when you
 calculate or save; it does not change any compensation amounts. Set those
@@ -251,7 +253,7 @@ effective tax rate stay the same. Choose **Calculate** to preview the result or
 **Save** to keep it. Duplicate a plan to compare both choices side by side.
 
 Edits stay in your browser session when you switch pages or open another
-scenario. Use a scenario's **Edit** button or the **Unsaved drafts** section to
+annual plan. Use its **Edit** button or **Continue editing annual plans** to
 return. Save before closing the browser.
 
 Reopening a scenario loads a newer saved version when you have no unsaved edits.
@@ -259,7 +261,7 @@ If you do have edits, the editor keeps them and shows a warning about the newer
 saved version.
 
 If another person has changed or deleted a scenario, your save cannot overwrite
-that change. Keep your version with **Save as new scenario**, or use
+that change. Keep your version with **Save as new annual plan**, or use
 **Reload saved version → Discard edits and reload** when a saved version still
 exists. **Refresh** updates the library without replacing your drafts.
 
@@ -372,8 +374,8 @@ decimal places. Calculations retain cents. See
 
 ## Enter option compensation
 
-In each adult's **Stock option award** section, select **Include an option
-award**. Enter ISO or NSO, the number vesting this year, and exercise price per
+In each adult's Work section, select **Include a stock option award**. Enter ISO
+or NSO, the number vesting this year, and exercise price per
 share. Enter an assumed share value if known; leave it blank otherwise.
 
 The **Equity overview** view shows option awards separately. **Estimated
@@ -387,10 +389,10 @@ estimate does not imply that the shares can be sold.
 Use **ISO exercise and hold** separately for actual qualifying exercises held
 through year end. NSO exercises and share sales are not supported.
 
-## Delete a scenario
+## Delete an annual plan
 
 In **Scenarios → Plans → Annual plans**, choose **Delete** on the scenario's card. Check the name
-in the confirmation dialog, then choose **Delete scenario** or **Cancel**.
+in the confirmation dialog, then choose **Delete annual plan** or **Cancel**.
 Deletion removes the shared record for both people and its draft in your current
 session. It cannot be undone. Download a backup first if you want to keep a copy.
 

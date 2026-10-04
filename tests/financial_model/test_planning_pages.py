@@ -59,7 +59,7 @@ def press(page, label):
 
 
 def field(page, kind, label):
-    return next(w for w in getattr(page, kind) if w.label == label)
+    return next(w for w in page.get(kind) if w.label == label)
 
 
 def raw(page, kind):
@@ -119,7 +119,7 @@ def test_work_shares_compensation_without_demographics_and_collects_dates():
         for kind in ("number_input", "selectbox", "text_input")
         for w in getattr(page, kind)
     )
-    field(page, "selectbox", "Employment status").select("working").run()
+    field(page, "button_group", "Employment status").set_value("working").run()
     field(page, "number_input", "Start year").set_value(2026).run()
     field(page, "text_input", "Annual salary and bonus ($)").set_value(
         "123456.78"
@@ -136,20 +136,24 @@ def test_spending_and_investment_rows_retain_inputs():
     tab(page, "Spending")
     press(page, "New Spending assumptions")
     press(page, "Change regular living costs")
-    field(page, "selectbox", "Change starts").select("both").run()
+    field(page, "button_group", "Change starts").set_value("both").run()
     field(page, "text_input", "New regular living costs ($/year)").set_value(
         "80000"
     ).run()
     press(page, "Add an expense")
     field(page, "text_input", "Expense name").set_value("Childcare").run()
     field(page, "text_input", "Extra annual cost ($/year)").set_value("20000").run()
+    field(page, "number_input", "Expense starts year").set_value(2028).run()
     field(page, "checkbox", "Specify an end date").check().run()
+    field(page, "number_input", "Payments stop year").set_value(2032).run()
+    assert not page.get("popover")
     assert not page.exception
     tab(page, "Investments")
     press(page, "New Investments assumptions")
-    field(page, "selectbox", "Allocation policy").select("gradual").run()
+    field(page, "button_group", "Allocation policy").set_value("gradual").run()
     press(page, "Add allocation checkpoint")
     field(page, "checkbox", "Specify target allocation").check().run()
+    field(page, "number_input", "Allocation effective year").set_value(2026).run()
     for label, value in (
         ("Stocks (%)", "80"),
         ("Bonds (%)", "20"),
@@ -157,9 +161,69 @@ def test_spending_and_investment_rows_retain_inputs():
     ):
         field(page, "text_input", label).set_value(value).run()
     assert not page.error
+    assert not page.get("popover")
+    assert raw(page, "investments")["checkpoints"][0]["when"]["year"] == 2026
     tab(page, "Spending")
     assert field(page, "text_input", "Expense name").value == "Childcare"
-    assert field(page, "selectbox", "Change starts").value == "both"
+    assert field(page, "button_group", "Change starts").value == "both"
+    expense = raw(page, "spending")["adjustments"][0]
+    assert expense["start"]["year"] == 2028
+    assert expense["end"]["year"] == 2032
+
+
+def test_spending_optional_ranges_preserve_invalid_edits_when_hidden():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Spending")
+    press(page, "New Spending assumptions")
+    field(page, "text_input", "Regular living costs ($/year)").set_value("60000").run()
+    assert not any(w.key.startswith("lower_baseline_") for w in page.text_input)
+    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
+        True
+    ).run()
+    field(page, "text_input", "Lower ($/year)").set_value("invalid amount").run()
+    field(page, "text_input", "Upper ($/year)").set_value("75000").run()
+    field(page, "text_input", "Included costs").set_value("Housing and food").run()
+    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
+        False
+    ).run()
+    assert page.error
+    assert not any(w.key.startswith("lower_baseline_") for w in page.text_input)
+    tab(page, "Retirement")
+    tab(page, "Spending")
+    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
+        True
+    ).run()
+    assert field(page, "text_input", "Lower ($/year)").value == "invalid amount"
+    assert field(page, "text_input", "Included costs").value == "Housing and food"
+    field(page, "text_input", "Lower ($/year)").set_value("50000").run()
+    assert not page.error
+    assert raw(page, "spending")["baseline"]["amount"] == {
+        "central": "60000",
+        "lower": "50000",
+        "upper": "75000",
+    }
+
+
+def test_dated_equity_events_keep_dates_and_amounts_together():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Work")
+    press(page, "New Work assumptions")
+    press(page, "Add vesting entry")
+    field(page, "number_input", "Vesting start year").set_value(2027).run()
+    field(page, "number_input", "First year without vesting").set_value(2030).run()
+    field(page, "text_input", "Annual vesting amount").set_value("24000").run()
+    field(page, "button_group", "Vesting amount basis").set_value("real").run()
+    assert not page.get("popover")
+    tab(page, "Spending")
+    tab(page, "Work")
+    vesting = raw(page, "work")["adults"][0]["vesting"][0]
+    assert (vesting["start"], vesting["end"], vesting["amount"], vesting["basis"]) == (
+        2027,
+        2030,
+        "24000",
+        "real",
+    )
+    assert not page.error
 
 
 def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
@@ -233,10 +297,10 @@ def test_glide_shape_survives_save_backup_and_plan_selection(
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Investments")
     press(page, "New Investments assumptions")
-    assert not any(w.label == "Glide-path shape" for w in page.selectbox)
-    field(page, "selectbox", "Allocation policy").select("gradual").run()
-    assert field(page, "selectbox", "Glide-path shape").value == "linear_then_hold"
-    field(page, "selectbox", "Glide-path shape").select(shape).run()
+    assert not any(w.label == "Glide-path shape" for w in page.get("button_group"))
+    field(page, "button_group", "Allocation policy").set_value("gradual").run()
+    assert field(page, "button_group", "Glide-path shape").value == "linear_then_hold"
+    field(page, "button_group", "Glide-path shape").set_value(shape).run()
     press(page, "Save inputs")
     (saved,) = list_planning_documents(database_url, "investments")
     assert saved.inputs.interpolation == shape
@@ -246,11 +310,11 @@ def test_glide_shape_survives_save_backup_and_plan_selection(
     press(page, "All Investments inputs")
     assert any(planning_pages.GLIDE_SHAPES[shape] in t.value for t in page.caption)
     press(page, "Edit")
-    assert field(page, "selectbox", "Glide-path shape").value == shape
-    field(page, "selectbox", "Allocation policy").select("constant").run()
-    assert not any(w.label == "Glide-path shape" for w in page.selectbox)
-    field(page, "selectbox", "Allocation policy").select("gradual").run()
-    assert field(page, "selectbox", "Glide-path shape").value == shape
+    assert field(page, "button_group", "Glide-path shape").value == shape
+    field(page, "button_group", "Allocation policy").set_value("constant").run()
+    assert not any(w.label == "Glide-path shape" for w in page.get("button_group"))
+    field(page, "button_group", "Allocation policy").set_value("gradual").run()
+    assert field(page, "button_group", "Glide-path shape").value == shape
     assert not page.exception
 
 
@@ -277,7 +341,7 @@ def test_all_categories_save_partial_inputs_without_calculation(
             b for b in page.button if (b.key or "").startswith(f"choose_{kind}_")
         ).click().run()
         assert not page.exception
-    press(page, "Save inputs")
+    press(page, "Save plan")
     (saved,) = list_planning_documents(database_url, "plan")
     assert len(saved.inputs.components) == 5
     assert page.success
@@ -359,12 +423,12 @@ def test_two_saved_plans_keep_copies_after_source_changes(database_url, monkeypa
     page.button(key=f"planning_edit_{plans[0].id}").click().run()
     update_planning_document(database_url, source)
     page.run()
-    assert any("Newer version available" in c.value for c in page.caption)
+    assert any("Saved source has changed" in message.value for message in page.warning)
     assert all(load_planning_document(database_url, p.id) == p for p in plans)
     delete_planning_document(database_url, source.id, 2)
     page.run()
     assert any("Source no longer in library" in c.value for c in page.caption)
-    press(page, "Save inputs")
+    press(page, "Save plan")
     assert load_planning_document(database_url, plans[0].id).inputs == plans[0].inputs
 
 
@@ -375,7 +439,7 @@ def test_annual_ownership_and_unchanged_round_trip(scenario):
     assert not any(w.label == "Annual salary and bonus ($)" for w in page.number_input)
     for category in ("Household", "Work", "Spending", "Investments", "Plans"):
         tab(page, category)
-        assert any("Editing annual plan" in i.value for i in page.info)
+        assert any("Editing annual plan" in i.value for i in page.caption)
         labels = [
             w.label
             for kind in ("number_input", "text_input", "selectbox")
@@ -394,7 +458,7 @@ def test_annual_ownership_and_unchanged_round_trip(scenario):
     tab(page, "Work")
     assert page.session_state["draft_ages"] == "invalid age"
     press(page, "All Work assumptions")
-    assert not any("Editing annual plan" in i.value for i in page.info)
+    assert not any("Editing annual plan" in i.value for i in page.caption)
     assert page.session_state["draft_ages"] == "invalid age"
 
 
@@ -430,7 +494,7 @@ def test_plan_household_and_wealth_are_copied_without_account_bindings(
     field(page, "text_input", "Name").set_value("Synthetic A").run()
     field(page, "selectbox", "Match people · Work").select((1, 2)).run()
     press(page, "Return to Plans")
-    press(page, "Save inputs")
+    press(page, "Save plan")
     saved = load_planning_document(database_url, plan.id)
     assert saved.inputs.household.adults[0].name == "Synthetic A"
     assert saved.inputs.components[0].adult_mapping == (1, 2)
@@ -460,12 +524,15 @@ def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation
     press(page, "New Retirement assumptions")
     field(page, "number_input", "Adult 1 retires").set_value(2040).run()
     field(page, "number_input", "Plan for Adult 1 through age").set_value(95).run()
+    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
+        True
+    ).run()
     age_bounds = [w for w in page.number_input if "age_0_" in (w.key or "")]
     next(w for w in age_bounds if w.label == "Lower").set_value(90).run()
     next(
         w for w in page.number_input if "age_0_" in (w.key or "") and w.label == "Upper"
     ).set_value(100).run()
-    field(page, "selectbox", "Only Adult 1 retired").select("continue").run()
+    field(page, "button_group", "Only Adult 1 retired").set_value("continue").run()
     field(page, "text_input", "Both retired ($/year)").set_value("80000").run()
     tab(page, "Work")
     press(page, "New Work assumptions")
@@ -496,11 +563,11 @@ def test_retirement_benefits_preserve_inputs_without_separate_health_controls():
         "32000"
     ).run()
     field(page, "number_input", "Social Security claiming age").set_value(70).run()
-    field(page, "selectbox", "Adult 1 pension").select("pension").run()
+    field(page, "button_group", "Adult 1 pension").set_value("pension").run()
     field(page, "text_input", "Pension ($/year)").set_value("12000").run()
     field(page, "number_input", "Pension starts at age").set_value(60).run()
     field(page, "text_input", "Pension paid to survivor (%)").set_value("50").run()
-    field(page, "selectbox", "Adult 2 pension").select("none").run()
+    field(page, "button_group", "Adult 2 pension").set_value("none").run()
     assert not any("health" in w.label.lower() for w in page.text_input)
     assert not any("HSA" in w.label for w in page.expander)
     assert not any(s.value == "Retirement health costs" for s in page.subheader)
@@ -515,7 +582,7 @@ def test_retirement_benefits_preserve_inputs_without_separate_health_controls():
     assert (
         len([w for w in page.number_input if w.label == "Pension starts at age"]) == 1
     )
-    field(page, "selectbox", "Adult 1 pension").select("none").run()
+    field(page, "button_group", "Adult 1 pension").set_value("none").run()
     assert not any(w.label == "Pension starts at age" for w in page.number_input)
     assert raw(page, "retirement")["adults"][0]["pension"] == "0"
     assert not page.error
@@ -853,7 +920,7 @@ def test_plan_explicit_copy_updates_preserve_other_alternatives(
     press(page, "Update this copy")
     press(page, "Update Wealth copy")
     assert load_planning_document(database_url, plan.id) == plan
-    press(page, "Save inputs")
+    press(page, "Save plan")
     saved = load_planning_document(database_url, plan.id)
     assert saved.inputs.components[0].source_revision == newer.revision
     assert saved.inputs.components[0].adult_mapping == (2, 1)
@@ -900,7 +967,7 @@ def test_plan_alternatives_save_combinations_and_survive_source_deletion(
         ).click().run()
         assert not page.exception
     assert any("4 combinations selected" in i.value for i in page.info)
-    press(page, "Save inputs")
+    press(page, "Save plan")
     saved = load_planning_document(database_url, plan.id)
     assert saved.inputs.combination_count == 4
     delete_planning_document(database_url, choices[1].id, choices[1].revision)
@@ -913,7 +980,7 @@ def test_plan_alternatives_save_combinations_and_survive_source_deletion(
     next(
         b for b in page.button if (b.key or "").startswith("choose_work_")
     ).click().run()
-    press(page, "Save inputs")
+    press(page, "Save plan")
     assert load_planning_document(database_url, plan.id).inputs.combination_count == 2
 
 
