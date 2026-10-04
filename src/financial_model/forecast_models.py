@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, Field, model_validator
 
-from financial_model.planning import PlanningScenario
+from financial_model.planning import ExpenseCategory, ExpenseFrequency, PlanningScenario
 from financial_model.schemas import ValueModel
 
-FORECAST_VERSION: Final = "3"
+FORECAST_VERSION: Final = "4"
 Finite = Annotated[float, Field(allow_inf_nan=False)]
 Probability = Annotated[Finite, Field(ge=0, le=1)]
 AnnualRate = Annotated[Finite, Field(gt=-1)]
@@ -59,6 +59,11 @@ class ForecastRequest(ValueModel):
             msg = "Select an opening Wealth snapshot."
             raise ValueError(msg)
         starting = first.wealth.snapshot.model_dump(exclude={"name", "notes"})
+        # Child IDs anchor dates within each Plan; demographic facts define comparability.
+        household_exclusions: dict[str, Any] = {
+            "residence": True,
+            "children": {"__all__": {"id"}},
+        }
         for plan in self.plans:
             if (
                 plan.wealth is None
@@ -68,8 +73,8 @@ class ForecastRequest(ValueModel):
                 msg = "Compared scenarios must use the same dated accounts and debts."
                 raise ValueError(msg)
             if plan.household.model_dump(
-                exclude={"residence"}
-            ) != first.household.model_dump(exclude={"residence"}):
+                exclude=household_exclusions
+            ) != first.household.model_dump(exclude=household_exclusions):
                 msg = "Compare choices within one household and reference year."
                 raise ValueError(msg)
         return self
@@ -108,6 +113,19 @@ class ForecastPoint(ValueModel):
         return self
 
 
+class ForecastExpense(ValueModel):
+    """One active annual expense's source, before path prices and proration."""
+
+    year: int
+    item_id: UUID
+    label: str
+    category: ExpenseCategory
+    frequency: ExpenseFrequency
+    base_amount: Annotated[Finite, Field(ge=0)]
+    real_growth: AnnualRate
+    real_amount: Annotated[Finite, Field(ge=0)]
+
+
 class ForecastSummary(ValueModel):
     """A comparison curve, lifetime funding statistics, and reproducible path details."""
 
@@ -121,6 +139,7 @@ class ForecastSummary(ValueModel):
     mean_unfunded_years: Annotated[Finite, Field(ge=0)]
     paths: Annotated[int, Field(strict=True, ge=1)]
     example: tuple[dict[str, Finite | int], ...]
+    expenses: tuple[ForecastExpense, ...] = ()
 
     @model_validator(mode="after")
     def validate_years(self) -> Self:
@@ -136,8 +155,8 @@ class SavedForecast(ValueModel):
     """An immutable run with inputs sufficient to regenerate every simulated path."""
 
     document_type: Literal["forecast"] = "forecast"
-    schema_version: Literal[3] = 3
-    model_version: Literal["3"] = FORECAST_VERSION
+    schema_version: Literal[4] = 4
+    model_version: Literal["4"] = FORECAST_VERSION
     id: UUID = Field(default_factory=uuid4)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     numpy_version: str

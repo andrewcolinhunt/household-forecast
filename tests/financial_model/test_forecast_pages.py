@@ -13,11 +13,13 @@ from streamlit.testing.v1 import AppTest
 
 from financial_model import app, forecast_pages
 from financial_model.forecast_models import (
+    ForecastExpense,
     ForecastPoint,
     ForecastSettings,
     ForecastSummary,
     SavedForecast,
 )
+from financial_model.forecast_storage import HistoricalForecast
 from financial_model.planning import (
     EconomicAssumptions,
     InvestmentAssumptions,
@@ -221,6 +223,7 @@ def calculation_calls(monkeypatch):
     module.forecast_issues = lambda request: ()
     monkeypatch.setitem(sys.modules, "financial_model.forecast", module)
     monkeypatch.setattr(app, "_database_url", lambda: None)
+    monkeypatch.setattr(forecast_pages, "list_historical_forecasts", lambda dsn: ())
     return calls
 
 
@@ -415,6 +418,96 @@ def test_forecast_saved_run_reuses_frozen_plans_without_library(
     assert len(calculation_calls) == 2
     assert calculation_calls[1] == original.request
     assert page.session_state["forecast_document"].id != original.id
+
+
+def test_forecast_historical_inventory_exports_without_opening_or_rewriting(
+    monkeypatch, plan_record, calculation_calls
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    field(page, "button", "Run forecast").click().run()
+    original = page.session_state["forecast_document"]
+    raw = original.model_dump(mode="json") | {"schema_version": 3, "model_version": "3"}
+    raw["request"]["plans"][0]["components"] = [{"obsolete": "frozen inputs"}]
+    historical = HistoricalForecast(
+        id=original.id,
+        created_at=original.created_at,
+        schema_version=3,
+        model_version="3",
+        names=("Historical household",),
+        document=raw,
+    )
+    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: ())
+    monkeypatch.setattr(
+        forecast_pages, "list_historical_forecasts", lambda dsn: (historical,)
+    )
+    monkeypatch.setattr(forecast_pages, "list_planning_documents", lambda dsn, kind: ())
+    page.run()
+    assert not page.exception
+    assert field(page, "selectbox", "Historical run").value == historical
+    assert any(
+        button.label == "Download historical forecast"
+        for button in page.get("download_button")
+    )
+    assert not any(button.label == "Open saved run" for button in page.button)
+    assert page.session_state["forecast_document"] == original
+    assert historical.document == raw
+    assert len(calculation_calls) == 1
+
+
+def test_forecast_cash_flow_inspects_named_expenses_and_category_slice(
+    plan_record, calculation_calls
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    field(page, "button", "Run forecast").click().run()
+    original = page.session_state["forecast_document"]
+    summary = original.summaries[0]
+    living, health = uuid4(), uuid4()
+    expenses = tuple(
+        ForecastExpense(
+            year=year,
+            item_id=item,
+            label=label,
+            category=category,
+            frequency="recurring",
+            base_amount=amount,
+            real_growth=0,
+            real_amount=amount,
+        )
+        for year in (2026, 2027)
+        for item, label, category, amount in (
+            (living, "Ordinary living", "ordinary", 200),
+            (health, "Coverage", "healthcare", 100),
+        )
+    )
+    summary = summary.model_copy(
+        update={
+            "expenses": expenses,
+            "example": tuple(
+                row | {f"expense_{living}": 200, f"expense_{health}": 100}
+                for row in summary.example
+            ),
+        }
+    )
+    page.session_state["forecast_document"] = original.model_copy(
+        update={"summaries": (summary,)}
+    )
+    del page.session_state["forecast_calculation"]
+    result_tab(page, "Cash flow")
+    detail_value(page, "Cash flow", "selectbox", "Inspect year", 2026)
+    table = next(table.value for table in page.dataframe if "Expense" in table.value)
+    assert table["Expense"].tolist() == ["Ordinary living", "Coverage"]
+    assert table["Planned amount"].sum() == 300
+    detail_value(page, "Cash flow", "selectbox", "Expense category", "Healthcare")
+    table = next(table.value for table in page.dataframe if "Expense" in table.value)
+    assert table["Expense"].tolist() == ["Coverage"]
+    assert table["Planned amount"].tolist() == [100]
+    assert any(
+        "shortfalls are household totals" in caption.value for caption in page.caption
+    )
+    assert len(calculation_calls) == 1
 
 
 def test_forecast_failed_rerun_preserves_previous_result(

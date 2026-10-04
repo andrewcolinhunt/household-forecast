@@ -17,6 +17,7 @@ from financial_model.forecast_storage import (
     create_forecast,
     import_forecast_backup,
     list_forecasts,
+    list_historical_forecasts,
 )
 from financial_model.forecast_tax import FORECAST_TAX_ASSUMPTION
 from financial_model.planning import PlanningScenario, SavedPlanningDocument
@@ -84,19 +85,23 @@ def _saved_runs(dsn: str | None) -> None:
         if dsn:
             try:
                 records = list_forecasts(dsn)
+                historical = list_historical_forecasts(dsn)
             except psycopg.errors.UndefinedTable:
                 st.info(
                     "Forecast storage needs the updated scripts/schema.sql. JSON downloads still work."
                 )
                 records = ()
+                historical = ()
             except ValueError as error:
                 st.error(str(error))
                 records = ()
+                historical = ()
             except psycopg.Error:
                 st.error(
                     "Saved forecasts could not be read. Try again or open a downloaded JSON file."
                 )
                 records = ()
+                historical = ()
             if records:
                 selected = st.selectbox(
                     "Saved run",
@@ -106,6 +111,22 @@ def _saved_runs(dsn: str | None) -> None:
                 if st.button("Open saved run"):
                     _open_run(selected)
                     st.rerun()
+            if historical:
+                st.caption(
+                    "Earlier model versions remain available as frozen JSON. "
+                    "Their inputs and results are preserved and cannot be rerun with this model."
+                )
+                archived = st.selectbox(
+                    "Historical run",
+                    historical,
+                    format_func=lambda item: f"{' / '.join(item.names)} · {item.created_at:%Y-%m-%d %H:%M} UTC · model {item.model_version}",
+                )
+                st.download_button(
+                    "Download historical forecast",
+                    archived.to_json(),
+                    file_name=f"forecast-{archived.id}.json",
+                    mime="application/json",
+                )
         uploaded = st.file_uploader("Forecast JSON", type="json", key="forecast_upload")
         if uploaded is not None and st.button("Open forecast JSON"):
             try:

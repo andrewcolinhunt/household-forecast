@@ -71,27 +71,13 @@ def _scale(value: Decimal | None, factor: Decimal) -> Decimal | None:
     return (value * factor).quantize(Decimal(".01")) if value is not None else None
 
 
-def _scale_budget(budget: dict[str, Any], factor: Decimal) -> None:
-    budget["amount"] = {k: _scale(v, factor) for k, v in budget["amount"].items()}
-    budget["essential"] = _scale(budget["essential"], factor)
-
-
 def _scale_spending(profiles: dict[str, Any], factor: Decimal) -> None:
-    spending, retirement = profiles["spending"], profiles["retirement"]
-    budgets = [spending["baseline"], retirement["both_retired"]]
-    budgets.extend(r["budget"] for r in spending["replacements"])
-    budgets.extend(
-        retirement[key]["budget"] for key in ("only_adult_1", "only_adult_2")
-    )
-    budgets.append(retirement["survivor"])
-    for budget in budgets:
-        if budget is not None:
-            _scale_budget(budget, factor)
-    for adjustment in spending["adjustments"]:
-        if adjustment["frequency"] == "recurring":
-            adjustment["amount"] = {
-                k: _scale(v, factor) for k, v in adjustment["amount"].items()
-            }
+    for expense in profiles["spending"]["expenses"]:
+        if expense["frequency"] == "recurring":
+            for level in expense["levels"]:
+                level["amount"] = {
+                    key: _scale(value, factor) for key, value in level["amount"].items()
+                }
 
 
 def _shift(values: dict[str, Any], offset: Decimal | int) -> None:
@@ -178,8 +164,8 @@ def _labels(plan: PlanningScenario, key: str) -> tuple[str, str, str, str, str]:
             "±20%",
             "80% of entered spending",
             "120% of entered spending",
-            "Scale regular, replacement, retirement, and survivor budgets and recurring "
-            "adjustments, including essential portions. Keep one-time spending unchanged.",
+            "Scale every amount in recurring expense schedules. Keep their dates, "
+            "growth rates, and one-time spending unchanged.",
         ),
         "cash_pay": (
             "Household cash pay",

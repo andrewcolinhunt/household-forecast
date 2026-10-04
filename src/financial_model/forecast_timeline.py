@@ -21,6 +21,8 @@ from uuid import UUID
 from financial_model.planning import (
     PROFILE_KINDS,
     AdultWork,
+    ExpenseCategory,
+    ExpenseFrequency,
     InvestmentAssumptions,
     OptionEvent,
     PlanningHousehold,
@@ -56,11 +58,11 @@ class AnnualExpense:
 
     item_id: UUID
     label: str
-    category: str
+    category: ExpenseCategory
     base_amount: Decimal
     real_growth: Decimal
     amount: Decimal
-    frequency: str
+    frequency: ExpenseFrequency
 
 
 @dataclass(frozen=True)
@@ -157,7 +159,7 @@ def compile_plan(plan: PlanningScenario) -> CompiledPlan:
                 year=year,
                 year_fraction=fraction,
                 adults=adults,
-                expenses=_expenses(
+                expenses=annual_expenses(
                     spending, year, retirements, plan.household, end_years
                 ),
                 allocation=_allocation(
@@ -273,14 +275,25 @@ def _vesting(worker: AdultWork, year: int) -> tuple[Decimal, Decimal]:
     return real, nominal
 
 
-def _expenses(
+def annual_expenses(
     spending: SpendingAssumptions,
     year: int,
     retirements: tuple[int, int],
     household: PlanningHousehold,
     end_years: tuple[int, int],
 ) -> tuple[AnnualExpense, ...]:
-    """Evaluate named schedules; one item never replaces another."""
+    """Evaluate validated schedules before path inflation and opening-year proration.
+
+    Args:
+        spending: Reviewed expense schedules with resolved, increasing boundaries.
+        year: Calendar year to evaluate.
+        retirements: Retirement years in household adult order.
+        household: People whose ages anchor expense boundaries.
+        end_years: Final-alive years in household adult order.
+
+    Returns:
+        Active items with both base amounts and amounts after real growth.
+    """
     assert spending.money_year is not None
     expenses = []
     for item in spending.expenses:
@@ -291,7 +304,8 @@ def _expenses(
         for level in item.levels:
             start = level.when.resolve(retirements, household, end_years)
             assert start is not None
-            if year == start if item.frequency == "once" else year >= start:
+            active = year == start if item.frequency == "once" else year >= start
+            if active:
                 levels.append(level)
         if not levels:
             continue

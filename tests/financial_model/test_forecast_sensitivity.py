@@ -43,7 +43,16 @@ def plan() -> PlanningScenario:
                 for slot in (1, 2)
             ],
         },
-        {"kind": "spending", "baseline": {"amount": {"central": 1000}}},
+        {
+            "kind": "spending",
+            "expenses": [
+                {
+                    "label": "Ordinary living",
+                    "category": "ordinary",
+                    "levels": [{"when": {"year": 2026}, "amount": {"central": 1000}}],
+                }
+            ],
+        },
         {
             "kind": "retirement",
             "adults": [
@@ -57,10 +66,6 @@ def plan() -> PlanningScenario:
                 }
                 for slot in (1, 2)
             ],
-            "only_adult_1": {"mode": "continue"},
-            "only_adult_2": {"mode": "continue"},
-            "both_retired": {"amount": {"central": 1000}},
-            "survivor": {"amount": {"central": 500}},
         },
         {
             "kind": "investments",
@@ -184,49 +189,85 @@ def test_calculate_sensitivity_fixed_baseline_and_progress(plan, recorded) -> No
 def test_calculate_sensitivity_scales_all_recurring_spending(plan, recorded) -> None:
     data = plan.model_dump()
     spending = _profile(data, "spending")
-    budget = {
-        "amount": {"central": 1000, "lower": 500, "upper": 2000},
-        "essential": 300,
-    }
-    spending["baseline"] = budget
-    spending["replacements"] = [
-        {"label": "Replace", "when": {"year": 2028}, "budget": budget}
-    ]
-    spending["adjustments"] = [
-        {"label": "Discount", "start": {"year": 2026}, "amount": {"central": -100}},
+    amount = {"central": 1000, "lower": 500, "upper": 2000}
+    spending["expenses"] = [
         {
-            "label": "One time",
-            "start": {"year": 2027},
-            "amount": {"central": 25},
+            "label": "Living",
+            "category": "ordinary",
+            "real_growth": ".02",
+            "levels": [
+                {"when": {"year": 2026}, "amount": amount},
+                {"when": {"year": 2028}, "amount": amount},
+            ],
+        },
+        {
+            "label": "Coverage",
+            "category": "healthcare",
+            "levels": [{"when": {"year": 2026}, "amount": amount}],
+        },
+        {
+            "label": "Move",
             "frequency": "once",
+            "levels": [{"when": {"year": 2027}, "amount": {"central": 25}}],
         },
     ]
-    retirement = _profile(data, "retirement")
-    retirement.update(both_retired=budget, survivor=budget)
-    retirement["only_adult_1"] = {"mode": "replace", "budget": budget}
-    sensitivity.calculate_sensitivity(PlanningScenario.model_validate(data))
+    original = PlanningScenario.model_validate(data)
+    original_data = original.model_dump()
+    sensitivity.calculate_sensitivity(original)
     for request, factor in zip(
         recorded[1:3], (Decimal(".8"), Decimal("1.2")), strict=True
     ):
-        variant = request.plans[0].model_dump()
-        spending, retirement = (
-            _profile(variant, kind) for kind in ("spending", "retirement")
-        )
-        for actual in (
-            spending["baseline"],
-            spending["replacements"][0]["budget"],
-            retirement["both_retired"],
-            retirement["survivor"],
-            retirement["only_adult_1"]["budget"],
+        expenses = _profile(request.plans[0].model_dump(), "spending")["expenses"]
+        for item, source in zip(
+            expenses, _profile(original_data, "spending")["expenses"], strict=True
         ):
-            assert actual["amount"] == {
-                "central": 1000 * factor,
-                "lower": 500 * factor,
-                "upper": 2000 * factor,
-            }
-            assert actual["essential"] == 300 * factor
-        assert spending["adjustments"][0]["amount"]["central"] == -100 * factor
-        assert spending["adjustments"][1]["amount"]["central"] == 25
+            assert item["id"] == source["id"]
+            assert item["real_growth"] == source["real_growth"]
+            for level, source_level in zip(
+                item["levels"], source["levels"], strict=True
+            ):
+                assert level["when"] == source_level["when"]
+                expected_factor = factor if item["frequency"] == "recurring" else 1
+                assert level["amount"] == {
+                    key: None if value is None else value * expected_factor
+                    for key, value in source_level["amount"].items()
+                }
+    assert original.model_dump() == original_data
+
+
+def test_calculate_sensitivity_resolves_linked_costs_and_explains_invalid_variant(
+    plan, monkeypatch
+):
+    def no_tax(**inputs):
+        return ForecastTaxResult(*(np.zeros(len(inputs["wages"])) for _ in range(7)))
+
+    monkeypatch.setattr("financial_model.forecast.yearly_tax", no_tax)
+    data = plan.model_dump()
+    _profile(data, "spending")["expenses"] += (
+        {
+            "label": "Coverage",
+            "category": "healthcare",
+            "levels": [
+                {"when": {"year": 2024}, "amount": {"central": 100}},
+                {"when": {"kind": "adult_1"}, "amount": {"central": 1000}},
+                {"when": {"year": 2028}, "amount": {"central": 500}},
+            ],
+        },
+    )
+    original = PlanningScenario.model_validate(data)
+    before = original.model_dump()
+    result = sensitivity.calculate_sensitivity(original)
+    retirement = next(driver for driver in result.drivers if driver.key == "adult_1")
+    assert retirement.low.status == "ok"
+    assert retirement.high.status == "invalid"
+    assert "Coverage" in retirement.high.error
+    assert "boundaries" in retirement.high.error
+    # In 2026 the earlier retirement ends $10,000 of wages and starts $900 more coverage.
+    assert (
+        retirement.low.annual[0].wealth_real - result.baseline.annual[0].wealth_real
+        == -10900
+    )
+    assert original.model_dump() == before
 
 
 def test_calculate_sensitivity_retirement_respects_household_mapping(
@@ -489,10 +530,7 @@ def test_calculate_sensitivity_real_stock_compounding(plan, monkeypatch) -> None
     account.update(tax_treatment="roth", invested_in="stocks", owner=1)
     investment = _profile(data, "investments")
     investment["checkpoints"][0]["mix"] = {"equities": 1, "fixed_income": 0, "cash": 0}
-    _profile(data, "spending")["baseline"]["amount"]["central"] = 0
-    retirement = _profile(data, "retirement")
-    retirement["both_retired"]["amount"]["central"] = 0
-    retirement["survivor"]["amount"]["central"] = 0
+    _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = 0
     economy = _profile(data, "economy")
     economy["equities"]["central"] = ".06"
     economy["inflation"]["central"] = ".02"

@@ -9,7 +9,7 @@ import streamlit as st
 
 from financial_model import forecast_charts as charts
 from financial_model import input_forms as forms
-from financial_model.forecast_models import SavedForecast
+from financial_model.forecast_models import ForecastSummary, SavedForecast
 from financial_model.planning import PlanningScenario
 
 if TYPE_CHECKING:
@@ -162,6 +162,75 @@ def _breakdown_specs(
     ]
 
 
+def _expense_rows(
+    summary: ForecastSummary,
+    ledger: list[dict[str, float | int]],
+    year: int,
+    real: bool,
+) -> list[dict[str, Any]]:
+    """Read actual planned item costs, using the same flow prices as the charts."""
+    index = next(i for i, row in enumerate(ledger) if row["year"] == year)
+    row = ledger[index]
+    price = float(ledger[index - 1]["price_index"]) if real and index else 1.0
+    return [
+        {
+            "Expense": item.label,
+            "Category": item.category.capitalize(),
+            "Frequency": "Annual" if item.frequency == "recurring" else "One time",
+            "Base amount": item.base_amount,
+            "Real growth": item.real_growth,
+            "Annual real amount": item.real_amount,
+            "Planned amount": float(row[f"expense_{item.item_id}"]) / price,
+        }
+        for item in summary.expenses
+        if item.year == year
+    ]
+
+
+def _expense_breakdown(
+    summary: ForecastSummary,
+    ledger: list[dict[str, float | int]],
+    year: int,
+    real: bool,
+) -> None:
+    """Expose named planned consumption without inventing category funding priorities."""
+    if not summary.expenses:
+        return
+    st.markdown("#### Planned expenses")
+    try:
+        rows = _expense_rows(summary, ledger, year, real)
+    except (KeyError, StopIteration):
+        st.info("Expense detail is incomplete. Rerun these inputs to reconstruct it.")
+        return
+    if not rows:
+        st.caption("No expense items are active this year.")
+        return
+    category = st.selectbox(
+        "Expense category", ["All categories", *sorted({r["Category"] for r in rows})]
+    )
+    selected = [
+        r for r in rows if category == "All categories" or r["Category"] == category
+    ]
+    st.dataframe(
+        selected,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            name: st.column_config.NumberColumn(format="dollar")
+            for name in ("Base amount", "Annual real amount", "Planned amount")
+        }
+        | {"Real growth": st.column_config.NumberColumn(format="percent")},
+    )
+    st.caption(
+        f"Selected planned costs: ${sum(r['Planned amount'] for r in selected):,.0f}; "
+        f"all expense items: ${sum(r['Planned amount'] for r in rows):,.0f}. "
+        f"Base and annual real amounts use {summary.money_year} purchasing power. "
+        "Planned amounts use the selected dollar display and include opening-year "
+        "proration for annual items. Payments and shortfalls are household totals; "
+        "the model does not decide which items go unpaid."
+    )
+
+
 def forecast_breakdown(document: SavedForecast, view: str) -> None:
     """Render accepted accounting charts from the selected saved-run path."""
     state = _view_state(document)
@@ -202,6 +271,7 @@ def forecast_breakdown(document: SavedForecast, view: str) -> None:
         st.vega_lite_chart(spec, width="stretch")
     if view == "Cash flow":
         year = _select_year(document, state)
+        _expense_breakdown(summary, ledger, year, state["real"])
         st.markdown("#### Annual asset waterfall")
         try:
             row = next(row for row in ledger if row["year"] == year)
@@ -220,7 +290,18 @@ def forecast_breakdown(document: SavedForecast, view: str) -> None:
         )
     with st.expander("Annual ledger"):
         st.caption("All unadjusted monetary columns below are nominal dollars.")
-        st.dataframe(ledger, hide_index=True, width="stretch")
+        st.dataframe(
+            [
+                {
+                    key: value
+                    for key, value in row.items()
+                    if not key.startswith("expense_")
+                }
+                for row in ledger
+            ],
+            hide_index=True,
+            width="stretch",
+        )
 
 
 @st.cache_data(max_entries=8, show_spinner=False)

@@ -30,6 +30,8 @@ Age = Annotated[int, Field(strict=True, ge=18, le=130)]
 Growth = Annotated[Decimal, Field(gt=-1, allow_inf_nan=False)]
 Nonnegative = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
 Slot = Literal[1, 2]
+ExpenseCategory = Literal["ordinary", "children", "healthcare", "care", "other"]
+ExpenseFrequency = Literal["recurring", "once"]
 Kind = Literal["work", "spending", "retirement", "investments", "economy", "plan"]
 PROFILE_KINDS: tuple[
     Literal["work", "spending", "retirement", "investments", "economy"], ...
@@ -101,14 +103,12 @@ class TimeAnchor(ValueModel):
             first, second = (
                 (end_years or (None, None)) if self.kind == "survivor" else retirements
             )
-            year = (
-                (
-                    min(first, second) + 1
-                    if self.kind == "survivor"
-                    else max(first, second)
-                )
-                if first is not None and second is not None
-                else None
+            if first is None or second is None:
+                return None
+            year: int | None = (
+                min(first, second) + 1
+                if self.kind == "survivor"
+                else max(first, second)
             )
         else:
             year = retirements[0 if self.kind == "adult_1" else 1]
@@ -299,10 +299,8 @@ class ExpenseSchedule(ValueModel):
 
     id: UUID = Field(default_factory=uuid4)
     label: Label
-    category: Literal["ordinary", "children", "healthcare", "care", "other"] = (
-        "ordinary"
-    )
-    frequency: Literal["recurring", "once"] = "recurring"
+    category: ExpenseCategory = "ordinary"
+    frequency: ExpenseFrequency = "recurring"
     levels: tuple[ExpenseLevel, ...] = Field(default_factory=lambda: (ExpenseLevel(),))
     end: TimeAnchor | None = None
     real_growth: Growth = Decimal(0)

@@ -4,17 +4,59 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from uuid import uuid4
 
 import altair as alt
 import pytest
 
 from financial_model import forecast_views as views
+from financial_model.forecast_models import ForecastExpense, ForecastSummary
 from financial_model.forecast_sensitivity import (
     SensitivityCase,
     SensitivityDriver,
     SensitivityPoint,
     SensitivityResult,
 )
+
+
+@pytest.mark.parametrize(("real", "expected"), [(True, 500), (False, 550)])
+def test_expense_rows_preserve_item_identity_and_flow_dollars(real, expected):
+    first, second = uuid4(), uuid4()
+    summary = ForecastSummary.model_construct(
+        expenses=tuple(
+            ForecastExpense(
+                year=year,
+                item_id=item,
+                label="Coverage",
+                category=category,
+                frequency="recurring",
+                base_amount=amount,
+                real_growth=0.02,
+                real_amount=amount * 1.02,
+            )
+            for year, item, category, amount in (
+                (2026, first, "healthcare", 1000),
+                (2027, first, "healthcare", 500),
+                (2027, second, "care", 100),
+            )
+        )
+    )
+    ledger = [
+        {"year": 2026, "price_index": 1.1, f"expense_{first}": 1000},
+        {
+            "year": 2027,
+            "price_index": 1.21,
+            f"expense_{first}": 550,
+            f"expense_{second}": 110,
+        },
+    ]
+    rows = views._expense_rows(summary, ledger, 2027, real)
+    assert [row["Category"] for row in rows] == ["Healthcare", "Care"]
+    assert [row["Planned amount"] for row in rows] == pytest.approx(
+        [expected, expected / 5]
+    )
+    assert [row["Base amount"] for row in rows] == [500, 100]
+    assert [row["Annual real amount"] for row in rows] == [510, 102]
 
 
 def case(label: str, first: float, later: float) -> SensitivityCase:

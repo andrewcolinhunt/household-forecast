@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import runpy
+from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
 
@@ -36,12 +37,184 @@ def _balance(row, label):
     )
 
 
+def _working_phase(pay, start=2026):
+    return {
+        "start": start,
+        "status": "working",
+        "cash_pay": pay,
+        "real_growth": {"central": 0},
+        "employee_401k": 0,
+        "employer_retirement_rate": 0,
+    }
+
+
+def test_forecast_paid_childcare_comparison_includes_changed_earnings():
+    care_id = uuid4()
+
+    def edit(data):
+        retirement = _profile(data, "retirement")
+        for adult in retirement["adults"]:
+            adult["retirement"]["central"] = 2028
+        work = _profile(data, "work")
+        for adult, pay in zip(work["adults"], (60000, 40000), strict=True):
+            adult["phases"] = [_working_phase(pay)]
+        spending = _profile(data, "spending")
+        spending["expenses"][0]["levels"][0]["amount"]["central"] = 30000
+        spending["expenses"].append(
+            {
+                "id": str(care_id),
+                "label": "Childcare",
+                "category": "children",
+                "levels": [{"when": {"year": 2026}, "amount": {"central": 24000}}],
+                "end": {"year": 2028},
+            }
+        )
+        data["plans"][0]["name"] = "Two incomes and paid care"
+        data["plans"].append(deepcopy(data["plans"][0]))
+        data["plans"][1]["name"] = "Reduced work and care"
+        _profile(data, "work", 1)["adults"][1]["phases"][0]["cash_pay"] = 10000
+        _profile(data, "spending", 1)["expenses"][1]["levels"][0]["amount"][
+            "central"
+        ] = 6000
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    first, second = (result.inspect(index, 0) for index in (0, 1))
+    assert [row["cash_pay"] for row in first] == [100000, 100000, 0]
+    assert [row["cash_pay"] for row in second] == [70000, 70000, 0]
+    assert [row["spending_planned"] for row in first] == [54000, 54000, 30000]
+    assert [row["spending_planned"] for row in second] == [36000, 36000, 30000]
+    # The cheaper childcare choice still leaves less after-tax household wealth.
+    assert first[-1]["net_worth"] > second[-1]["net_worth"]
+    assert all(summary.funded_fraction == 1 for summary in result.document.summaries)
+
+
+def test_forecast_early_retirement_explicitly_extends_replacement_coverage():
+    coverage_id = uuid4()
+
+    def edit(data):
+        data["plans"][0]["wealth"]["snapshot"]["accounts"][0]["balance"] = 500000
+        for adult in _profile(data, "retirement")["adults"]:
+            adult["retirement"]["central"] = 2030
+            adult["age"]["central"] = 67
+        for adult in _profile(data, "work")["adults"]:
+            adult["phases"] = [_working_phase(40000)]
+        _profile(data, "spending")["expenses"].append(
+            {
+                "id": str(coverage_id),
+                "label": "Household coverage",
+                "category": "healthcare",
+                "levels": [
+                    {"when": {"year": 2026}, "amount": {"central": 4000}},
+                    {"when": {"kind": "both"}, "amount": {"central": 18000}},
+                    {
+                        "when": {"kind": "age", "person": "adult_1", "age": 65},
+                        "amount": {"central": 8000},
+                    },
+                ],
+            }
+        )
+        data["plans"][0]["name"] = "Retire in 2030"
+        data["plans"].append(deepcopy(data["plans"][0]))
+        data["plans"][1]["name"] = "Retire in 2027"
+        for adult in _profile(data, "retirement", 1)["adults"]:
+            adult["retirement"]["central"] = 2027
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    later, earlier = (result.inspect(index, 0) for index in (0, 1))
+    assert [row[f"expense_{coverage_id}"] for row in later] == [4000] * 4 + [18000] + [
+        8000
+    ] * 3
+    assert [row[f"expense_{coverage_id}"] for row in earlier] == [4000] + [
+        18000
+    ] * 4 + [8000] * 3
+    assert (
+        sum(row["cash_pay"] for row in later) - sum(row["cash_pay"] for row in earlier)
+        == 240000
+    )
+    assert (
+        sum(row["spending_planned"] for row in earlier)
+        - sum(row["spending_planned"] for row in later)
+        == 42000
+    )
+    assert earlier[-1]["net_worth"] < later[-1]["net_worth"]
+
+
+def test_forecast_prolonged_care_preserves_other_spouses_living_costs():
+    living_id, care_id = uuid4(), uuid4()
+
+    def edit(data):
+        data["plans"][0]["wealth"]["snapshot"]["accounts"][0]["balance"] = 500000
+        _profile(data, "retirement")["adults"][0]["age"]["central"] = 61
+        _profile(data, "spending")["expenses"] = [
+            {
+                "id": str(living_id),
+                "label": "Ordinary living",
+                "category": "ordinary",
+                "levels": [
+                    {"when": {"year": 2026}, "amount": {"central": 40000}},
+                    {"when": {"kind": "survivor"}, "amount": {"central": 30000}},
+                ],
+            },
+            {
+                "id": str(care_id),
+                "label": "Additional paid care",
+                "category": "care",
+                "notes": "After insurance and displaced personal living expenses; partner's costs remain.",
+                "levels": [{"when": {"year": 2026}, "amount": {"central": 60000}}],
+                "end": {"year": 2028},
+            },
+        ]
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    rows = result.inspect(0, 0)
+    assert [row[f"expense_{living_id}"] for row in rows] == [40000, 40000, 30000]
+    assert [row.get(f"expense_{care_id}", 0) for row in rows] == [60000, 60000, 0]
+    assert [row["spending_paid"] for row in rows] == [100000, 100000, 30000]
+    assert rows[-1]["assets"] == 270000
+
+
+def test_forecast_equal_lifetime_costs_have_different_funding_outcomes():
+    def edit(data):
+        data["plans"][0]["wealth"]["snapshot"]["accounts"][0]["balance"] = 1000
+        for adult in _profile(data, "retirement")["adults"]:
+            adult["retirement"]["central"] = 2028
+        _profile(data, "work")["adults"][0]["phases"] = [
+            {"start": 2026, "end": 2027, "status": "not_working"},
+            _working_phase(10000, start=2027),
+        ]
+        _profile(data, "spending")["expenses"] = [
+            {
+                "label": "One-time support",
+                "category": "children",
+                "frequency": "once",
+                "levels": [{"when": {"year": 2026}, "amount": {"central": 4000}}],
+            }
+        ]
+        data["plans"][0]["name"] = "Pay before income"
+        data["plans"].append(deepcopy(data["plans"][0]))
+        data["plans"][1]["name"] = "Pay after income"
+        _profile(data, "spending", 1)["expenses"][0]["levels"][0]["when"]["year"] = 2027
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    earlier, later = (result.inspect(index, 0) for index in (0, 1))
+    assert (
+        sum(row["spending_planned"] for row in earlier)
+        == sum(row["spending_planned"] for row in later)
+        == 4000
+    )
+    assert earlier[0]["unfunded_living"] == 3000
+    assert all(row["unfunded_living"] == 0 for row in later)
+    assert [summary.funded_fraction for summary in result.document.summaries] == [0, 1]
+
+
 def test_forecast_actual_retirement_tax_grossup_matches_bracket_equation():
     def edit(data):
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
         account.update(label="Pretax", balance=200000, tax_treatment="tax_deferred")
         account["owner"] = 1
-        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 60000
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            60000
+        )
 
     rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
     # 2026 joint filers below65: income D pays2480+.12*(D-57,000).
@@ -66,7 +239,9 @@ def test_forecast_actual_taxes_follow_cash_taxable_pretax_roth_order():
         data["plans"][0]["wealth"]["snapshot"]["accounts"] = accounts
         accounts[1]["cost_basis"] = 25000
         accounts[2]["owner"] = accounts[3]["owner"] = 1
-        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 180000
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            180000
+        )
 
     row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
     # Ordinary100k-standard32.2k=67.8k ->2480+43k*.12=7640.
@@ -91,7 +266,9 @@ def test_forecast_partial_year_tax_uses_annualized_income_then_prorates_once():
         account = snapshot["accounts"][0]
         account.update(balance=200000, tax_treatment="tax_deferred")
         account["owner"] = 1
-        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 60000
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            60000
+        )
 
     first = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
     fraction = 183 / 365
@@ -109,7 +286,9 @@ def test_forecast_realized_loss_carry_is_consumed_once_each_year():
         _profile(data, "retirement")["adults"][0].update(
             pension=60000, pension_start_age=60, pension_survivor_fraction=0
         )
-        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 70000
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            70000
+        )
         data["settings"].update(
             mode="historical",
             history_source="Synthetic loss-carry reference",
@@ -146,7 +325,9 @@ def test_forecast_funds_expenses_at_discontinuous_child_credit_threshold():
             pension=400100, pension_start_age=60, pension_survivor_fraction=0
         )
         retirement = _profile(data, "retirement")
-        retirement["both_retired"]["amount"]["central"] = 328907
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            328907
+        )
         for adult in retirement["adults"]:
             adult["age"]["central"] = 60
 
@@ -186,7 +367,9 @@ def test_forecast_future_market_path_cannot_change_prior_withdrawals():
             balance=250000, invested_in="stocks", tax_treatment="tax_deferred"
         )
         account["owner"] = 1
-        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 60000
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            60000
+        )
         data["settings"].update(
             mode="historical",
             history_source="Synthetic causality test",

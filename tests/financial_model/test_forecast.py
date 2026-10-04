@@ -38,7 +38,16 @@ def forecast_request(**changes):
             "kind": "spending",
             "name": "Spending",
             "money_year": 2026,
-            "baseline": {"amount": {"central": 1000}},
+            "expenses": [
+                {
+                    "label": "Ordinary living",
+                    "category": "ordinary",
+                    "levels": [
+                        {"when": {"year": 2026}, "amount": {"central": 1000}},
+                        {"when": {"kind": "survivor"}, "amount": {"central": 500}},
+                    ],
+                }
+            ],
         },
         {
             "kind": "retirement",
@@ -55,10 +64,6 @@ def forecast_request(**changes):
                 }
                 for slot in (1, 2)
             ],
-            "only_adult_1": {"mode": "continue"},
-            "only_adult_2": {"mode": "continue"},
-            "both_retired": {"amount": {"central": 1000}},
-            "survivor": {"amount": {"central": 500}},
         },
         {
             "kind": "investments",
@@ -260,7 +265,9 @@ def test_forecast_withdrawal_funds_expenses_across_tax_credit_step(monkeypatch):
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
         account.update(balance=100000, invested_in="stocks", cost_basis=200000)
         retirement = _profile(data, "retirement")
-        retirement["both_retired"]["amount"]["central"] = 900
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = (
+            900
+        )
         for adult in retirement["adults"]:
             adult["age"]["central"] = 60
 
@@ -282,7 +289,7 @@ def test_forecast_rmd_surplus_is_reinvested(zero_tax):
         retirement = _profile(data, "retirement")
         for adult in retirement["adults"]:
             adult["age"]["central"] = 75
-        retirement["both_retired"]["amount"]["central"] = 0
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = 0
         account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
         account.update(tax_treatment="tax_deferred", balance=24600)
         account["owner"] = 1
@@ -489,7 +496,7 @@ def test_forecast_rebalancing_realizes_only_sales_and_preserves_reserve(zero_tax
             "fixed_income": ".5",
             "cash": 0,
         }
-        _profile(data, "retirement")["both_retired"]["amount"]["central"] = 0
+        _profile(data, "spending")["expenses"][0]["levels"][0]["amount"]["central"] = 0
 
     row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
     assert row["realized_gains"] == 2000
@@ -623,12 +630,11 @@ def test_forecast_comparison_uses_each_plans_investment_yields(monkeypatch):
 def test_forecast_partial_year_event_occurs_once_without_timing_question(zero_tax):
     def edit(data):
         data["plans"][0]["wealth"]["snapshot"]["as_of"] = "2026-07-02"
-        _profile(data, "spending")["adjustments"] = [
+        _profile(data, "spending")["expenses"] += [
             {
                 "label": "Move",
                 "frequency": "once",
-                "start": {"year": year},
-                "amount": {"central": 500},
+                "levels": [{"when": {"year": year}, "amount": {"central": 500}}],
             }
             for year in (2025, 2026)
         ]
@@ -636,6 +642,105 @@ def test_forecast_partial_year_event_occurs_once_without_timing_question(zero_ta
     rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
     assert rows[0]["spending_planned"] == pytest.approx(1000 * 183 / 365 + 500)
     assert rows[1]["spending_planned"] == 1000
+
+
+def test_forecast_splitting_expenses_preserves_household_outcomes(zero_tax):
+    import copy
+
+    request = forecast_request()
+
+    def edit(data):
+        spending = _profile(data, "spending")
+        original = spending["expenses"][0]
+        spending["expenses"] = []
+        for category, fraction in (
+            ("ordinary", 0.5),
+            ("children", 0.3),
+            ("healthcare", 0.2),
+        ):
+            item = copy.deepcopy(original)
+            item.update(id=str(uuid4()), category=category, label=category)
+            for level in item["levels"]:
+                level["amount"]["central"] = (
+                    float(level["amount"]["central"]) * fraction
+                )
+            spending["expenses"].append(item)
+
+    original = calculate_forecast(request)
+    split = calculate_forecast(_edit(request, edit))
+    for first, second in zip(original.inspect(0, 0), split.inspect(0, 0), strict=True):
+        assert {k: v for k, v in first.items() if not k.startswith("expense_")} == {
+            k: v for k, v in second.items() if not k.startswith("expense_")
+        }
+        assert (
+            sum(v for k, v in second.items() if k.startswith("expense_"))
+            == second["spending_planned"]
+        )
+    assert original.document.summaries[0].points == split.document.summaries[0].points
+
+
+@pytest.mark.parametrize("mode", ["fixed", "monte_carlo"])
+def test_forecast_expense_details_apply_growth_prices_and_proration_once(
+    zero_tax, mode
+):
+    from financial_model.forecast_models import SavedForecast
+
+    annual_id, once_id = uuid4(), uuid4()
+
+    def edit(data):
+        data["plans"][0]["wealth"]["snapshot"]["as_of"] = "2026-07-02"
+        data["plans"][0]["wealth"]["snapshot"]["accounts"][0]["balance"] = 100
+        data["settings"].update(mode=mode, count=3)
+        economy = _profile(data, "economy")
+        economy["inflation"]["central"] = ".1"
+        economy["volatility"] = [0, 0, 0, ".01"]
+        _profile(data, "spending")["expenses"] = [
+            {
+                "id": str(annual_id),
+                "label": "Coverage",
+                "category": "healthcare",
+                "real_growth": ".02",
+                "levels": [
+                    {"when": {"year": 2026}, "amount": {"central": 1000}},
+                    {"when": {"year": 2027}, "amount": {"central": 500}},
+                ],
+            },
+            {
+                "id": str(once_id),
+                "label": "Equipment",
+                "frequency": "once",
+                "category": "care",
+                "levels": [{"when": {"year": 2026}, "amount": {"central": 200}}],
+            },
+        ]
+
+    result = calculate_forecast(_edit(forecast_request(), edit))
+    summary = result.document.summaries[0]
+    for path in range(summary.paths):
+        rows = result.inspect(0, path)
+        opening_price = 1.0
+        for offset, row in enumerate(rows):
+            expected = (
+                1000 * 183 / 365 if offset == 0 else 500 * 1.02**offset * opening_price
+            )
+            assert row[f"expense_{annual_id}"] == pytest.approx(expected)
+            assert row.get(f"expense_{once_id}", 0) == (200 if offset == 0 else 0)
+            assert row["spending_planned"] == pytest.approx(
+                expected + (200 if offset == 0 else 0)
+            )
+            assert row["spending_paid"] + row["unfunded_living"] == pytest.approx(
+                row["spending_planned"]
+            )
+            opening_price = row["price_index"]
+    annual_sources = [item for item in summary.expenses if item.item_id == annual_id]
+    assert [item.base_amount for item in annual_sources] == [1000, 500, 500]
+    assert [item.real_amount for item in annual_sources] == pytest.approx(
+        [1000, 510, 520.2]
+    )
+    assert (
+        SavedForecast.model_validate_json(result.document.model_dump_json())
+        == result.document
+    )
 
 
 def test_forecast_deceased_benefits_are_optional_when_no_survivor_payment_is_modeled(

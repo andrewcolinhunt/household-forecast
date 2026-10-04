@@ -14,6 +14,7 @@ from streamlit.testing.v1 import AppTest
 from financial_model import app, planning_pages
 from financial_model.planning import (
     EconomicAssumptions,
+    ExpenseSchedule,
     PlanningScenario,
     SavedPlanningDocument,
     SpendingAssumptions,
@@ -135,15 +136,18 @@ def test_spending_and_investment_rows_retain_inputs():
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Spending")
     press(page, "New Spending assumptions")
-    press(page, "Change regular living costs")
-    field(page, "button_group", "Change starts").set_value("both").run()
-    field(page, "text_input", "New regular living costs ($/year)").set_value(
-        "80000"
+    field(page, "text_input", "Amount ($/year)").set_value("80000").run()
+    field(page, "number_input", "Amount starts year").set_value(2026).run()
+    press(page, "Add spending phase")
+    [w for w in page.selectbox if w.label == "Amount starts"][-1].select("both").run()
+    [w for w in page.text_input if w.label == "Amount ($/year)"][-1].set_value(
+        "60000"
     ).run()
+    field(page, "selectbox", "Show expense category").select("children").run()
     press(page, "Add an expense")
     field(page, "text_input", "Expense name").set_value("Childcare").run()
-    field(page, "text_input", "Extra annual cost ($/year)").set_value("20000").run()
-    field(page, "number_input", "Expense starts year").set_value(2028).run()
+    field(page, "text_input", "Amount ($/year)").set_value("20000").run()
+    field(page, "number_input", "Amount starts year").set_value(2028).run()
     field(page, "checkbox", "Specify an end date").check().run()
     field(page, "number_input", "Payments stop year").set_value(2032).run()
     assert not page.get("popover")
@@ -164,10 +168,11 @@ def test_spending_and_investment_rows_retain_inputs():
     assert not page.get("popover")
     assert raw(page, "investments")["checkpoints"][0]["when"]["year"] == 2026
     tab(page, "Spending")
+    field(page, "selectbox", "Show expense category").select("children").run()
     assert field(page, "text_input", "Expense name").value == "Childcare"
-    assert field(page, "button_group", "Change starts").value == "both"
-    expense = raw(page, "spending")["adjustments"][0]
-    assert expense["start"]["year"] == 2028
+    assert raw(page, "spending")["expenses"][0]["levels"][1]["when"]["kind"] == "both"
+    expense = raw(page, "spending")["expenses"][1]
+    assert expense["levels"][0]["when"]["year"] == 2028
     assert expense["end"]["year"] == 2032
 
 
@@ -175,29 +180,28 @@ def test_spending_optional_ranges_preserve_invalid_edits_when_hidden():
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Spending")
     press(page, "New Spending assumptions")
-    field(page, "text_input", "Regular living costs ($/year)").set_value("60000").run()
-    assert not any(w.key.startswith("lower_baseline_") for w in page.text_input)
-    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
-        True
-    ).run()
+    field(page, "text_input", "Amount ($/year)").set_value("60000").run()
+    assert not any(w.key.startswith("lower_level_") for w in page.text_input)
+    field(page, "toggle", "Edit amount ranges").set_value(True).run()
     field(page, "text_input", "Lower ($/year)").set_value("invalid amount").run()
     field(page, "text_input", "Upper ($/year)").set_value("75000").run()
-    field(page, "text_input", "Included costs").set_value("Housing and food").run()
-    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
-        False
+    field(page, "text_input", "Included costs and exclusions").set_value(
+        "Housing and food"
     ).run()
+    field(page, "toggle", "Edit amount ranges").set_value(False).run()
     assert page.error
-    assert not any(w.key.startswith("lower_baseline_") for w in page.text_input)
+    assert not any(w.key.startswith("lower_level_") for w in page.text_input)
     tab(page, "Retirement")
     tab(page, "Spending")
-    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
-        True
-    ).run()
+    field(page, "toggle", "Edit amount ranges").set_value(True).run()
     assert field(page, "text_input", "Lower ($/year)").value == "invalid amount"
-    assert field(page, "text_input", "Included costs").value == "Housing and food"
+    assert (
+        field(page, "text_input", "Included costs and exclusions").value
+        == "Housing and food"
+    )
     field(page, "text_input", "Lower ($/year)").set_value("50000").run()
     assert not page.error
-    assert raw(page, "spending")["baseline"]["amount"] == {
+    assert raw(page, "spending")["expenses"][0]["levels"][0]["amount"] == {
         "central": "60000",
         "lower": "50000",
         "upper": "75000",
@@ -404,7 +408,12 @@ def test_two_saved_plans_keep_copies_after_source_changes(database_url, monkeypa
             database_url,
             SavedPlanningDocument(
                 inputs=SpendingAssumptions(
-                    name=f"Budget {amount}", baseline={"amount": {"central": amount}}
+                    name=f"Budget {amount}",
+                    expenses=[
+                        ExpenseSchedule(
+                            label="Living", levels=[{"amount": {"central": amount}}]
+                        )
+                    ],
                 )
             ),
         )
@@ -524,16 +533,12 @@ def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation
     press(page, "New Retirement assumptions")
     field(page, "number_input", "Adult 1 retires").set_value(2040).run()
     field(page, "number_input", "Plan for Adult 1 through age").set_value(95).run()
-    field(page, "toggle", "Edit ranges, essential costs, and notes").set_value(
-        True
-    ).run()
+    field(page, "toggle", "Edit retirement ranges").set_value(True).run()
     age_bounds = [w for w in page.number_input if "age_0_" in (w.key or "")]
     next(w for w in age_bounds if w.label == "Lower").set_value(90).run()
     next(
         w for w in page.number_input if "age_0_" in (w.key or "") and w.label == "Upper"
     ).set_value(100).run()
-    field(page, "button_group", "Only Adult 1 retired").set_value("continue").run()
-    field(page, "text_input", "Both retired ($/year)").set_value("80000").run()
     tab(page, "Work")
     press(page, "New Work assumptions")
     assert not any("retire" in w.label.lower() for w in page.number_input)
@@ -546,11 +551,8 @@ def test_retirement_fields_are_owned_by_retirement_and_ranges_survive_navigation
         "lower": 90,
         "upper": 100,
     }
-    assert raw(page, "retirement")["both_retired"]["amount"]["central"] == "80000"
-    assert raw(page, "retirement")["only_adult_1"] == {
-        "mode": "continue",
-        "budget": None,
-    }
+    assert "both_retired" not in raw(page, "retirement")
+    assert not any("living costs" in w.label for w in page.text_input)
     assert any("Age: 90 to 100" in c.value for c in page.caption)
     assert not page.error
 
@@ -993,8 +995,7 @@ def test_compact_editors_save_populated_profiles_without_changing_values(
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     budget = {
         "amount": {"central": "78901.23", "lower": "60000", "upper": "90000"},
-        "essential": "40000",
-        "notes": "Included costs",
+        "notes": "Included costs and exclusions",
     }
     work = WorkAssumptions(name="Work").model_dump(mode="json")
     work["money_year"] = 2026
@@ -1034,31 +1035,35 @@ def test_compact_editors_save_populated_profiles_without_changing_values(
         SpendingAssumptions(
             name="Spending",
             money_year=2026,
-            baseline=budget,
-            replacements=[
+            expenses=[
                 {
-                    "label": "Move",
-                    "when": {"kind": "both", "offset": 1},
-                    "budget": budget,
-                }
-            ],
-            adjustments=[
+                    "label": "Living",
+                    "notes": budget["notes"],
+                    "levels": [
+                        {"when": {"year": 2026}, "amount": budget["amount"]},
+                        {
+                            "when": {"kind": "both", "offset": 1},
+                            "amount": budget["amount"],
+                        },
+                    ],
+                },
                 {
                     "label": "Extra",
-                    "amount": {"central": "1000.01", "lower": "500", "upper": "2000"},
-                    "start": {"kind": "year", "year": 2027},
-                    "end": {"kind": "year", "year": 2030},
-                }
+                    "levels": [
+                        {
+                            "when": {"year": 2027},
+                            "amount": {
+                                "central": "1000.01",
+                                "lower": "500",
+                                "upper": "2000",
+                            },
+                        }
+                    ],
+                    "end": {"year": 2030},
+                },
             ],
         ),
-        RetirementAssumptions(
-            name="Retirement",
-            money_year=2026,
-            both_retired=budget,
-            survivor=budget,
-            only_adult_1={"mode": "continue"},
-            only_adult_2={"mode": "replace", "budget": budget},
-        ),
+        RetirementAssumptions(name="Retirement", money_year=2026),
         InvestmentAssumptions(
             name="Investments",
             money_year=2026,
@@ -1090,3 +1095,303 @@ def test_compact_editors_save_populated_profiles_without_changing_values(
         press(page, "Save inputs")
         assert load_planning_document(database_url, record.id).inputs == record.inputs
         assert page.success
+
+
+def _timeline_app(plan_json):
+    import json
+
+    import streamlit as st
+
+    from financial_model.planning_pages import _plan_timeline
+
+    data = st.session_state.setdefault("timeline_plan", json.loads(plan_json))
+    scope = f"timeline_test_{st.session_state.get('planning_epoch', 0)}"
+    _plan_timeline(data, scope, None)
+
+
+def test_plan_timeline_category_views_edit_one_copy_and_preserve_invalid_text():
+    from financial_model.planning import PlanningChild, PlanningHousehold
+
+    child = PlanningChild(name="Sam", birth_year=2027)
+    expense = ExpenseSchedule(
+        label="Childcare",
+        category="children",
+        levels=[
+            {
+                "when": {"kind": "age", "person": str(child.id), "age": 0},
+                "amount": {"central": "20000"},
+            }
+        ],
+        end={"kind": "age", "person": str(child.id), "age": 5},
+    )
+    source = SavedPlanningDocument(
+        inputs=SpendingAssumptions(name="Spending", expenses=[expense])
+    )
+    plan = PlanningScenario(
+        name="Plan",
+        household=PlanningHousehold(children=[child]),
+        components=[select_profile(source)],
+    )
+    page = AppTest.from_function(_timeline_app, args=(plan.model_dump_json(),)).run()
+    assert not page.exception
+    assert list(page.table[0].value["Year"]) == [2027, 2032]
+    field(page, "selectbox", "Timeline category").select("children").run()
+    field(page, "text_input", "Amount ($/year)").set_value("not a number")
+    field(page, "selectbox", "Timeline category").select("all").run()
+    assert not page.exception
+    assert field(page, "text_input", "Amount ($/year)").value == "not a number"
+    assert list(page.table[0].value["Year"]) == [2027, 2032]
+    field(page, "text_input", "Amount ($/year)").set_value("25000").run()
+    edited = page.session_state["timeline_plan"]["components"][0]["inputs"]["expenses"][
+        0
+    ]
+    assert edited["id"] == str(expense.id)
+    assert edited["levels"][0]["amount"]["central"] == "25000"
+    assert source.inputs.expenses[0].levels[0].amount.central == Decimal("20000")
+    press(page, "Add spending phase")
+    assert not page.exception
+    assert (
+        len(
+            page.session_state["timeline_plan"]["components"][0]["inputs"]["expenses"][
+                0
+            ]["levels"]
+        )
+        == 2
+    )
+
+
+def test_timeline_missing_child_reference_stays_visible_for_review():
+    expense = ExpenseSchedule(
+        label="Childcare",
+        category="children",
+        levels=[
+            {
+                "when": {"kind": "age", "person": "removed-child", "age": 5},
+                "amount": {"central": "10000"},
+            }
+        ],
+    )
+    source = SavedPlanningDocument(
+        inputs=SpendingAssumptions(name="Spending", expenses=[expense])
+    )
+    plan = PlanningScenario(name="Plan", components=[select_profile(source)])
+    page = AppTest.from_function(_timeline_app, args=(plan.model_dump_json(),)).run()
+    assert not page.exception
+    assert any("child who is no longer" in warning.value for warning in page.warning)
+    assert page.table[0].value.iloc[0]["Year"] == "Unresolved"
+    assert (
+        page.session_state["timeline_plan"]["components"][0]["inputs"]["expenses"][0][
+            "levels"
+        ][0]["when"]["person"]
+        == "removed-child"
+    )
+    field(page, "selectbox", "Person").select("adult_1").run()
+    field(page, "selectbox", "Amount starts").select("year").run()
+    anchor = page.session_state["timeline_plan"]["components"][0]["inputs"]["expenses"][
+        0
+    ]["levels"][0]["when"]
+    assert anchor["person"] is None
+    assert anchor["age"] is None
+
+
+def test_reviewed_split_preserves_phase_totals_ranges_dates_and_growth():
+    expense = ExpenseSchedule(
+        label="Household",
+        real_growth="0.02",
+        levels=[
+            {
+                "when": {"year": 2026},
+                "amount": {
+                    "central": "60000.12",
+                    "lower": "50000.1",
+                    "upper": "70000.1",
+                },
+            },
+            {"when": {"kind": "both"}, "amount": {"central": "50000"}},
+        ],
+        end={"kind": "survivor", "offset": 5},
+    ).model_dump(mode="json")
+    before = deepcopy(expense)
+    remaining, separated = planning_pages._split_expense(
+        expense,
+        Decimal("0.3333"),
+        "Healthcare",
+        "healthcare",
+        "Living excluding healthcare",
+        "Premiums and out-of-pocket care",
+    )
+    assert expense == before
+    assert remaining["id"] == expense["id"] != separated["id"]
+    assert separated["category"] == "healthcare"
+    for original, first, second in zip(
+        expense["levels"], remaining["levels"], separated["levels"], strict=True
+    ):
+        assert first["when"] == second["when"] == original["when"]
+        for field, amount in original["amount"].items():
+            if amount is not None:
+                assert Decimal(first["amount"][field]) + Decimal(
+                    second["amount"][field]
+                ) == Decimal(amount)
+    for item in (remaining, separated):
+        assert item["end"] == expense["end"]
+        assert item["real_growth"] == expense["real_growth"]
+        ExpenseSchedule.model_validate(item)
+
+
+def test_plan_selection_view_retains_invalid_timeline_draft():
+    source = SavedPlanningDocument(inputs=SpendingAssumptions(name="Spending"))
+    page = AppTest.from_file(str(ENTRY)).run()
+    press(page, "New combined plan")
+    raw(page, "plan")["components"] = [select_profile(source).model_dump(mode="json")]
+    page.run()
+    field(page, "button_group", "Plan view").set_value("Timeline").run()
+    field(page, "text_input", "Amount ($/year)").set_value("invalid amount")
+    field(page, "button_group", "Plan view").set_value("Selections").run()
+    assert not page.exception
+    assert page.error
+    assert (
+        raw(page, "plan")["components"][0]["inputs"]["expenses"][0]["levels"][0][
+            "amount"
+        ]["central"]
+        == "invalid amount"
+    )
+    field(page, "button_group", "Plan view").set_value("Timeline").run()
+    assert field(page, "text_input", "Amount ($/year)").value == "invalid amount"
+    press(page, "Add an expense")
+    assert field(page, "button_group", "Plan view").value == "Timeline"
+    assert not page.exception
+
+
+def _read_library_app():
+    from financial_model.planning_pages import _read
+
+    _read("unused-test-dsn", "spending")
+
+
+@pytest.mark.parametrize("failure", ["schema", "validation", "database"])
+def test_library_read_shows_migration_errors_but_hides_database_details(
+    monkeypatch, failure
+):
+    import psycopg
+
+    from financial_model import planning_storage
+
+    def fail(*args):
+        if failure == "schema":
+            planning_storage._read_document(
+                {"document_type": "planning_document", "schema_version": 3}
+            )
+        if failure == "validation":
+            SpendingAssumptions(
+                name="Spending",
+                expenses=[
+                    {
+                        "label": "Living",
+                        "levels": [{"amount": {"central": "private-invalid-value"}}],
+                    }
+                ],
+            )
+        message = "password=private-connection-detail"
+        raise psycopg.OperationalError(message)
+
+    monkeypatch.setattr(planning_pages, "list_planning_documents", fail)
+    page = AppTest.from_function(_read_library_app).run()
+    assert not page.exception
+    messages = " ".join(item.value for item in page.error)
+    assert messages
+    assert "private-invalid-value" not in messages
+    assert "private-connection-detail" not in messages
+    assert page.session_state["planning_available"]["spending"] is False
+    if failure == "schema":
+        assert "Unsupported planning schema version 3" in messages
+        assert "scripts/migrate_household_timeline.py" in messages
+        assert "check database setup" not in messages
+    elif failure == "database":
+        assert "check database setup" in messages
+    else:
+        assert "valid decimal" in messages
+
+
+@pytest.mark.parametrize("kind", ["spending", "retirement", "plan"])
+def test_old_format_draft_is_preserved_and_exported_without_rendering_editor(
+    monkeypatch, kind
+):
+    import json
+
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, planning_pages.LABELS[kind])
+    press(
+        page,
+        "New combined plan"
+        if kind == "plan"
+        else f"New {planning_pages.LABELS[kind]} assumptions",
+    )
+    data = raw(page, kind)
+    old_spending = {
+        "kind": "spending",
+        "name": "Unsaved old budget",
+        "baseline": {"amount": {"central": "unfinished amount"}},
+        "replacements": [],
+        "adjustments": [],
+    }
+    if kind == "spending":
+        data.pop("expenses")
+        data.update(old_spending)
+    elif kind == "retirement":
+        data["both_retired"] = {"amount": {"central": "unfinished amount"}}
+    else:
+        data["components"] = [{"inputs": old_spending}]
+    before = deepcopy(data)
+    exports = []
+    monkeypatch.setattr(
+        planning_pages.st,
+        "download_button",
+        lambda label, contents, **kwargs: exports.append((label, contents)) or False,
+    )
+    page.run()
+    assert not page.exception
+    assert raw(page, kind) == before
+    assert any("older planning format" in error.value for error in page.error)
+    assert any("Preview and review" in caption.value for caption in page.caption)
+    assert not any(
+        button.label in {"Save inputs", "Save plan"} for button in page.button
+    )
+    assert exports[0][0] == "Download preserved draft"
+    assert json.loads(exports[0][1]) == before
+
+
+def _old_loaded_draft_app(saved_json):
+    import streamlit as st
+
+    from financial_model.planning import SavedPlanningDocument
+    from financial_model.planning_pages import _editor
+
+    current = SavedPlanningDocument.model_validate_json(saved_json)
+    old = current.model_copy(update={"schema_version": 3, "revision": 1})
+    raw = current.inputs.model_dump(mode="json")
+    raw.pop("expenses")
+    raw["baseline"] = {"amount": {"central": "unsaved old text"}}
+    st.session_state.setdefault(
+        "planning_drafts", {str(old.id): {"data": raw, "loaded": old}}
+    )
+    st.session_state.setdefault("planning_active", {"spending": str(old.id)})
+    st.session_state.setdefault("planning_available", {"spending": True})
+    _editor("spending", None, (current,))
+
+
+def test_old_draft_reloads_only_after_explicit_discard_action():
+    current = SavedPlanningDocument(
+        revision=2, inputs=SpendingAssumptions(name="Migrated spending")
+    )
+    page = AppTest.from_function(
+        _old_loaded_draft_app, args=(current.model_dump_json(),)
+    ).run()
+    assert not page.exception
+    assert raw(page, "spending")["baseline"]["amount"]["central"] == "unsaved old text"
+    press(page, "Discard preserved draft and reload migrated inputs")
+    assert raw(page, "spending") == current.inputs.model_dump(mode="json")
+    assert (
+        page.session_state["planning_drafts"][str(current.id)]["loaded"].schema_version
+        == 4
+    )
+    assert not any("older planning format" in error.value for error in page.error)

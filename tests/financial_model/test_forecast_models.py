@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -52,6 +53,23 @@ def test_forecast_request_allows_residence_choices(request_input):
         plans=(original, PlanningScenario.model_validate(alternative)),
     )
     assert len(request.plans) == 2
+
+
+def test_forecast_request_ignores_plan_local_child_ids_but_requires_same_demographics(
+    request_input,
+):
+    data = request_input.plans[0].model_dump()
+    data["household"]["children"] = [{"name": "Child", "birth_year": 2020}]
+    original = PlanningScenario.model_validate(data)
+    alternative = original.model_dump()
+    alternative["household"]["children"][0]["id"] = uuid4()
+    request = ForecastRequest(
+        plans=(original, PlanningScenario.model_validate(alternative))
+    )
+    assert len(request.plans) == 2
+    alternative["household"]["children"][0]["birth_year"] = 2021
+    with pytest.raises(ValidationError, match="one household"):
+        ForecastRequest(plans=(original, PlanningScenario.model_validate(alternative)))
 
 
 @pytest.mark.parametrize("difference", ["wealth", "household"])

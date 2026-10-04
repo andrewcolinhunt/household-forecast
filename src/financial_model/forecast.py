@@ -20,6 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from financial_model.forecast_models import (
+    ForecastExpense,
     ForecastPoint,
     ForecastRequest,
     ForecastSummary,
@@ -798,10 +799,13 @@ def _forecast(
             + social
             + mandatory
         )
-        spending = (
-            float(annual.recurring_spending) * annual.year_fraction
-            + float(annual.one_time_spending)
-        ) * price
+        expenses = {
+            f"expense_{item.item_id}": float(item.amount)
+            * (annual.year_fraction if item.frequency == "recurring" else 1)
+            * price
+            for item in annual.expenses
+        }
+        spending = sum(expenses.values(), np.zeros(count))
         debt_interest = debts * ((1 + debt_rates) ** annual.year_fraction - 1)
         debts += debt_interest
         due_debt = np.minimum(debts, payments * annual.year_fraction)
@@ -958,6 +962,7 @@ def _forecast(
             "ca_hsa_income": accounts.ca_hsa_income.copy(),
             "ca_hsa_gains": accounts.ca_hsa_gains.copy(),
         }
+        row.update(expenses)
         _account_trace(row, accounts, annual, reserve)
         trace.append(row)
         price = end_price
@@ -1185,4 +1190,18 @@ def _summarize(
         mean_unfunded_years=float(years_with_gap.sum(axis=1).mean()),
         paths=len(gaps),
         example=tuple(_inspect(trace, 0)),
+        expenses=tuple(
+            ForecastExpense(
+                year=annual.year,
+                item_id=item.item_id,
+                label=item.label,
+                category=item.category,
+                frequency=item.frequency,
+                base_amount=float(item.base_amount),
+                real_growth=float(item.real_growth),
+                real_amount=float(item.amount),
+            )
+            for annual in timeline.annual
+            for item in annual.expenses
+        ),
     )
