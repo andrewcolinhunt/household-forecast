@@ -78,6 +78,7 @@ dependencies:
 - pygments=2.21.0=pyhcf101f3_0
 - pytest-xdist=3.8.0=pyhd8ed1ab_0
 - pytest=8.4.2=pyhcf101f3_1
+- python-abi3=3.12=he1d15d4_3
 - python-dateutil=2.9.0.post0=pyhe01879c_2
 - python-discovery=1.6.1=pyh5ded981_0
 - python-gil=3.12.14=hd8ed1ab_3
@@ -98,7 +99,7 @@ dependencies:
 - tzdata=2026c=h151e31d_0
 - ukkonen=1.1.0=py312hd9148b4_0
 - virtualenv=21.12.1=pyh5ded981_0
-- wcwidth=0.9.1=pyh5ded981_0
+- wcwidth=0.9.1=py311hd139983_3
 - wheel=0.48.0=pyhd8ed1ab_0
 - yaml=0.2.5=hebe6cf0_3
 - zeromq=4.3.5=h901266b_12
