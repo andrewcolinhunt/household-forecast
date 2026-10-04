@@ -391,7 +391,11 @@ def test_undated_additions_reject_other_semantics(undated_documents, case):
         adjustment["start"]["year"] = 2028
     elif case == "replacement":
         source["replacements"] = [
-            {"when": {"kind": "year", "year": 2028}, "budget": budget(90000)}
+            {
+                "label": "Unreviewed replacement",
+                "when": {"kind": "year", "year": 2028},
+                "budget": budget(90000),
+            }
         ]
     else:
         source["baseline"] = budget(None)
@@ -406,6 +410,84 @@ def test_undated_additions_in_saved_plan_still_require_review(undated_documents)
     plan["inputs"]["components"][0]["inputs"] = deepcopy(undated_documents[0]["inputs"])
     with pytest.raises(ValueError, match="unresolved expense date"):
         convert_timeline_documents([plan])
+
+
+def test_conversion_preserves_all_budget_metadata_and_independent_copy_notes(
+    old_documents,
+):
+    before = convert_timeline_documents(
+        old_documents, profile_contexts=contexts(old_documents)
+    )
+    source, retirement, plan = old_documents
+    for inputs, prefix in (
+        (source["inputs"], "Library"),
+        (plan["inputs"]["components"][0]["inputs"], "Plan copy"),
+    ):
+        inputs["baseline"] |= {
+            "notes": f"{prefix} rent and other costs.",
+            "essential": 70000,
+        }
+        inputs["replacements"][0]["label"] = f"{prefix} move"
+        inputs["replacements"][0]["budget"] |= {
+            "notes": f"{prefix} replacement explanation.",
+            "essential": 60000,
+        }
+        for index, adjustment in enumerate(inputs["adjustments"]):
+            adjustment["label"] = f"{prefix} adjustment {index}"
+            adjustment["notes"] = f"{prefix} adjustment explanation {index}."
+    for inputs, prefix in (
+        (retirement["inputs"], "Library retirement"),
+        (plan["inputs"]["components"][1]["inputs"], "Plan retirement"),
+    ):
+        for label, item in (
+            ("one retired", inputs["only_adult_1"]["budget"]),
+            ("both retired", inputs["both_retired"]),
+            ("survivor", inputs["survivor"]),
+        ):
+            item |= {"notes": f"{prefix}: {label} explanation.", "essential": 50000}
+    converted = convert_timeline_documents(
+        old_documents, profile_contexts=contexts(old_documents)
+    )
+    library = next(d.inputs for d in converted if str(d.id) == source["id"])
+    converted_plan = next(d.inputs for d in converted if str(d.id) == plan["id"])
+    selected = next(
+        c.inputs for c in converted_plan.components if c.inputs.kind == "spending"
+    )
+    for spending, prefix in ((library, "Library"), (selected, "Plan copy")):
+        notes = spending.expenses[0].notes
+        assert (
+            "Historical budget context (before conversion; not additional costs)"
+            in notes
+        )
+        assert f"{prefix} rent and other costs." in notes
+        assert f"{prefix} move" in notes
+        assert f"{prefix} replacement explanation." in notes
+        for index in (0, 1):
+            assert f"{prefix} adjustment {index}" in notes
+            assert f"{prefix} adjustment explanation {index}." in notes
+        for essential in (70000, 60000, 50000):
+            assert f"Essential annual spending (2026 dollars): {essential}." in notes
+        for label in ("one retired", "both retired", "survivor"):
+            assert f"Plan retirement: {label} explanation." in notes
+    assert "Library rent and other costs." not in selected.expenses[0].notes
+    assert "Plan copy rent and other costs." not in library.expenses[0].notes
+    generated = next(
+        d.inputs for d in converted if str(d.id) not in {r["id"] for r in old_documents}
+    )
+    assert (
+        "Library retirement: both retired explanation." in generated.expenses[0].notes
+    )
+
+    def without_notes(value):
+        if isinstance(value, dict):
+            return {k: without_notes(v) for k, v in value.items() if k != "notes"}
+        if isinstance(value, list):
+            return [without_notes(v) for v in value]
+        return value
+
+    assert {d.id: without_notes(d.inputs.model_dump(mode="json")) for d in before} == {
+        d.id: without_notes(d.inputs.model_dump(mode="json")) for d in converted
+    }
 
 
 def test_version_one_conversion_preserves_return_bounds_and_original():

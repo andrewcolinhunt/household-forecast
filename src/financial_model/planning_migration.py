@@ -325,7 +325,8 @@ TIMELINE_CONVERSION_NOTICE = (
     "Converted using the reviewed Plan's fixed calendar dates and planning horizon. "
     "Retirement and age changes will not move these dates; review links explicitly. "
     "These costs STOP at the old planning horizon; extend them when testing longer lives. "
-    "Original budgets, descriptions and essential-spending estimates remain in the backup."
+    "Original budgets remain in the backup; descriptions and essential-spending "
+    "estimates are also retained in the household spending notes."
 )
 
 
@@ -579,12 +580,54 @@ def _undated_adjustments(
     return expenses
 
 
+def _legacy_spending_details(
+    spending: dict[str, Any], retirement: dict[str, Any]
+) -> str:
+    """Keep original budget explanations visible as historical, non-calculated context."""
+    sections = [("Baseline budget", spending.get("baseline"))]
+    sections.extend(
+        (f"Replacement — {row['label']}", row["budget"])
+        for row in spending.get("replacements", [])
+    )
+    sections.extend(
+        (f"Adjustment — {row['label']}", row) for row in spending.get("adjustments", [])
+    )
+    sections.extend(
+        (
+            f"Retirement budget — only {adult['name']} retired",
+            retirement.get(f"only_adult_{index}", {}).get("budget"),
+        )
+        for index, adult in enumerate(retirement["adults"], 1)
+    )
+    sections.extend(
+        (label, retirement.get(key))
+        for label, key in (
+            ("Both-retired budget", "both_retired"),
+            ("Survivor budget", "survivor"),
+        )
+    )
+    lines = ["Historical budget context (before conversion; not additional costs):"]
+    for label, source in sections:
+        if source is None:
+            continue
+        lines.append(f"{label}:")
+        if source.get("notes"):
+            lines.append(source["notes"])
+        if source.get("essential") is not None:
+            lines.append(
+                f"Essential annual spending ({spending['money_year']} dollars): {source['essential']}."
+            )
+    return "\n".join(lines)
+
+
 def _converted_spending(
     plan: dict[str, Any], identity: str, *, preserve_undated: bool = False
 ) -> dict[str, Any]:
     """Create fixed dated levels that reproduce the reviewed Plan's old consumption."""
     plan = deepcopy(plan)
-    old = _plan_selections(plan)["spending"]["inputs"]
+    selections = _plan_selections(plan)
+    old = selections["spending"]["inputs"]
+    details = _legacy_spending_details(old, selections["retirement"]["inputs"])
     undated = _undated_adjustments(old, identity) if preserve_undated else []
     rows = _legacy_spending(plan)
     levels, previous = [], None
@@ -605,7 +648,7 @@ def _converted_spending(
             "frequency": "recurring",
             "levels": levels,
             "end": {"kind": "year", "year": rows[-1]["year"] + 1},
-            "notes": TIMELINE_CONVERSION_NOTICE,
+            "notes": TIMELINE_CONVERSION_NOTICE + "\n\n" + details,
         }
     ]
     for row in rows:
@@ -660,8 +703,8 @@ def _retirement_expenses(
     for context in sorted(contexts, key=lambda c: c["id"]):
         spending = _context_spending(original, context)
         if not any(
-            (previous["money_year"], previous["expenses"])
-            == (spending["money_year"], spending["expenses"])
+            (previous["money_year"], _meaning(previous["expenses"]))
+            == (spending["money_year"], _meaning(spending["expenses"]))
             for _, previous in alternatives
         ):
             alternatives.append((context, spending))
