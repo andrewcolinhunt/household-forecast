@@ -534,9 +534,58 @@ def _validate_legacy_budgets(
             raise ValueError(msg)
 
 
-def _converted_spending(plan: dict[str, Any], identity: str) -> dict[str, Any]:
+def _undated_adjustments(
+    spending: dict[str, Any], identity: str
+) -> list[dict[str, Any]]:
+    """Retain narrowly supported unfinished additions outside the resolved budget."""
+    retained, expenses = [], []
+    for index, adjustment in enumerate(spending.get("adjustments", [])):
+        anchors = (adjustment["start"], adjustment.get("end"))
+        unknown = [
+            bool(
+                a is not None
+                and a.get("kind", "year") == "year"
+                and a.get("year") is None
+            )
+            for a in anchors
+        ]
+        if not any(unknown):
+            retained.append(adjustment)
+            continue
+        amount = Exploration[Money].model_validate(adjustment["amount"])
+        if (
+            spending.get("replacements")
+            or not all(unknown)
+            or adjustment.get("frequency", "recurring") != "recurring"
+            or amount.central is None
+            or amount.central <= 0
+        ):
+            msg = "Only positive recurring additions with both calendar dates unknown and no budget replacements can remain undated."
+            raise ValueError(msg)
+        expenses.append(
+            {
+                "id": str(uuid5(UUID(identity), f"undated-adjustment-v4-{index}")),
+                "label": adjustment["label"],
+                "category": "other",
+                "frequency": "recurring",
+                "levels": [
+                    {"when": adjustment["start"], "amount": adjustment["amount"]}
+                ],
+                "end": adjustment["end"],
+                "notes": adjustment.get("notes", ""),
+            }
+        )
+    spending["adjustments"] = retained
+    return expenses
+
+
+def _converted_spending(
+    plan: dict[str, Any], identity: str, *, preserve_undated: bool = False
+) -> dict[str, Any]:
     """Create fixed dated levels that reproduce the reviewed Plan's old consumption."""
+    plan = deepcopy(plan)
     old = _plan_selections(plan)["spending"]["inputs"]
+    undated = _undated_adjustments(old, identity) if preserve_undated else []
     rows = _legacy_spending(plan)
     levels, previous = [], None
     for row in rows:
@@ -582,7 +631,66 @@ def _converted_spending(plan: dict[str, Any], identity: str) -> dict[str, Any]:
         k: v
         for k, v in old.items()
         if k not in {"baseline", "replacements", "adjustments"}
-    } | {"expenses": expenses}
+    } | {"expenses": expenses + undated}
+
+
+def _context_spending(
+    original: dict[str, Any], context: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve a library profile within one explicitly reviewed Plan copy."""
+    data = deepcopy(original["inputs"])
+    plan = deepcopy(context["inputs"])
+    selection = _plan_selections(plan)[data["kind"]]
+    if data["kind"] == "retirement" and [
+        a["name"] for a in selection["inputs"]["adults"]
+    ] != [a["name"] for a in data["adults"]]:
+        msg = "Retirement adult order differs from the Plan context; review its person mapping."
+        raise ValueError(msg)
+    selection["inputs"] = data
+    return _converted_spending(
+        plan, original["id"], preserve_undated=data["kind"] == "spending"
+    )
+
+
+def _retirement_expenses(
+    original: dict[str, Any], contexts: list[dict[str, Any]]
+) -> list[SavedPlanningDocument]:
+    """Keep distinct full household alternatives with deterministic context identities."""
+    alternatives: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for context in sorted(contexts, key=lambda c: c["id"]):
+        spending = _context_spending(original, context)
+        if not any(
+            (previous["money_year"], previous["expenses"])
+            == (spending["money_year"], spending["expenses"])
+            for _, previous in alternatives
+        ):
+            alternatives.append((context, spending))
+    converted = []
+    for context, spending in alternatives:
+        suffix = f"-{context['id']}" if len(alternatives) > 1 else ""
+        identity = uuid5(UUID(original["id"]), f"retirement-expenses-v4{suffix}")
+        name = original["inputs"]["name"]
+        spending["name"] = f"Expenses — {name}"[:80]
+        if len(alternatives) > 1:
+            context_name = context["inputs"]["name"]
+            spending["name"] = f"Household spending — {context_name}"[:80]
+            spending["notes"] = "\n".join(
+                filter(
+                    None,
+                    (
+                        spending.get("notes"),
+                        f"Full household spending alternative for Plan {context_name} ({context['id']}), using Retirement {name} ({original['id']}).",
+                    ),
+                )
+            )
+            for expense in spending["expenses"]:
+                expense["id"] = str(uuid5(identity, expense["id"]))
+        converted.append(
+            SavedPlanningDocument(
+                id=identity, inputs=INPUT_ADAPTER.validate_python(spending)
+            )
+        )
+    return converted
 
 
 def _has_retirement_budgets(inputs: dict[str, Any]) -> bool:
@@ -621,7 +729,7 @@ def _child_identities(plan: dict[str, Any]) -> None:
 def convert_timeline_documents(
     originals: list[dict[str, Any]],
     *,
-    profile_contexts: dict[str, str] | None = None,
+    profile_contexts: dict[str, str | list[str]] | None = None,
 ) -> tuple[SavedPlanningDocument, ...]:
     """Convert reviewed v3 documents; standalone spending needs an explicit Plan.
 
@@ -629,6 +737,8 @@ def convert_timeline_documents(
         originals: Unchanged version-three documents retained in the backup.
         profile_contexts: Spending or Retirement document IDs mapped to a reviewed
             Plan ID whose other inputs supply the required timing and budgets.
+            Retirement may instead name a list of reviewed Plan IDs to preserve
+            each distinct full household spending alternative.
 
     Returns:
         Current documents, plus separate Spending profiles preserving retirement
@@ -666,28 +776,26 @@ def convert_timeline_documents(
         elif kind == "spending" or (
             kind == "retirement" and _has_retirement_budgets(data)
         ):
-            context = by_id.get(contexts.get(original["id"], ""))
-            if context is None or context["inputs"]["kind"] != "plan":
+            requested = contexts.get(original["id"], "")
+            context_ids = requested if isinstance(requested, list) else [requested]
+            if (
+                not context_ids
+                or len(context_ids) != len(set(context_ids))
+                or any(
+                    by_id.get(i, {}).get("inputs", {}).get("kind") != "plan"
+                    for i in context_ids
+                )
+            ):
                 msg = f"Review a Plan context for {kind} profile {original['id']} before conversion."
                 raise ValueError(msg)
-            plan = deepcopy(context["inputs"])
-            selection = _plan_selections(plan)[kind]
-            if kind == "retirement" and [
-                a["name"] for a in selection["inputs"]["adults"]
-            ] != [a["name"] for a in data["adults"]]:
-                msg = "Retirement adult order differs from the Plan context; review its person mapping."
-                raise ValueError(msg)
-            selection["inputs"] = data
-            spending = _converted_spending(plan, original["id"])
             if kind == "spending":
-                data = spending
+                if len(context_ids) != 1:
+                    msg = "A Spending profile needs one reviewed Plan context."
+                    raise ValueError(msg)
+                data = _context_spending(original, by_id[context_ids[0]])
             else:
-                spending["name"] = f"Expenses — {data['name']}"[:80]
-                converted.append(
-                    SavedPlanningDocument(
-                        id=uuid5(UUID(original["id"]), "retirement-expenses-v4"),
-                        inputs=INPUT_ADAPTER.validate_python(spending),
-                    )
+                converted.extend(
+                    _retirement_expenses(original, [by_id[i] for i in context_ids])
                 )
                 data = _strip_retirement_budgets(data)
         elif kind == "retirement":
@@ -707,7 +815,7 @@ def convert_planning_documents(
     *,
     retirement_rows: dict[str, tuple[int, ...]] | None = None,
     money_year: int | None = None,
-    profile_contexts: dict[str, str] | None = None,
+    profile_contexts: dict[str, str | list[str]] | None = None,
 ) -> tuple[SavedPlanningDocument, ...]:
     """Convert v1 or v3 inputs explicitly, with reviewed context for legacy budgets."""
     intermediate = (

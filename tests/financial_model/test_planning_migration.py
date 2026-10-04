@@ -13,6 +13,7 @@ from financial_model.planning import (
     EconomicAssumptions,
     PlanningScenario,
     RetirementAssumptions,
+    missing_details,
 )
 from financial_model.planning_migration import (
     convert_planning_documents,
@@ -234,6 +235,177 @@ def test_conversion_rejects_unknown_overridden_budget_and_mismatched_people(
         convert_timeline_documents(
             old_documents, profile_contexts=contexts(old_documents)
         )
+
+
+def test_retirement_contexts_preserve_distinct_alternatives_with_stable_ids(
+    old_documents,
+):
+    spending, retirement, first = old_documents
+    second = deepcopy(first)
+    second["id"], second["inputs"]["name"] = str(uuid4()), "Seattle"
+    second["inputs"]["components"][0]["inputs"]["baseline"]["amount"] = {
+        "central": 120000,
+        "lower": 110000,
+        "upper": 130000,
+    }
+    duplicate = deepcopy(first)
+    duplicate["id"], duplicate["inputs"]["name"] = str(uuid4()), "Same costs"
+    records = [*old_documents, second, duplicate]
+    before = deepcopy(records)
+    selected = {
+        spending["id"]: first["id"],
+        retirement["id"]: [first["id"], second["id"], duplicate["id"]],
+    }
+    converted = convert_timeline_documents(records, profile_contexts=selected)
+    assert records == before
+    generated = [d for d in converted if str(d.id) not in {r["id"] for r in records}]
+    assert len(generated) == 2
+    assert {d.inputs.expenses[0].levels[0].amount.central for d in generated} == {
+        105000,
+        125000,
+    }
+    seattle = next(d.inputs for d in generated if "Seattle" in d.inputs.name)
+    assert seattle.name == "Household spending — Seattle"
+    assert seattle.expenses[0].levels[0].amount.lower == 115000
+    assert seattle.expenses[0].levels[0].amount.upper == 135000
+    assert "Full household spending alternative" in seattle.notes
+    assert second["id"] in seattle.notes
+    assert retirement["inputs"]["name"] in seattle.notes
+    assert retirement["id"] in seattle.notes
+    assert all(d.inputs.expenses[0].end.year == 2032 for d in generated)
+    assert {e.id for e in generated[0].inputs.expenses}.isdisjoint(
+        e.id for e in generated[1].inputs.expenses
+    )
+    selected[retirement["id"]].reverse()
+    reversed_conversion = convert_timeline_documents(records, profile_contexts=selected)
+    assert {d.id: d.inputs for d in converted} == {
+        d.id: d.inputs for d in reversed_conversion
+    }
+    assert all(
+        row["old_total"] == row["new_total"]
+        for row in timeline_conversion_review(records, converted)
+    )
+
+
+def test_retirement_single_context_list_preserves_existing_conversion(old_documents):
+    selected = contexts(old_documents)
+    original = convert_timeline_documents(old_documents, profile_contexts=selected)
+    selected[old_documents[1]["id"]] = [old_documents[-1]["id"]]
+    converted = convert_timeline_documents(old_documents, profile_contexts=selected)
+    assert {d.id: d.inputs for d in original} == {d.id: d.inputs for d in converted}
+
+
+@pytest.mark.parametrize("case", ["empty", "duplicate", "missing", "not_plan"])
+def test_retirement_context_list_rejects_invalid_choices(old_documents, case):
+    selected = contexts(old_documents)
+    plan_id = old_documents[-1]["id"]
+    selected[old_documents[1]["id"]] = {
+        "empty": [],
+        "duplicate": [plan_id, plan_id],
+        "missing": [str(uuid4())],
+        "not_plan": [old_documents[0]["id"]],
+    }[case]
+    with pytest.raises(ValueError, match="Plan context"):
+        convert_timeline_documents(old_documents, profile_contexts=selected)
+
+
+@pytest.fixture
+def undated_documents(old_documents):
+    source = old_documents[0]["inputs"]
+    source["replacements"] = []
+    source["adjustments"] = [
+        {
+            "label": "Future childcare",
+            "notes": "Dates need a family decision.",
+            "frequency": "recurring",
+            "amount": {"central": 36000, "lower": 24000, "upper": 48000},
+            "start": {"kind": "year", "year": None, "offset": 0},
+            "end": {"kind": "year", "year": None, "offset": 0},
+        }
+    ]
+    return old_documents
+
+
+def test_standalone_undated_addition_preserves_unknowns_without_entering_totals(
+    undated_documents,
+):
+    before = deepcopy(undated_documents)
+    converted = convert_timeline_documents(
+        undated_documents, profile_contexts=contexts(undated_documents)
+    )
+    assert undated_documents == before
+    spending = next(d.inputs for d in converted if str(d.id) == before[0]["id"])
+    assert [level.amount.central for level in spending.expenses[0].levels] == [
+        100000,
+        110000,
+        80000,
+        60000,
+    ]
+    addition = spending.expenses[1]
+    assert len(spending.expenses) == 2
+    assert addition.label == "Future childcare"
+    assert addition.category == "other"
+    assert addition.frequency == "recurring"
+    assert addition.notes == "Dates need a family decision."
+    assert addition.levels[0].when.kind == addition.end.kind == "year"
+    assert addition.levels[0].when.year is None
+    assert addition.end.year is None
+    assert addition.levels[0].amount.central == 36000
+    assert addition.levels[0].amount.lower == 24000
+    assert addition.levels[0].amount.upper == 48000
+    assert addition.real_growth == 0
+    assert any("timing unresolved" in detail for detail in missing_details(spending))
+    assert all(
+        row["old_total"] == row["new_total"]
+        for row in timeline_conversion_review(undated_documents, converted)
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "negative",
+        "negative_bound",
+        "zero",
+        "one_time",
+        "absent_end",
+        "known_start",
+        "replacement",
+        "unknown_baseline",
+    ],
+)
+def test_undated_additions_reject_other_semantics(undated_documents, case):
+    source = undated_documents[0]["inputs"]
+    adjustment = source["adjustments"][0]
+    if case == "negative":
+        adjustment["amount"] = {"central": -1}
+    elif case == "negative_bound":
+        adjustment["amount"]["lower"] = -1
+    elif case == "zero":
+        adjustment["amount"] = {"central": 0}
+    elif case == "one_time":
+        adjustment["frequency"] = "once"
+    elif case == "absent_end":
+        adjustment["end"] = None
+    elif case == "known_start":
+        adjustment["start"]["year"] = 2028
+    elif case == "replacement":
+        source["replacements"] = [
+            {"when": {"kind": "year", "year": 2028}, "budget": budget(90000)}
+        ]
+    else:
+        source["baseline"] = budget(None)
+    with pytest.raises(ValueError):
+        convert_timeline_documents(
+            undated_documents, profile_contexts=contexts(undated_documents)
+        )
+
+
+def test_undated_additions_in_saved_plan_still_require_review(undated_documents):
+    plan = undated_documents[-1]
+    plan["inputs"]["components"][0]["inputs"] = deepcopy(undated_documents[0]["inputs"])
+    with pytest.raises(ValueError, match="unresolved expense date"):
+        convert_timeline_documents([plan])
 
 
 def test_version_one_conversion_preserves_return_bounds_and_original():

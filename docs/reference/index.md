@@ -184,8 +184,14 @@ Historical forecasts remain unchanged.
 
 Optional `--settings FILE` supplies `profile_contexts`, mapping standalone
 Spending or Retirement source UUIDs to reviewed Plan UUIDs. Conversion needs that
-context to resolve the old budget precedence. It produces fixed calendar dates
-and preserves effective annual spending, including opening-year proration;
+context to resolve the old budget precedence.
+For Retirement profiles, the context value may be a list of reviewed Plan UUIDs;
+each distinct full household schedule becomes a named Spending alternative.
+Positive recurring additions in standalone Spending with no replacements can
+retain unknown start and end calendar years. Their original amounts and bounds
+stay separate from resolved totals, and the profile remains incomplete.
+The conversion produces fixed calendar dates for resolved expenses
+and preserves their effective annual spending, including opening-year proration;
 retirement and age links need explicit review afterward. Converted expenses stop
 at the old planning horizon; review their ends when testing longer lives.
 Ambiguity prevents conversion, and originals remain available for recovery.

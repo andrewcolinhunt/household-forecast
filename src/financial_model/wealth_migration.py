@@ -225,7 +225,7 @@ def convert_wealth_and_planning(
     planning: list[dict[str, Any]],
     *,
     account_updates: dict[str, dict[str, Any]] | None = None,
-    profile_contexts: dict[str, str] | None = None,
+    profile_contexts: dict[str, str | list[str]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Convert old Wealth and Planning through an explicit reviewed timeline stage."""
     from financial_model.planning_migration import convert_timeline_documents
