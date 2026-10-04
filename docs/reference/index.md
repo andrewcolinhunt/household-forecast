@@ -67,16 +67,18 @@ these models calculates financial outcomes or calls the annual tax engine.
 | Type | Content |
 | --- | --- |
 | `Exploration[T]` | Nullable central value, optional paired lower/upper alternatives |
-| `TimeAnchor` | Calendar year, or offset from household adult 1, adult 2 or both retirements |
+| `TimeAnchor` | Calendar year, a household person's age, or an offset from adult 1/adult 2/both retirement or the first survivor year |
 | `WorkAssumptions` | Money year, two ordered adult work slots, employment phases, vesting, dated option events and RSU tax funding |
-| `SpendingAssumptions` | Money year, baseline budget, replacement budgets, dated additions/reductions |
+| `ExpenseLevel` | Start anchor, amount with optional exploration bounds, and an optional phase label |
+| `ExpenseSchedule` | Stable UUID, name, category, recurring/once frequency, dated levels, optional end, real growth and included-cost notes |
+| `SpendingAssumptions` | Money year and additive expense schedules covering work, retirement and survivor years |
 | `InvestmentAssumptions` | Money year, optional `AllocationPlan`, constant/gradual target mix, checkpoints, rebalancing and nullable `reserved_cash` |
 | `EconomicAssumptions` | Inflation and compound returns after fees and before tax; dividend and bond-interest yields; editable defaults for annual volatility and correlation |
-| `RetirementAssumptions` | Two adult slots with retirement years and planning ages; benefits; one-person, both-retired and after-death household budgets; optional mortality-sampling intent |
-| `PlanningHousehold` | Copied names, reference-year ages, children by birth year, residence changes and personal tax elections |
+| `RetirementAssumptions` | Two adult slots with retirement years, planning ages and benefits; optional mortality-sampling intent |
+| `PlanningHousehold` | Copied names, reference-year ages, children with stable UUIDs and birth years, residence changes and personal tax elections |
 | `ProfileSelection` | Source UUID/revision/name plus an exact validated copy and optional reviewed adult mapping |
 | `PlanningScenario` | Named combination with copied Household, saved Wealth, profile selections, reviewed Work/Retirement adult mappings |
-| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 3, UUID, revision, aware timestamp and discriminated `inputs` |
+| `SavedPlanningDocument` | `document_type="planning_document"`, schema version 4, UUID, revision, aware timestamp and discriminated `inputs` |
 
 The six input kinds are `work`, `spending`, `investments`, `economy`, `retirement`,
 and `plan`. Household is embedded, not a seventh library. Nested Plans and duplicate source IDs are rejected. Several selections of the
@@ -95,14 +97,27 @@ upper. A range has no probability distribution or weight. Combination checks use
 central values; a future analyzer must recheck each explored configuration.
 
 Work and recurring spending intervals are start-inclusive, end-exclusive.
-`TimeAnchor.resolve()` performs date resolution only. The `both` anchor uses the
-later retirement year; missing required dates remain unresolved. Spending checks
-inspect entered change boundaries for negative consumption without creating a
-financial projection. Replacements affect only the baseline. Retirement budgets
-replace regular costs with the total appropriate to the retired people. A
-`RetirementBudget` records an unknown choice, continuation of regular costs, or
-a replacement amount. After-death costs take precedence over the two-person
-budget; dated extras remain separate.
+`TimeAnchor.resolve(retirements, household=None, end_years=None)` resolves dates
+without forecasting money. The `both` anchor uses the later retirement year;
+`survivor` uses the earlier final-alive year plus one. Age anchors identify an
+adult by `adult_1`/`adult_2` or a child by UUID and use the calendar year in which
+that person reaches the entered age. Missing facts or deleted child references
+remain unresolved. `plan_years(plan)` returns retirement and final-alive years in
+household order, applying the reviewed Retirement adult mapping.
+
+Expense categories are `ordinary`, `children`, `healthcare`, `care`, and `other`.
+Every amount is nonnegative; categories have no tax or insurance behavior. A
+recurring item's newest active level replaces only its previous amount. A
+one-time item has one level and no end. Resolved boundaries must increase
+strictly; a missing amount or unresolved date prevents forecasting. New Spending
+inputs contain an incomplete ordinary-living expense, rather than assuming zero.
+
+All levels use the common money year's purchasing power. For year `y`, real
+spending is `amount * (1 + real_growth) ** (y - money_year)`. A new phase does not
+restart growth. `compile_plan()` retains an `AnnualExpense` per active item;
+the ledger applies path inflation and opening-year recurring-flow proration.
+One-time amounts are not prorated. Retirement and death do not implicitly
+replace, halve, or stop expenses; encode the intended changes in their schedules.
 
 Portfolio mixes use equities, fixed income and cash, totaling exactly 1. A gradual
 policy records an interpolation choice; no portfolio path is computed yet.
@@ -157,26 +172,31 @@ copies and their provenance survive; the import does not populate source librari
 
 ### Migrate earlier planning inputs
 
-Version-one planning documents require an explicit migration before this app can
-read them. Run `scripts/migrate_planning_retirement.py preview DIRECTORY` with the
-database-owner connection in `FINANCIAL_MODEL_DATABASE_URL`. The private directory
-contains originals, settings, and validated proposals. `apply DIRECTORY` locks the
-table, checks that nothing changed, and updates documents and constraints in one
-transaction. Other financial tables are not modified.
+Earlier planning documents require explicit conversion to version 4. For
+versions 1 and 3, run
+`pixi run --locked python scripts/migrate_household_timeline.py preview DIRECTORY`
+with the database-owner connection in `FINANCIAL_MODEL_DATABASE_URL`. The private directory contains
+`originals.json`, `settings.json`, `proposals.json`, and `annual-review.json`.
+Review the old and new recurring and one-time totals before `apply DIRECTORY`.
+Apply locks the table, verifies the stored records and reviewed proposals, and
+updates planning documents and version constraints in one transaction.
+Historical forecasts remain unchanged.
 
-Optional `--settings FILE` supplies a JSON `money_year` and `retirement_rows`
-(source UUIDs mapped to reviewed row indices). These identify undated retirement
-budgets without guessing from labels. Ambiguous retirement timing stops conversion.
-Originals remain available for recovery. Version-one backups are not imported
-through the current editor.
+Optional `--settings FILE` supplies `profile_contexts`, mapping standalone
+Spending or Retirement source UUIDs to reviewed Plan UUIDs. Conversion needs that
+context to resolve the old budget precedence. It produces fixed calendar dates
+and preserves effective annual spending, including opening-year proration;
+retirement and age links need explicit review afterward. Converted expenses stop
+at the old planning horizon; review their ends when testing longer lives.
+Ambiguity prevents conversion, and originals remain available for recovery.
 
-Known fees convert all return assumptions with `(1 + return) * (1 - fee) - 1`.
-When no fee was recorded, numeric rates stay unchanged and a note asks the user to
-review their new after-fee meaning. Retirement dates and spending move into new
-Retirement records as needed, including independent copies inside Plans. Person
-mappings are retained explicitly. If the Wealth library is still at schema 1,
-follow this with `scripts/migrate_wealth.py`; it preserves already upgraded
-Planning documents.
+Version-one conversion also accepts `money_year` and `retirement_rows` (source
+UUIDs mapped to reviewed row indices) to identify undated retirement budgets.
+Known fees convert returns using `(1 + return) * (1 - fee) - 1`; missing fee
+assumptions remain marked for review. If Wealth is still at schema 1, follow with
+`pixi run --locked python scripts/migrate_wealth.py`, which preserves already
+upgraded Planning documents. Planning version 2 also requires this Wealth
+migration command, which converts its planning inputs to version 4.
 
 ## Calculate a scenario
 
@@ -322,8 +342,8 @@ inputs used, rather than resolving mutable library IDs on display.
 ## Forecasting
 
 `ForecastRequest` holds one to four selected `PlanningScenario` combinations,
-a name, and `ForecastSettings`. Financial inputs belong to each Plan's Wealth,
-Retirement, and Economy copies. Accounts and debts must share the same opening
+a name, and `ForecastSettings`. Financial inputs belong to the Plan's copied
+profiles and Wealth snapshot. Accounts and debts must share the same opening
 snapshot across alternatives. `forecast_issues(request)` reports missing or
 unsupported material inputs before calculation; unknown values are not zeros.
 
@@ -340,11 +360,18 @@ and stress modes produce one path. Historical replay produces all full windows;
 Monte Carlo and bootstrap use `count`. `parse_history_csv(text)` validates jointly
 observed rates in consecutive calendar years.
 
-`SavedForecast` schema and model version 2 stores the frozen request, model and dependency versions,
-per-scenario percentile curves, funding statistics, and an example ledger.
+`SavedForecast` schema and model version 4 stores the frozen request, model and
+dependency versions, per-scenario percentile curves, funding statistics, an
+example ledger, and annual expense metadata. Each `ForecastExpense` records the
+year, item UUID, label, category, frequency, base amount, real growth rate, and
+real amount after growth. Displayed item and category totals reconcile to planned
+spending after inflation and any opening-year proration. Paid and unfunded
+spending remain household totals; the model does not allocate shortfalls to items.
 Difference percentiles are absent outside the baseline's planning horizon.
 `create_forecast(dsn, document)` inserts an immutable run into `forecast_runs`;
-`list_forecasts(dsn)` reads runs in reverse creation order.
+`list_forecasts(dsn)` reads current-format runs in reverse creation order.
+`list_historical_forecasts(dsn)` returns older original JSON for inspection and
+download, without upgrading or executing its embedded inputs.
 `import_forecast_backup(bytes)` validates an exported document up to 10 MB and
 preserves its identity. There are no update or delete APIs for saved runs.
 

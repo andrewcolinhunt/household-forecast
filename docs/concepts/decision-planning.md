@@ -61,6 +61,7 @@ income, expense, tax, or asset assumption.
 | How do supported job and full-year CA/WA alternatives change annual cash, taxes, saving, and equity? | Implemented in the annual model. |
 | Can we save and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as saved combinations, selectable in Forecast. |
 | How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Implemented with annual account balances and an explicit future-tax assumption. |
+| How do expenses change as children grow up, work ends, or care is needed? | Implemented as named annual expenses with dated amounts and optional end dates. |
 | Can each scenario fund a specified retirement lifestyle, and for how long? | Implemented with retirement income, eligible withdrawals, taxes, and visible shortfalls. |
 | How sensitive is the comparison to returns and inflation? | Implemented with shared Monte Carlo futures, supplied historical observations, and illustrative stresses. |
 | What must change to make a target retirement age feasible? | Planned: parameter search through the same forecast evaluator. |
@@ -70,6 +71,42 @@ coverage. In particular, an annual full-year state comparison does not calculate
 the transition year of a move. Forecasts also assume full-year residence and
 apply a documented planning policy for future taxes. See
 [forecast methodology and limits](#forecast-method).
+
+## Plan expenses through household changes
+
+Spending is the sum of named expenses active in each year. A single household
+budget is enough when more detail would not change the decision. Split out
+children, healthcare, care, or other costs when their amounts or timing matter.
+Categories organize the inputs; they do not estimate costs automatically.
+
+Each recurring expense has one or more dated amounts. A new amount replaces only
+that expense's previous amount; other expenses continue on their own schedules.
+Use an end date for temporary expenses and a one-time entry for a single payment.
+Retirement dates, a person's age, and the first year after one person's death can
+anchor a change. A child's name may change without changing their linked dates.
+
+The same Spending schedules cover working years, retirement, and survivor years.
+For example, ordinary living costs can fall when both adults retire while a
+healthcare expense continues and a temporary care expense begins later. Enter
+healthcare and care as household costs you expect to pay. The app does not infer
+insurance coverage, illness, care needs, or their probabilities.
+
+All amounts use the profile's stated money year. Optional growth above inflation
+runs from that year, including for later phases; entering a new phase does not
+restart growth. General inflation is applied once. Starts include their year and
+end dates exclude their year.
+
+When healthcare or children are already included in a household total, separate
+those costs by reducing the original expense. The reviewed split shows both
+amounts and their unchanged combined total. Simply adding another expense would
+increase planned spending.
+
+Use a few plausible scenarios to test a decision: higher or longer childcare,
+a period of lower earnings, higher healthcare costs, or several years of care.
+These describe alternatives, not probabilities. Keep related assumptions together
+in complete Plans when a choice changes both income and expenses. Compare
+independent category alternatives only when every resulting combination makes
+sense.
 
 ## What makes a result useful
 
@@ -90,7 +127,8 @@ economic assumptions. Save these combinations and select up to four in Forecast
 to compare wealth over time and whether funds last through both lifetimes.
 
 A combined Plan embeds its selected inputs. A later library edit does not change
-that plan; replacing a selection is explicit. This makes alternatives reproducible
+that plan; replacing a selection is explicit. The Plan timeline and its category
+views edit the same embedded inputs, while libraries remain separate. This makes alternatives reproducible
 while allowing the same source assumptions to be reused. Household, Work, Spending,
 Retirement, Investments, and Economy retain separate meanings. Saving instructions
 allocate additions to goals; portfolio targets and cash reserves describe future choices; Wealth records
