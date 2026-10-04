@@ -16,17 +16,20 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import cast
+from uuid import UUID
 
 from financial_model.planning import (
     PROFILE_KINDS,
     AdultWork,
     InvestmentAssumptions,
     OptionEvent,
+    PlanningHousehold,
     PlanningScenario,
     RetirementAssumptions,
     SpendingAssumptions,
     WorkAssumptions,
     missing_details,
+    plan_years,
 )
 from financial_model.schemas import ZERO
 
@@ -48,16 +51,43 @@ class AnnualAdultInputs:
 
 
 @dataclass(frozen=True)
+class AnnualExpense:
+    """One planned expense, before path inflation and opening-year proration."""
+
+    item_id: UUID
+    label: str
+    category: str
+    base_amount: Decimal
+    real_growth: Decimal
+    amount: Decimal
+    frequency: str
+
+
+@dataclass(frozen=True)
 class AnnualInputs:
     """One calendar year's resolved schedules, before inflation and proration."""
 
     year: int
     year_fraction: float
     adults: tuple[AnnualAdultInputs, AnnualAdultInputs]
-    recurring_spending: Decimal
-    one_time_spending: Decimal
+    expenses: tuple[AnnualExpense, ...]
     allocation: tuple[float, float, float]
     state: str
+
+    @property
+    def recurring_spending(self) -> Decimal:
+        """Sum active recurring items after real growth, before inflation."""
+        return sum(
+            (item.amount for item in self.expenses if item.frequency == "recurring"),
+            ZERO,
+        )
+
+    @property
+    def one_time_spending(self) -> Decimal:
+        """Sum dated payments without recurring-flow proration."""
+        return sum(
+            (item.amount for item in self.expenses if item.frequency == "once"), ZERO
+        )
 
     @property
     def spending(self) -> Decimal:
@@ -106,10 +136,11 @@ def compile_plan(plan: PlanningScenario) -> CompiledPlan:
     assert plan.wealth is not None
     assert spending.money_year is not None
     as_of = plan.wealth.snapshot.as_of
-    retirements, end_years = _person_years(plan, retirement)
+    retirements, end_years = cast(
+        tuple[tuple[int, int], tuple[int, int]], plan_years(plan)
+    )
     years = tuple(range(as_of.year, max(end_years) + 1))
     work_mapping = _mapping(plan, "work")
-    retirement_mapping = _mapping(plan, "retirement")
     annual = []
     for year in years:
         fraction = _year_fraction(as_of) if year == as_of.year else 1.0
@@ -121,23 +152,17 @@ def compile_plan(plan: PlanningScenario) -> CompiledPlan:
             retirements,
             end_years,
         )
-        recurring, once = _spending(
-            spending,
-            retirement,
-            retirement_mapping,
-            year,
-            retirements,
-            adults,
-            fraction,
-        )
         annual.append(
             AnnualInputs(
                 year=year,
                 year_fraction=fraction,
                 adults=adults,
-                recurring_spending=recurring,
-                one_time_spending=once,
-                allocation=_allocation(investments, year, retirements),
+                expenses=_expenses(
+                    spending, year, retirements, plan.household, end_years
+                ),
+                allocation=_allocation(
+                    investments, year, retirements, plan.household, end_years
+                ),
                 state=_residence(plan, year),
             )
         )
@@ -150,25 +175,6 @@ def _mapping(plan: PlanningScenario, kind: str) -> tuple[int, int]:
     selection = next(c for c in plan.components if c.inputs.kind == kind)
     assert selection.adult_mapping is not None
     return selection.adult_mapping
-
-
-def _person_years(
-    plan: PlanningScenario, retirement: RetirementAssumptions
-) -> tuple[tuple[int, int], tuple[int, int]]:
-    reference = plan.household.reference_year
-    assert reference is not None
-    retirements = [0, 0]
-    ends = [0, 0]
-    for adult, slot in zip(
-        retirement.adults, _mapping(plan, "retirement"), strict=True
-    ):
-        age = plan.household.adults[slot - 1].age
-        assert age is not None
-        assert adult.age.central is not None
-        assert adult.retirement.central is not None
-        retirements[slot - 1] = adult.retirement.central
-        ends[slot - 1] = reference + adult.age.central - age
-    return (retirements[0], retirements[1]), (ends[0], ends[1])
 
 
 def _year_fraction(as_of: date) -> float:
@@ -267,60 +273,54 @@ def _vesting(worker: AdultWork, year: int) -> tuple[Decimal, Decimal]:
     return real, nominal
 
 
-def _spending(
+def _expenses(
     spending: SpendingAssumptions,
-    retirement: RetirementAssumptions,
-    mapping: tuple[int, int],
     year: int,
     retirements: tuple[int, int],
-    adults: tuple[AnnualAdultInputs, AnnualAdultInputs],
-    fraction: float,
-) -> tuple[Decimal, Decimal]:
-    budget = spending.baseline
-    replacements = sorted(
-        spending.replacements, key=lambda r: cast(int, r.when.resolve(retirements))
-    )
-    for replacement in replacements:
-        when = replacement.when.resolve(retirements)
-        assert when is not None
-        if when <= year:
-            budget = replacement.budget
-    if sum(a.alive for a in adults) == 1:
-        assert retirement.survivor is not None
-        budget = retirement.survivor
-    elif all(a.retired for a in adults):
-        budget = retirement.both_retired
-    elif any(a.retired for a in adults):
-        retired_slot = next(i + 1 for i, adult in enumerate(adults) if adult.retired)
-        choice = (retirement.only_adult_1, retirement.only_adult_2)[
-            mapping.index(retired_slot)
-        ]
-        if choice.mode == "replace":
-            assert choice.budget is not None
-            budget = choice.budget
-    assert budget.amount.central is not None
-    recurring, once = budget.amount.central, ZERO
-    for adjustment in spending.adjustments:
-        start = adjustment.start.resolve(retirements)
-        end = adjustment.end.resolve(retirements) if adjustment.end else None
-        assert start is not None
-        assert adjustment.amount.central is not None
-        if adjustment.frequency == "once":
-            if year == start:
-                once += adjustment.amount.central
-        elif start <= year and (end is None or year < end):
-            recurring += adjustment.amount.central
-    if recurring * Decimal(str(fraction)) + once < 0:
-        msg = f"Spending is negative in {year} after applying the retirement budget and adjustments."
-        raise ValueError(msg)
-    return recurring, once
+    household: PlanningHousehold,
+    end_years: tuple[int, int],
+) -> tuple[AnnualExpense, ...]:
+    """Evaluate named schedules; one item never replaces another."""
+    assert spending.money_year is not None
+    expenses = []
+    for item in spending.expenses:
+        end = item.end.resolve(retirements, household, end_years) if item.end else None
+        if end is not None and year >= end:
+            continue
+        levels = []
+        for level in item.levels:
+            start = level.when.resolve(retirements, household, end_years)
+            assert start is not None
+            if year == start if item.frequency == "once" else year >= start:
+                levels.append(level)
+        if not levels:
+            continue
+        amount = levels[-1].amount.central
+        assert amount is not None
+        expenses.append(
+            AnnualExpense(
+                item.id,
+                item.label,
+                item.category,
+                amount,
+                item.real_growth,
+                amount * (1 + item.real_growth) ** (year - spending.money_year),
+                item.frequency,
+            )
+        )
+    return tuple(expenses)
 
 
 def _allocation(
-    investments: InvestmentAssumptions, year: int, retirements: tuple[int, int]
+    investments: InvestmentAssumptions,
+    year: int,
+    retirements: tuple[int, int],
+    household: PlanningHousehold,
+    end_years: tuple[int, int],
 ) -> tuple[float, float, float]:
     checkpoints = [
-        (c.when.resolve(retirements), c.mix) for c in investments.checkpoints
+        (c.when.resolve(retirements, household, end_years), c.mix)
+        for c in investments.checkpoints
     ]
     first_year, first_mix = checkpoints[0]
     assert first_year is not None

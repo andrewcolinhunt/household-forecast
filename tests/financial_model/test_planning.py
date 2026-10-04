@@ -13,15 +13,17 @@ from financial_model.planning import (
     INPUT_ADAPTER,
     AdultRetirement,
     AdultWork,
-    Budget,
     EconomicAssumptions,
+    ExpenseLevel,
+    ExpenseSchedule,
     Exploration,
     Growth,
     InvestmentAssumptions,
+    PlanningChild,
+    PlanningHousehold,
     PlanningScenario,
     RetirementAssumptions,
     SavedPlanningDocument,
-    SpendingAdjustment,
     SpendingAssumptions,
     TimeAnchor,
     WorkAssumptions,
@@ -118,34 +120,91 @@ def test_time_anchors_resolve_only_with_required_dates():
         TimeAnchor(kind="both", year=2040)
 
 
-def test_spending_conflicts_partial_schedules_and_survivor():
-    with pytest.raises(ValidationError, match="same effective time"):
-        SpendingAssumptions(
-            name="Conflict",
-            replacements=(
-                {"label": "A", "when": {"year": 2040}},
-                {"label": "B", "when": {"year": 2040}},
-            ),
+def test_expense_schedules_reject_ambiguous_dates_and_negative_amounts():
+    with pytest.raises(ValidationError, match="increase"):
+        ExpenseSchedule(
+            label="Care",
+            levels=[
+                {"when": {"year": 2040}},
+                {"when": {"year": 2040}},
+            ],
         )
     with pytest.raises(ValidationError, match="One-time"):
-        SpendingAdjustment(label="Move", frequency="once", end={"year": 2040})
-    with pytest.raises(ValidationError, match="Essential"):
-        Budget(amount={"central": 100}, essential=101)
+        ExpenseSchedule(label="Tuition", frequency="once", end={"year": 2040})
+    with pytest.raises(ValidationError):
+        ExpenseLevel(amount={"central": -1})
+    with pytest.raises(ValidationError, match="increase"):
+        ExpenseSchedule(
+            label="Care", levels=[{"when": {"year": 2040}}], end={"year": 2039}
+        )
+    item = ExpenseSchedule(label="Care")
+    with pytest.raises(ValidationError, match="unique"):
+        SpendingAssumptions(name="Duplicate", expenses=(item, item))
+
+
+def test_one_aggregate_budget_is_complete_without_itemization():
     spending = SpendingAssumptions(
         name="Spending",
         money_year=2026,
-        baseline={"amount": {"central": 100}},
-        adjustments=(
+        expenses=[
             {
-                "label": "Reduction",
-                "start": {"year": 2030},
-                "end": {"year": 2035},
-                "amount": {"central": -101},
-            },
-        ),
+                "label": "All living costs",
+                "levels": [{"when": {"year": 2026}, "amount": {"central": 100}}],
+            }
+        ],
     )
-    assert any("negative at 2030" in d for d in missing_details(spending))
-    assert not any("Survivor" in d for d in missing_details(spending))
+    assert not missing_details(spending)
+    assert any(
+        "amounts need input" in d
+        for d in missing_details(SpendingAssumptions(name="Draft"))
+    )
+    assert any(
+        "use zero explicitly" in d
+        for d in missing_details(SpendingAssumptions(name="Empty", expenses=[]))
+    )
+    for removed in ("baseline", "replacements", "adjustments"):
+        with pytest.raises(ValidationError):
+            SpendingAssumptions.model_validate(spending.model_dump() | {removed: []})
+
+
+def test_age_references_survive_renaming_reordering_and_resolve_missing_facts():
+    child = PlanningChild(name="Child", birth_year=2026)
+    other = PlanningChild(name="Sibling", birth_year=2024)
+    household = PlanningHousehold(
+        reference_year=2026,
+        adults=[{"name": "A", "age": 40}, {"name": "B", "age": 38}],
+        children=[child, other],
+    )
+    anchor = TimeAnchor(kind="age", person=str(child.id), age=5)
+    assert anchor.resolve((None, None), household) == 2031
+    changed = household.model_copy(
+        update={"children": (other, child.model_copy(update={"name": "Renamed"}))}
+    )
+    assert anchor.resolve((None, None), changed) == 2031
+    assert (
+        TimeAnchor(kind="age", person="adult_1", age=65).resolve(
+            (None, None), household
+        )
+        == 2051
+    )
+    assert (
+        TimeAnchor(kind="survivor").resolve((2040, 2045), household, (2060, 2070))
+        == 2061
+    )
+    assert (
+        anchor.resolve((None, None), household.model_copy(update={"children": ()}))
+        is None
+    )
+    assert (
+        TimeAnchor(kind="age", person="adult_1", age=65).resolve((None, None)) is None
+    )
+    for fields in (
+        {"kind": "age", "person": "adult_1", "age": 5, "year": 2030},
+        {"kind": "year", "age": 5},
+        {"kind": "age", "offset": 1},
+    ):
+        with pytest.raises(ValidationError):
+            TimeAnchor(**fields)
 
 
 def test_investment_allocations_are_complete_and_dates_ordered():
@@ -299,8 +358,8 @@ def test_explicit_annual_copy_conserves_inputs_without_double_counting(scenario)
     assert work.adults[0].phases[0].cash_pay == 100000
     assert work.adults[0].phases[0].end == 2026
     assert "retirement" not in work.adults[0].model_dump()
-    assert spending.baseline.amount.central == 42000
-    assert not spending.adjustments
+    assert spending.expenses[0].levels[0].amount.central == 42000
+    assert len(spending.expenses) == 1
     assert investments.saving == source.inputs.allocation_plan
     assert work.annual_source.input_digest == inputs.digest()
     assert source.model_dump_json() == original
@@ -406,9 +465,14 @@ def test_combination_checks_resolve_ranges_people_timing_and_money_years():
         inputs=SpendingAssumptions(
             name="Spend",
             money_year=2025,
-            replacements=(
-                {"label": "One", "when": {"kind": "both"}},
-                {"label": "Two", "when": {"year": 2045}},
+            expenses=(
+                {
+                    "label": "Living",
+                    "levels": (
+                        {"when": {"kind": "both"}},
+                        {"when": {"year": 2045}},
+                    ),
+                },
             ),
         )
     )
@@ -445,14 +509,12 @@ def test_combination_checks_resolve_ranges_people_timing_and_money_years():
     )
     details = missing_details(plan)
     assert any("reference years differ" in d for d in details)
-    assert any("same year" in d for d in details)
+    assert any("boundaries must increase" in d for d in details)
     assert any("precedes starting age" in d for d in details)
     assert not any("replacement date needs input" in d for d in details)
 
 
-def test_retirement_owns_dates_lifespans_and_household_budgets():
-    from financial_model.planning import RetirementBudget
-
+def test_retirement_owns_dates_and_lifespans_without_spending_overrides():
     retirement = RetirementAssumptions(
         name="Retire earlier",
         money_year=2026,
@@ -470,19 +532,13 @@ def test_retirement_owns_dates_lifespans_and_household_budgets():
                 "age": {"central": 100},
             },
         ),
-        only_adult_1={"mode": "continue"},
-        only_adult_2={"mode": "replace", "budget": {"amount": {"central": 90000}}},
-        both_retired={"amount": {"central": 80000, "lower": 64000, "upper": 96000}},
-        survivor={"amount": {"central": 60000}},
     )
     assert not missing_details(retirement)
-    assert retirement.only_adult_1.budget is None
-    assert retirement.only_adult_2.budget.amount.central == 90000
-    assert "survivor" not in SpendingAssumptions(name="Work years").model_dump()
-    with pytest.raises(ValidationError):
-        RetirementBudget(mode="continue", budget={"amount": {"central": 100}})
-    with pytest.raises(ValidationError):
-        RetirementBudget(mode="replace")
+    for field in ("only_adult_1", "only_adult_2", "both_retired", "survivor"):
+        with pytest.raises(ValidationError):
+            RetirementAssumptions.model_validate(
+                retirement.model_dump() | {field: {"amount": {"central": 100}}}
+            )
     with pytest.raises(ValidationError):
         AdultWork(slot=1, name="A", retirement={"central": 2040})
 

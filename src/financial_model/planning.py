@@ -15,7 +15,6 @@ from pydantic import AwareDatetime, Field, TypeAdapter, model_validator
 
 from financial_model.schemas import (
     AllocationPlan,
-    Amount,
     Household,
     ISOExercise,
     Money,
@@ -65,35 +64,71 @@ class Exploration[T: (int, Decimal)](ValueModel):
 
 
 class TimeAnchor(ValueModel):
-    """A calendar year or offset from one adult's or the later retirement date."""
+    """An annual boundary tied to a year, person's age or retirement landmark."""
 
-    kind: Literal["year", "adult_1", "adult_2", "both"] = "year"
+    kind: Literal["year", "adult_1", "adult_2", "both", "age", "survivor"] = "year"
     year: PlanningYear | None = None
     offset: Annotated[int, Field(strict=True, ge=-100, le=100)] = 0
+    person: str | None = None
+    age: Annotated[int, Field(strict=True, ge=0, le=130)] | None = None
 
     @model_validator(mode="after")
     def validate_kind(self) -> Self:
         """Reject ambiguous fixed and relative dates."""
-        if self.kind == "year" and self.offset != 0:
-            msg = "Calendar years cannot have a retirement offset."
+        if self.kind in {"year", "age"} and self.offset != 0:
+            msg = "Calendar years and ages cannot have a retirement offset."
             raise ValueError(msg)
         if self.kind != "year" and self.year is not None:
-            msg = "Retirement anchors cannot also specify a calendar year."
+            msg = "Relative anchors cannot also specify a calendar year."
+            raise ValueError(msg)
+        if self.kind != "age" and (self.person is not None or self.age is not None):
+            msg = "Only age anchors can specify a person and age."
             raise ValueError(msg)
         return self
 
-    def resolve(self, retirements: tuple[int | None, int | None]) -> int | None:
-        """Resolve input timing only; missing retirement dates remain unknown."""
+    def resolve(
+        self,
+        retirements: tuple[int | None, int | None],
+        household: PlanningHousehold | None = None,
+        end_years: tuple[int | None, int | None] | None = None,
+    ) -> int | None:
+        """Resolve a boundary, leaving missing dates or references unknown."""
         if self.kind == "year":
             return self.year
-        if self.kind == "both":
-            first, second = retirements
+        if self.kind == "age":
+            return self._age_year(household)
+        if self.kind in {"both", "survivor"}:
+            first, second = (
+                (end_years or (None, None)) if self.kind == "survivor" else retirements
+            )
             year = (
-                max(first, second) if first is not None and second is not None else None
+                (
+                    min(first, second) + 1
+                    if self.kind == "survivor"
+                    else max(first, second)
+                )
+                if first is not None and second is not None
+                else None
             )
         else:
             year = retirements[0 if self.kind == "adult_1" else 1]
         return year + self.offset if year is not None else None
+
+    def _age_year(self, household: PlanningHousehold | None) -> int | None:
+        """Resolve ages from household facts without relying on display names."""
+        if household is None or self.age is None or self.person is None:
+            return None
+        if self.person in {"adult_1", "adult_2"}:
+            adult = household.adults[0 if self.person == "adult_1" else 1]
+            if adult.age is None or household.reference_year is None:
+                return None
+            return household.reference_year - adult.age + self.age
+        child = next((c for c in household.children if str(c.id) == self.person), None)
+        return (
+            child.birth_year + self.age
+            if child and child.birth_year is not None
+            else None
+        )
 
 
 class Source(ValueModel):
@@ -251,77 +286,67 @@ class WorkAssumptions(MonetaryAssumptions):
         return self
 
 
-class Budget(ValueModel):
-    """Annual household consumption, with optional essential spending and alternatives."""
+class ExpenseLevel(ValueModel):
+    """An annual amount from an inclusive boundary, in base-year dollars."""
 
-    amount: Exploration[Money] = Field(default_factory=Exploration[Money])
-    essential: Money | None = None
-    notes: Notes = ""
-
-    @model_validator(mode="after")
-    def validate_essential(self) -> Self:
-        """An essential portion cannot exceed an entered total."""
-        if (
-            self.essential is not None
-            and self.amount.central is not None
-            and self.essential > self.amount.central
-        ):
-            msg = "Essential spending cannot exceed the budget."
-            raise ValueError(msg)
-        return self
-
-
-class BudgetReplacement(ValueModel):
-    """A replacement baseline, leaving separately dated adjustments intact."""
-
-    label: Label
     when: TimeAnchor = Field(default_factory=TimeAnchor)
-    budget: Budget = Field(default_factory=Budget)
+    amount: Exploration[Money] = Field(default_factory=Exploration[Money])
+    label: Notes = ""
 
 
-class SpendingAdjustment(ValueModel):
-    """Additional or reduced spending, once or over a half-open interval."""
+class ExpenseSchedule(ValueModel):
+    """One independently dated expense, without household-wide overrides."""
 
+    id: UUID = Field(default_factory=uuid4)
     label: Label
-    amount: Exploration[Amount] = Field(default_factory=Exploration[Amount])
-    start: TimeAnchor = Field(default_factory=TimeAnchor)
-    end: TimeAnchor | None = None
+    category: Literal["ordinary", "children", "healthcare", "care", "other"] = (
+        "ordinary"
+    )
     frequency: Literal["recurring", "once"] = "recurring"
+    levels: tuple[ExpenseLevel, ...] = Field(default_factory=lambda: (ExpenseLevel(),))
+    end: TimeAnchor | None = None
+    real_growth: Growth = Decimal(0)
     notes: Notes = ""
 
     @model_validator(mode="after")
-    def validate_interval(self) -> Self:
-        """Reject ambiguous one-time entries and known reversed intervals."""
-        if self.frequency == "once" and self.end is not None:
-            msg = "One-time spending has one date, not an end date."
+    def validate_schedule(self) -> Self:
+        """Reject ambiguous one-time entries and known reversed boundaries."""
+        if self.frequency == "once" and (self.end is not None or len(self.levels) != 1):
+            msg = "One-time spending has one amount and date, without an end."
             raise ValueError(msg)
-        if self.end and self.start.kind == self.end.kind:
-            start = self.start.year if self.start.kind == "year" else self.start.offset
-            end = self.end.year if self.end.kind == "year" else self.end.offset
-            if start is not None and end is not None and end <= start:
-                msg = "Recurring spending ends after its start."
+        anchors = [level.when for level in self.levels]
+        if self.end:
+            anchors.append(self.end)
+        for first, second in itertools.pairwise(anchors):
+            if first.kind != second.kind or first.person != second.person:
+                continue
+            field = (
+                "year"
+                if first.kind == "year"
+                else "age"
+                if first.kind == "age"
+                else "offset"
+            )
+            a, b = getattr(first, field), getattr(second, field)
+            if a is not None and b is not None and b <= a:
+                msg = f"{self.label}: expense boundaries must increase in time."
                 raise ValueError(msg)
         return self
 
 
 class SpendingAssumptions(MonetaryAssumptions):
-    """A baseline, replacements, and bounded additions to household consumption."""
+    """Named expenses whose active amounts add to planned consumption."""
 
     kind: Literal["spending"] = "spending"
-    baseline: Budget = Field(default_factory=Budget)
-    replacements: tuple[BudgetReplacement, ...] = ()
-    adjustments: tuple[SpendingAdjustment, ...] = ()
+    expenses: tuple[ExpenseSchedule, ...] = Field(
+        default_factory=lambda: (ExpenseSchedule(label="Ordinary living"),)
+    )
 
     @model_validator(mode="after")
-    def validate_replacements(self) -> Self:
-        """Reject duplicate fully specified replacement anchors."""
-        anchors = [
-            r.when
-            for r in self.replacements
-            if r.when.kind != "year" or r.when.year is not None
-        ]
-        if len(anchors) != len(set(anchors)):
-            msg = "Only one baseline replacement may use the same effective time."
+    def validate_identities(self) -> Self:
+        """Keep expense references stable and unique inside a profile."""
+        if len({item.id for item in self.expenses}) != len(self.expenses):
+            msg = "Expense identities must be unique."
             raise ValueError(msg)
         return self
 
@@ -445,23 +470,8 @@ class AdultRetirement(ValueModel):
     pension_survivor_fraction: Rate | None = None
 
 
-class RetirementBudget(ValueModel):
-    """Continue regular living costs or enter a replacement household total."""
-
-    mode: Literal["unknown", "continue", "replace"] = "unknown"
-    budget: Budget | None = None
-
-    @model_validator(mode="after")
-    def validate_budget(self) -> Self:
-        """Keep continuing costs distinct from unknown or replacement amounts."""
-        if (self.mode == "replace") != (self.budget is not None):
-            msg = "A replacement needs a budget; continuing regular costs does not."
-            raise ValueError(msg)
-        return self
-
-
 class RetirementAssumptions(MonetaryAssumptions):
-    """Retirement timing, household spending, and lifespans in one scenario."""
+    """Retirement timing, benefits, and lifespans in one scenario."""
 
     kind: Literal["retirement"] = "retirement"
     mode: Literal["ages", "sample"] = "ages"
@@ -469,10 +479,6 @@ class RetirementAssumptions(MonetaryAssumptions):
         AdultRetirement(slot=1, name="Adult 1"),
         AdultRetirement(slot=2, name="Adult 2"),
     )
-    only_adult_1: RetirementBudget = Field(default_factory=RetirementBudget)
-    only_adult_2: RetirementBudget = Field(default_factory=RetirementBudget)
-    both_retired: Budget = Field(default_factory=Budget)
-    survivor: Budget | None = None
     table_basis: Literal["period", "cohort", "unknown"] = "unknown"
 
     @model_validator(mode="after")
@@ -500,6 +506,7 @@ class PlanningAdult(ValueModel):
 class PlanningChild(ValueModel):
     """An existing or expected child; costs are entered separately in Spending."""
 
+    id: UUID = Field(default_factory=uuid4)
     name: Label
     birth_year: PlanningYear | None = None
 
@@ -529,6 +536,9 @@ class PlanningHousehold(ValueModel):
         years = [r.year for r in self.residence if r.year is not None]
         if len(set(years)) != len(years):
             msg = "Enter one residence per effective year."
+            raise ValueError(msg)
+        if len({c.id for c in self.children}) != len(self.children):
+            msg = "Child identities must be unique."
             raise ValueError(msg)
         return self
 
@@ -615,7 +625,7 @@ class SavedPlanningDocument(ValueModel):
     """Versioned, portable input document shared by persistence and backups."""
 
     document_type: Literal["planning_document"] = "planning_document"
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     id: UUID = Field(default_factory=uuid4)
     revision: Annotated[int, Field(strict=True, ge=1)] = 1
     updated_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -740,9 +750,17 @@ def copy_annual_inputs(
         ),
         SpendingAssumptions(
             name=f"{name[:70]} spending",
-            baseline=Budget(
-                amount=Exploration[Money](central=costs.annual_total),
-                notes=f"Includes monthly rent {costs.rent}, childcare {costs.childcare}, other {costs.other}, each times 12. Qualifying care {costs.eligible_care_expense} is included, not additional.",
+            expenses=(
+                ExpenseSchedule(
+                    label="Ordinary living",
+                    levels=(
+                        ExpenseLevel(
+                            when=TimeAnchor(year=source.tax_year),
+                            amount=Exploration[Money](central=costs.annual_total),
+                        ),
+                    ),
+                    notes=f"Includes monthly rent {costs.rent}, childcare {costs.childcare}, other {costs.other}, each times 12. Qualifying care {costs.eligible_care_expense} is included, not additional.",
+                ),
             ),
             money_year=source.tax_year,
             annual_source=provenance,
@@ -809,12 +827,13 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
             if any(e.year is None for e in adult.options):
                 details.append(f"{adult.name}: option event year needs input.")
     elif isinstance(inputs, SpendingAssumptions):
-        if inputs.baseline.amount.central is None:
-            details.append("Regular living costs need an amount.")
-        if any(r.budget.amount.central is None for r in inputs.replacements):
-            details.append("Replacement budgets need amounts.")
-        if any(a.amount.central is None for a in inputs.adjustments):
-            details.append("Additional spending needs amounts.")
+        if not inputs.expenses:
+            details.append("Enter an expense budget; use zero explicitly if none.")
+        for item in inputs.expenses:
+            if not item.levels or any(
+                level.amount.central is None for level in item.levels
+            ):
+                details.append(f"{item.label}: expense amounts need input.")
         details.extend(_spending_timing(inputs, (None, None)))
     elif isinstance(inputs, InvestmentAssumptions):
         if inputs.saving is None:
@@ -841,18 +860,6 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
         for retiree in inputs.adults:
             if retiree.retirement.central is None:
                 details.append(f"{retiree.name}: retirement year needs input.")
-        for retiree, field in zip(
-            inputs.adults, ("only_adult_1", "only_adult_2"), strict=True
-        ):
-            choice = getattr(inputs, field)
-            if choice.mode == "unknown" or (
-                choice.budget and choice.budget.amount.central is None
-            ):
-                details.append(f"Choose living costs with only {retiree.name} retired.")
-        if inputs.both_retired.amount.central is None:
-            details.append("Living costs with both retired need an amount.")
-        if inputs.survivor is None or inputs.survivor.amount.central is None:
-            details.append("Living costs after one person dies need an amount.")
         if inputs.mode == "ages":
             details.extend(
                 f"{a.name}: planning age is unknown."
@@ -887,72 +894,45 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
 
 
 def _spending_timing(
-    spending: SpendingAssumptions, retirements: tuple[int | None, int | None]
+    spending: SpendingAssumptions,
+    retirements: tuple[int | None, int | None],
+    household: PlanningHousehold | None = None,
+    end_years: tuple[int | None, int | None] | None = None,
 ) -> list[str]:
-    """Check change boundaries without expanding a financial time series."""
+    """Check expense order after resolving references to household facts."""
     details = []
-    replacements = [
-        (r.when.resolve(retirements), r.budget.amount.central)
-        for r in spending.replacements
-    ]
-    dates = [y for y, _ in replacements if y is not None]
-    if len(dates) != len(set(dates)):
-        details.append(
-            "Timing conflict: baseline replacements resolve to the same year."
-        )
-    if any(y is None for y, _ in replacements):
-        details.append("Spending timing unresolved: replacement date needs input.")
-    adjustments = []
-    for adjustment in spending.adjustments:
-        start = adjustment.start.resolve(retirements)
-        end = adjustment.end.resolve(retirements) if adjustment.end else None
-        if start is None or (adjustment.end and end is None):
-            details.append(f"Spending timing unresolved: {adjustment.label}.")
-        if start is not None and end is not None and end <= start:
-            details.append(
-                f"Timing conflict: {adjustment.label} ends before or at its start."
-            )
-        adjustments.append((start, end, adjustment))
-    # Only entered schedule boundaries need checking for a negative consumption total.
-    boundaries = set(dates)
-    for start, end, adjustment in adjustments:
-        if start is not None:
-            boundaries.update(
-                (start, start + 1) if adjustment.frequency == "once" else (start,)
-            )
-        if end is not None:
-            boundaries.add(end)
-    for year in boundaries:
-        budget = spending.baseline.amount.central
-        for when, amount in sorted(
-            ((y, v) for y, v in replacements if y is not None), key=lambda item: item[0]
-        ):
-            if when <= year:
-                budget = amount
-        active = [
-            a.amount.central
-            for start, end, a in adjustments
-            if start is not None
-            and (
-                year == start
-                if a.frequency == "once"
-                else start <= year and (end is None or year < end)
-            )
+    for item in spending.expenses:
+        anchors = [level.when for level in item.levels]
+        if item.end:
+            anchors.append(item.end)
+        years = [
+            anchor.resolve(retirements, household, end_years) for anchor in anchors
         ]
-        if (
-            budget is not None
-            and all(v is not None for v in active)
-            and budget + sum(v for v in active if v is not None) < 0
+        if any(year is None for year in years):
+            details.append(
+                f"Spending timing unresolved: {item.label}; date or person needs input."
+            )
+        if any(
+            a is not None and b is not None and b <= a
+            for a, b in itertools.pairwise(years)
         ):
-            details.append(f"Spending conflict: entered total is negative at {year}.")
+            details.append(
+                f"Timing conflict: {item.label} boundaries must increase in time."
+            )
     return details
 
 
 def _investment_timing(
-    investments: InvestmentAssumptions, retirements: tuple[int | None, int | None]
+    investments: InvestmentAssumptions,
+    retirements: tuple[int | None, int | None],
+    household: PlanningHousehold | None = None,
+    end_years: tuple[int | None, int | None] | None = None,
 ) -> list[str]:
     """Check checkpoint order after resolving retirement anchors."""
-    years = [c.when.resolve(retirements) for c in investments.checkpoints]
+    years = [
+        c.when.resolve(retirements, household, end_years)
+        for c in investments.checkpoints
+    ]
     if any(y is None for y in years):
         return ["Investment timing unresolved: checkpoint dates need input."]
     if any(
@@ -960,6 +940,37 @@ def _investment_timing(
     ):
         return ["Timing conflict: allocation checkpoints must increase in time."]
     return []
+
+
+def plan_years(
+    plan: PlanningScenario,
+) -> tuple[tuple[int | None, int | None], tuple[int | None, int | None]]:
+    """Return retirement and final-alive years in household adult order.
+
+    Incomplete inputs retain unknown years for draft previews. Use one selected
+    Retirement profile; multiple alternatives require choosing a combination.
+    """
+    selections = [c for c in plan.components if c.inputs.kind == "retirement"]
+    retirements: list[int | None] = [None, None]
+    ends: list[int | None] = [None, None]
+    if len(selections) != 1 or selections[0].adult_mapping is None:
+        return (None, None), (None, None)
+    selection = selections[0]
+    assert isinstance(selection.inputs, RetirementAssumptions)
+    assert selection.adult_mapping is not None
+    reference = plan.household.reference_year
+    for retiree, slot in zip(
+        selection.inputs.adults, selection.adult_mapping, strict=True
+    ):
+        retirements[slot - 1] = retiree.retirement.central
+        age = plan.household.adults[slot - 1].age
+        if (
+            reference is not None
+            and age is not None
+            and retiree.age.central is not None
+        ):
+            ends[slot - 1] = reference + retiree.age.central - age
+    return (retirements[0], retirements[1]), (ends[0], ends[1])
 
 
 def _plan_details(plan: PlanningScenario) -> list[str]:
@@ -996,7 +1007,7 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
     if len(years) > 1:
         details.append("Money reference years differ; amounts have not been rebased.")
     selections = {c.inputs.kind: c for c in plan.components}
-    retirements: list[int | None] = [None, None]
+    retirements, end_years = plan_years(plan)
     retirement = profiles.get("retirement")
     if isinstance(retirement, RetirementAssumptions):
         mapping = selections["retirement"].adult_mapping
@@ -1004,7 +1015,6 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
             details.append("Match Retirement people in Household.")
         else:
             for adult, slot in zip(retirement.adults, mapping, strict=True):
-                retirements[slot - 1] = adult.retirement.central
                 age = household.adults[slot - 1].age
                 if (
                     age is not None
@@ -1062,10 +1072,14 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
     retirement_pair = (retirements[0], retirements[1])
     spending = profiles.get("spending")
     if isinstance(spending, SpendingAssumptions):
-        details.extend(_spending_timing(spending, retirement_pair))
+        details.extend(
+            _spending_timing(spending, retirement_pair, household, end_years)
+        )
     investments = profiles.get("investments")
     if isinstance(investments, InvestmentAssumptions):
-        details.extend(_investment_timing(investments, retirement_pair))
+        details.extend(
+            _investment_timing(investments, retirement_pair, household, end_years)
+        )
     if plan.wealth is None:
         details.append("Choose a starting Wealth snapshot.")
     else:

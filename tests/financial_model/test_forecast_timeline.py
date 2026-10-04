@@ -67,7 +67,19 @@ def timeline_plan():
         ),
     )
     spending = SpendingAssumptions(
-        name="Costs", money_year=2026, baseline={"amount": {"central": 1000}}
+        name="Costs",
+        money_year=2026,
+        expenses=[
+            {
+                "label": "Living",
+                "levels": [
+                    {"when": {"year": 2026}, "amount": {"central": 1000}},
+                    {"when": {"kind": "adult_1"}, "amount": {"central": 800}},
+                    {"when": {"kind": "both"}, "amount": {"central": 600}},
+                    {"when": {"kind": "survivor"}, "amount": {"central": 400}},
+                ],
+            }
+        ],
     )
     retirement = RetirementAssumptions(
         name="Retire",
@@ -86,10 +98,6 @@ def timeline_plan():
                 "age": {"central": 64},
             },
         ),
-        only_adult_1={"mode": "replace", "budget": {"amount": {"central": 800}}},
-        only_adult_2={"mode": "replace", "budget": {"amount": {"central": 900}}},
-        both_retired={"amount": {"central": 600}},
-        survivor={"amount": {"central": 400}},
     )
     investments = InvestmentAssumptions(
         name="Invest",
@@ -191,36 +199,39 @@ def test_compile_plan_cashflow_growth_and_retirement_boundaries(timeline_plan):
     assert not compiled.annual[5].adults[0].alive
 
 
-def test_compile_plan_relative_extras_survive_retirement_and_survivor(timeline_plan):
+def test_compile_plan_independent_expenses_survive_retirement_and_survivor(
+    timeline_plan,
+):
+    base = next(
+        c.inputs for c in timeline_plan.components if c.inputs.kind == "spending"
+    )
     plan = _change(
         timeline_plan,
         "spending",
-        replacements=[
-            {
-                "label": "Move",
-                "when": {"year": 2027},
-                "budget": {"amount": {"central": 1100}},
-            }
-        ],
-        adjustments=[
+        expenses=[
+            *base.expenses,
             {
                 "label": "Care",
-                "start": {"kind": "adult_1", "offset": 1},
+                "category": "care",
+                "levels": [
+                    {
+                        "when": {"kind": "adult_1", "offset": 1},
+                        "amount": {"central": 100},
+                    }
+                ],
                 "end": {"year": 2032},
-                "amount": {"central": 100},
             },
             {
-                "label": "Trip",
-                "start": {"kind": "both"},
+                "label": "Equipment",
                 "frequency": "once",
-                "amount": {"central": 50},
+                "levels": [{"when": {"kind": "both"}, "amount": {"central": 50}}],
             },
         ],
     )
     annual = compile_plan(plan).annual
     assert [y.recurring_spending for y in annual] == [
         1000,
-        1100,
+        1000,
         800,
         900,
         700,
@@ -230,13 +241,14 @@ def test_compile_plan_relative_extras_survive_retirement_and_survivor(timeline_p
     assert [y.one_time_spending for y in annual] == [0, 0, 0, 0, 50, 0, 0]
 
 
-def test_compile_plan_person_mappings_control_pay_dates_and_single_retiree_budget(
-    timeline_plan,
-):
+def test_compile_plan_person_mappings_control_pay_dates(timeline_plan):
     data = timeline_plan.model_dump()
     for selection in data["components"]:
         if selection["inputs"]["kind"] in {"work", "retirement"}:
             selection["adult_mapping"] = (2, 1)
+        if selection["inputs"]["kind"] == "spending":
+            # Expense person references use household order, independently of profiles.
+            selection["inputs"]["expenses"][0]["levels"][1]["when"]["kind"] = "adult_2"
     compiled = compile_plan(PlanningScenario.model_validate(data))
     assert compiled.retirement_years == (2030, 2028)
     assert compiled.annual[0].adults[0].cash_pay == 200
@@ -244,22 +256,26 @@ def test_compile_plan_person_mappings_control_pay_dates_and_single_retiree_budge
     assert compiled.annual[2].recurring_spending == 800
 
 
-def test_compile_plan_retiree_continue_uses_current_replacement_budget(timeline_plan):
-    plan = _change(timeline_plan, "retirement", only_adult_1={"mode": "continue"})
+def test_compile_plan_later_budget_changes_are_not_overridden_by_retirement(
+    timeline_plan,
+):
     plan = _change(
-        plan,
+        timeline_plan,
         "spending",
-        replacements=[
+        expenses=[
             {
-                "label": "Move",
-                "when": {"kind": "adult_1"},
-                "budget": {"amount": {"central": 1200}},
+                "label": "Living",
+                "levels": [
+                    {"when": {"year": 2026}, "amount": {"central": 1000}},
+                    {"when": {"kind": "adult_1"}, "amount": {"central": 1200}},
+                    {"when": {"year": 2031}, "amount": {"central": 700}},
+                ],
             }
         ],
     )
     annual = compile_plan(plan).annual
-    assert annual[2].recurring_spending == 1200
-    assert annual[4].recurring_spending == 600
+    assert annual[2].recurring_spending == annual[4].recurring_spending == 1200
+    assert annual[5].recurring_spending == 700
 
 
 def test_compile_plan_real_fixed_contributions_do_not_follow_salary_growth(
@@ -302,19 +318,17 @@ def test_compile_plan_opening_year_events_remain_scheduled_without_extra_choice(
 ):
     data = timeline_plan.model_dump()
     data["wealth"]["snapshot"]["as_of"] = date(2026, 7, 2)
-    plan = _change(
-        PlanningScenario.model_validate(data),
-        "spending",
-        adjustments=[
-            {
-                "label": "Move",
-                "frequency": "once",
-                "start": {"year": 2026},
-                "amount": {"central": 50},
-            }
-        ],
+    spending = next(
+        c["inputs"] for c in data["components"] if c["inputs"]["kind"] == "spending"
     )
-    remaining = compile_plan(plan).annual[0]
+    spending["expenses"] += (
+        {
+            "label": "Equipment",
+            "frequency": "once",
+            "levels": [{"when": {"year": 2026}, "amount": {"central": 50}}],
+        },
+    )
+    remaining = compile_plan(PlanningScenario.model_validate(data)).annual[0]
     assert remaining.year_fraction == 183 / 365
     assert remaining.recurring_spending == 1000
     assert remaining.one_time_spending == 50
@@ -355,16 +369,14 @@ def test_compile_plan_missing_employment_interval_is_not_zero_income(timeline_pl
     )
 
 
-def test_compile_plan_negative_retirement_spending_rejected(timeline_plan):
-    plan = _change(
-        timeline_plan,
-        "spending",
-        adjustments=[
-            {"label": "Reduction", "start": {"year": 2028}, "amount": {"central": -900}}
-        ],
+def test_compile_plan_collapsed_relative_phases_rejected(timeline_plan):
+    data = timeline_plan.model_dump()
+    retire = next(
+        c["inputs"] for c in data["components"] if c["inputs"]["kind"] == "retirement"
     )
-    with pytest.raises(ValueError, match="negative in 2028"):
-        compile_plan(plan)
+    retire["adults"][0]["retirement"]["central"] = 2030
+    with pytest.raises(ValueError, match="boundaries must increase"):
+        compile_plan(PlanningScenario.model_validate(data))
 
 
 def test_compile_plan_unknown_and_unresolved_inputs_rejected(timeline_plan):
@@ -406,3 +418,102 @@ def test_compile_plan_residence_years_are_effective_dates(timeline_plan):
     data["household"]["residence"] = [{"year": 2027, "location": "WA"}]
     with pytest.raises(ValueError, match="residence at 2026 is unknown"):
         compile_plan(PlanningScenario.model_validate(data))
+
+
+def test_compile_plan_child_transition_moves_once_and_preserves_unrelated_dates(
+    timeline_plan,
+):
+    from financial_model.planning import PlanningChild
+
+    child = PlanningChild(name="Child", birth_year=2026)
+    data = timeline_plan.model_dump()
+    data["household"]["children"] = [child.model_dump()]
+    plan = _change(
+        PlanningScenario.model_validate(data),
+        "spending",
+        expenses=[
+            {
+                "label": "Living",
+                "levels": [{"when": {"year": 2026}, "amount": {"central": 700}}],
+            },
+            {
+                "label": "Child",
+                "category": "children",
+                "levels": [
+                    {
+                        "when": {"kind": "age", "person": str(child.id), "age": 0},
+                        "amount": {"central": 200},
+                    },
+                    {
+                        "when": {"kind": "age", "person": str(child.id), "age": 5},
+                        "amount": {"central": 50},
+                    },
+                ],
+            },
+            {
+                "label": "Healthcare",
+                "category": "healthcare",
+                "levels": [{"when": {"year": 2031}, "amount": {"central": 100}}],
+            },
+        ],
+    )
+    before = compile_plan(plan).annual
+    assert [a.recurring_spending for a in before] == [900, 900, 900, 900, 900, 850, 850]
+    data = plan.model_dump()
+    spending = next(
+        c["inputs"] for c in data["components"] if c["inputs"]["kind"] == "spending"
+    )
+    spending["expenses"][1]["levels"][1]["when"]["age"] = 6
+    after = compile_plan(PlanningScenario.model_validate(data)).annual
+    assert after[5].recurring_spending == 1000
+    assert after[6].recurring_spending == 850
+    assert before[5].expenses[-1] == after[5].expenses[-1]
+
+
+def test_compile_plan_growth_applies_from_base_year_across_new_phases(timeline_plan):
+    plan = _change(
+        timeline_plan,
+        "spending",
+        expenses=[
+            {
+                "label": "Medical",
+                "category": "healthcare",
+                "real_growth": ".1",
+                "levels": [
+                    {"when": {"year": 2026}, "amount": {"central": 100}},
+                    {"when": {"year": 2028}, "amount": {"central": 200}},
+                ],
+                "end": {"year": 2030},
+            }
+        ],
+    )
+    annual = compile_plan(plan).annual
+    assert [a.recurring_spending for a in annual[:4]] == [
+        100,
+        110,
+        242,
+        Decimal("266.2"),
+    ]
+    assert annual[2].expenses[0].base_amount == 200
+    assert annual[4].recurring_spending == 0
+    assert not annual[4].expenses
+
+
+def test_compile_plan_missing_child_reference_is_unknown_not_free(timeline_plan):
+    plan = _change(
+        timeline_plan,
+        "spending",
+        expenses=[
+            {
+                "label": "Childcare",
+                "levels": [
+                    {
+                        "when": {"kind": "age", "person": "deleted-child", "age": 5},
+                        "amount": {"central": 100},
+                    }
+                ],
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="Childcare; date or person needs input"):
+        compile_plan(plan)
