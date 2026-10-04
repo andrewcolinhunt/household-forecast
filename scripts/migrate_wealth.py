@@ -12,10 +12,19 @@ from psycopg import Connection, sql
 from psycopg.types.json import Jsonb
 from rich.console import Console
 
+from financial_model.planning import SavedPlanningDocument
+from financial_model.planning_migration import (
+    TIMELINE_CONVERSION_NOTICE,
+    timeline_conversion_review,
+    upgrade_forecast_constraint,
+)
 from financial_model.storage import _connect
-from financial_model.wealth_migration import convert_wealth_and_planning
+from financial_model.wealth_migration import (
+    _convert_wealth_and_planning_stage,
+    convert_wealth_and_planning,
+)
 
-TABLES = {"wealth_snapshots": "2", "planning_documents": "3"}
+TABLES = {"wealth_snapshots": "2", "planning_documents": "4"}
 
 
 def _read(connection: Connection) -> dict:
@@ -38,20 +47,36 @@ def preview(dsn: str, directory: Path, settings: dict) -> None:
     directory.mkdir(parents=True, exist_ok=False, mode=0o700)
     with _connect(dsn) as connection:
         originals = _read(connection)
-    proposals = convert_wealth_and_planning(
-        originals["wealth_snapshots"], originals["planning_documents"], **settings
-    )
     for name, value in (
         ("originals", originals),
         ("settings", settings),
-        ("proposals", proposals),
     ):
+        path = directory / f"{name}.json"
+        path.write_text(json.dumps(value, indent=2))
+        path.chmod(0o600)
+    proposals = convert_wealth_and_planning(
+        originals["wealth_snapshots"], originals["planning_documents"], **settings
+    )
+    intermediate = _convert_wealth_and_planning_stage(
+        originals["wealth_snapshots"],
+        originals["planning_documents"],
+        account_updates=settings.get("account_updates"),
+    )
+    review = timeline_conversion_review(
+        [d for d in intermediate["planning_documents"] if d["schema_version"] == 3],
+        tuple(
+            SavedPlanningDocument.model_validate(d)
+            for d in proposals["planning_documents"]
+        ),
+    )
+    for name, value in (("proposals", proposals), ("annual-review", review)):
         path = directory / f"{name}.json"
         path.write_text(json.dumps(value, indent=2))
         path.chmod(0o600)
     Console().print(
         f"Prepared {sum(map(len, proposals.values()))} documents in {directory}."
     )
+    Console().print(TIMELINE_CONVERSION_NOTICE)
 
 
 def _without_timestamps(value: Any) -> Any:
@@ -78,7 +103,6 @@ def apply(dsn: str, directory: Path) -> None:
     if _without_timestamps(proposals) != _without_timestamps(expected):
         message = "Proposals differ from the reviewed conversion. Create a new preview."
         raise ValueError(message)
-    from financial_model.planning import SavedPlanningDocument
     from financial_model.wealth import SavedWealthSnapshot
 
     for document in proposals["wealth_snapshots"]:
@@ -106,7 +130,7 @@ def apply(dsn: str, directory: Path) -> None:
             for document in proposals[table]:
                 connection.execute(
                     sql.SQL(
-                        "UPDATE {} SET revision = %s, document = %s, updated_at = %s WHERE id = %s"
+                        "INSERT INTO {} (revision, document, updated_at, id) VALUES (%s, %s, %s, %s) ON CONFLICT (id) DO UPDATE SET revision = EXCLUDED.revision, document = EXCLUDED.document, updated_at = EXCLUDED.updated_at"
                     ).format(sql.Identifier(table)),
                     (
                         document["revision"],
@@ -124,6 +148,7 @@ def apply(dsn: str, directory: Path) -> None:
                     sql.Literal(version),
                 )
             )
+        upgrade_forecast_constraint(connection)
     Console().print("Wealth and Planning migration complete.")
 
 

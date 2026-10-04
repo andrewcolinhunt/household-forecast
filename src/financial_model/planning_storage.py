@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from uuid import UUID
 
 from psycopg.types.json import Jsonb
@@ -18,7 +19,7 @@ def list_planning_documents(dsn: str, kind: Kind) -> tuple[SavedPlanningDocument
             "SELECT document FROM planning_documents WHERE document -> 'inputs' ->> 'kind' = %s ORDER BY updated_at DESC, id",
             (kind,),
         ).fetchall()
-    return tuple(SavedPlanningDocument.model_validate(row["document"]) for row in rows)
+    return tuple(_read_document(row["document"]) for row in rows)
 
 
 def load_planning_document(dsn: str, document_id: UUID) -> SavedPlanningDocument | None:
@@ -27,7 +28,7 @@ def load_planning_document(dsn: str, document_id: UUID) -> SavedPlanningDocument
         row = connection.execute(
             "SELECT document FROM planning_documents WHERE id = %s", (document_id,)
         ).fetchone()
-    return SavedPlanningDocument.model_validate(row["document"]) if row else None
+    return _read_document(row["document"]) if row else None
 
 
 def create_planning_document(
@@ -103,7 +104,11 @@ def import_planning_backup(data: bytes) -> PlanningInputs:
     if len(data) > MAX_BACKUP_BYTES:
         msg = "Planning backup exceeds the 1 MB limit."
         raise ValueError(msg)
-    raw = json.loads(data)
+    return _read_document(json.loads(data)).inputs
+
+
+def _read_document(raw: Any) -> SavedPlanningDocument:
+    """Require explicit conversion instead of silently upgrading stored assumptions."""
     if (
         not isinstance(raw, dict)
         or raw.get("document_type") != "planning_document"
@@ -111,4 +116,17 @@ def import_planning_backup(data: bytes) -> PlanningInputs:
     ):
         message = "A planning backup must declare its document type and schema version."
         raise ValueError(message)
-    return SavedPlanningDocument.model_validate(raw).inputs
+    current = SavedPlanningDocument.model_fields["schema_version"].default
+    if raw["schema_version"] != current:
+        script = (
+            "scripts/migrate_wealth.py"
+            if raw["schema_version"] == 2
+            else "scripts/migrate_household_timeline.py"
+        )
+        message = (
+            f"Unsupported planning schema version {raw['schema_version']}; "
+            f"this app reads version {current}. The original is unchanged. "
+            f"Preview the explicit conversion with {script}."
+        )
+        raise ValueError(message)
+    return SavedPlanningDocument.model_validate(raw)

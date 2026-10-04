@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS planning_documents (
     updated_at TIMESTAMPTZ NOT NULL,
     CHECK ((document ->> 'id') IS NOT DISTINCT FROM id::text),
     CHECK (((document ->> 'revision')::integer) IS NOT DISTINCT FROM revision),
-    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '3'),
+    CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '4'),
     CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'planning_document'),
     CHECK ((document -> 'inputs' ->> 'kind'
            IN ('work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE)
@@ -78,4 +78,4 @@ ALTER TABLE forecast_runs
     DROP CONSTRAINT IF EXISTS forecast_runs_document_check1,
     DROP CONSTRAINT IF EXISTS forecast_runs_schema_version,
     ADD CONSTRAINT forecast_runs_schema_version
-        CHECK ((document ->> 'schema_version' IN ('1', '2', '3')) IS TRUE);
+        CHECK ((document ->> 'schema_version' IN ('1', '2', '3', '4')) IS TRUE);

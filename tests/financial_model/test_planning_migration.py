@@ -1,4 +1,4 @@
-"""Preservation of old inputs, independent copies, and reviewed person mappings."""
+"""Explicit timeline conversion preserves old effective cash flows and originals."""
 
 from __future__ import annotations
 
@@ -13,193 +13,258 @@ from financial_model.planning import (
     EconomicAssumptions,
     PlanningScenario,
     RetirementAssumptions,
-    SpendingAssumptions,
-    WorkAssumptions,
 )
-from financial_model.planning_migration import convert_planning_documents
+from financial_model.planning_migration import (
+    convert_planning_documents,
+    convert_timeline_documents,
+    timeline_conversion_review,
+)
 
 
-def legacy(inputs):
-    raw = inputs.model_dump(mode="json")
-    kind = raw["kind"]
-    if kind == "work":
-        for adult in raw["adults"]:
-            adult["retirement"] = {
-                "central": None,
-                "lower": None,
-                "upper": None,
-                "notes": "",
-            }
-    elif kind == "spending":
-        raw["survivor"] = None
-    elif kind == "retirement":
-        raw["kind"] = "longevity"
-        for key in (
-            "currency",
-            "money_year",
-            "only_adult_1",
-            "only_adult_2",
-            "both_retired",
-            "survivor",
-        ):
-            raw.pop(key)
-        for adult in raw["adults"]:
-            adult.pop("retirement")
-    elif kind == "economy":
-        raw |= {
-            "fees": None,
-            "forecast_years": 10,
-            "return_basis": "nominal_compound_before_fees_and_taxes",
-        }
-    elif kind == "plan":
-        raw |= {"work_adults": None, "longevity_adults": None}
+def document(inputs: dict) -> dict:
     return {
         "document_type": "planning_document",
-        "schema_version": 1,
+        "schema_version": 3,
         "id": str(uuid4()),
         "revision": 3,
         "updated_at": datetime.now(UTC).isoformat(),
-        "inputs": raw,
+        "inputs": inputs,
     }
 
 
-def chosen(record):
+def chosen(record: dict) -> dict:
     return {
         "source_id": record["id"],
         "source_revision": record["revision"],
         "source_name": record["inputs"]["name"],
         "inputs": deepcopy(record["inputs"]),
+        "adult_mapping": [1, 2] if record["inputs"]["kind"] == "retirement" else None,
     }
 
 
-def test_migration_combines_retirement_without_matching_names_or_mutating_originals():
-    work = legacy(WorkAssumptions(name="Work", money_year=2026))
-    work["inputs"]["adults"][0]["retirement"]["central"] = 2040
-    work["inputs"]["adults"][1]["retirement"]["central"] = 2050
-    life = legacy(
-        RetirementAssumptions(
-            name="Life",
-            adults=(
-                {"slot": 1, "name": "B", "age": {"central": 90}},
-                {"slot": 2, "name": "A", "age": {"central": 95}},
-            ),
-        )
-    )
-    spending = legacy(
-        SpendingAssumptions(
-            name="Spend",
-            money_year=2026,
-            baseline={"amount": {"central": 100000}},
-            replacements=(
-                {
-                    "label": "Retire",
-                    "when": {"kind": "both"},
-                    "budget": {"amount": {"central": 80000}},
-                },
-            ),
-        )
-    )
-    spending["inputs"]["survivor"] = {
-        "amount": {
-            "central": "60000",
-            "lower": None,
-            "upper": None,
-            "notes": "Old explanation",
-        },
+def budget(amount: int | None) -> dict:
+    return {
+        "amount": {"central": amount, "lower": None, "upper": None},
         "essential": None,
-        "notes": "Includes housing",
+        "notes": "",
     }
-    plan = legacy(PlanningScenario(name="Plan"))
+
+
+@pytest.fixture
+def old_documents() -> list[dict]:
+    spending = document(
+        {
+            "kind": "spending",
+            "name": "Expenses",
+            "money_year": 2026,
+            "baseline": budget(100000),
+            "replacements": [
+                {
+                    "label": "Overridden move",
+                    "when": {"kind": "year", "year": 2028},
+                    "budget": budget(90000),
+                }
+            ],
+            "adjustments": [
+                {
+                    "label": "Children",
+                    "amount": {"central": 5000},
+                    "start": {"kind": "year", "year": 2026},
+                    "end": {"kind": "year", "year": 2030},
+                    "frequency": "recurring",
+                },
+                {
+                    "label": "Future bill",
+                    "amount": {"central": 25000},
+                    "start": {"kind": "year", "year": 2026},
+                    "frequency": "once",
+                },
+            ],
+        }
+    )
+    retirement = document(
+        RetirementAssumptions(name="Retire", money_year=2026).model_dump(mode="json")
+    )
+    retirement["inputs"] |= {
+        "only_adult_1": {"mode": "replace", "budget": budget(110000)},
+        "only_adult_2": {"mode": "continue", "budget": None},
+        "both_retired": budget(80000),
+        "survivor": budget(60000),
+    }
+    for person, year, age in zip(
+        retirement["inputs"]["adults"], (2027, 2029), (44, 43), strict=True
+    ):
+        person["retirement"]["central"], person["age"]["central"] = year, age
+    plan = document(PlanningScenario(name="Reviewed plan").model_dump(mode="json"))
     plan["inputs"] |= {
-        "components": [chosen(d) for d in (work, life, spending)],
-        "work_adults": [1, 2],
-        "longevity_adults": [2, 1],
+        "household": {
+            "reference_year": 2026,
+            "adults": [{"name": "A", "age": 40}, {"name": "B", "age": 38}],
+            "children": [{"name": "Child", "birth_year": 2025}],
+        },
+        "wealth": {
+            "document_type": "wealth_snapshot",
+            "schema_version": 2,
+            "id": str(uuid4()),
+            "revision": 1,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "snapshot": {"as_of": "2026-07-01"},
+        },
+        "components": [chosen(spending), chosen(retirement)],
     }
-    # Saved copies must remain independent from more recent library values.
-    plan["inputs"]["components"][0]["inputs"]["adults"][0]["retirement"]["central"] = (
-        2042
-    )
-    originals = [work, life, spending, plan]
-    before = deepcopy(originals)
-    converted = convert_planning_documents(originals, money_year=2026)
-    assert originals == before
-    by_id = {str(d.id): d for d in converted}
-    assert all(d.schema_version == 3 for d in converted)
-    assert all(by_id[d["id"]].revision == 4 for d in originals)
-    assert "retirement" not in by_id[work["id"]].inputs.adults[0].model_dump()
-    assert not by_id[spending["id"]].inputs.replacements
-    selected = next(
-        c for c in by_id[plan["id"]].inputs.components if c.inputs.kind == "retirement"
-    )
-    assert selected.adult_mapping == (2, 1)
-    assert [a.retirement.central for a in selected.inputs.adults] == [2050, 2042]
-    assert selected.inputs.both_retired.amount.central == 80000
-    assert selected.inputs.survivor.amount.central == 60000
-    assert selected.inputs.survivor.notes == "Includes housing"
+    return [spending, retirement, plan]
 
 
-def test_migration_converts_all_return_bounds_after_fees_and_preserves_inflation():
-    old = legacy(
+def contexts(records: list[dict]) -> dict[str, str]:
+    return {d["id"]: records[-1]["id"] for d in records[:-1]}
+
+
+def test_conversion_preserves_old_precedence_and_partial_year_separately(old_documents):
+    before = deepcopy(old_documents)
+    converted = convert_timeline_documents(
+        old_documents, profile_contexts=contexts(old_documents)
+    )
+    assert old_documents == before
+    assert all(d.schema_version == 4 for d in converted)
+    assert len(converted) == 4  # Standalone retirement budgets retain a Spending home.
+    plan = next(d for d in converted if d.inputs.kind == "plan")
+    spending = next(
+        c.inputs for c in plan.inputs.components if c.inputs.kind == "spending"
+    )
+    assert [level.amount.central for level in spending.expenses[0].levels] == [
+        105000,
+        115000,
+        85000,
+        80000,
+        60000,
+    ]
+    assert spending.expenses[0].end.year == 2032
+    assert spending.expenses[1].frequency == "once"
+    assert spending.expenses[1].levels[0].amount.central == 25000
+    review = timeline_conversion_review(old_documents, converted)
+    assert all(row["old_total"] == row["new_total"] for row in review)
+    assert (
+        Decimal(review[0]["new_total"])
+        == Decimal(105000) * Decimal(str(184 / 365)) + 25000
+    )
+    assert "fixed calendar dates" in spending.expenses[0].notes
+    assert plan.revision == 4
+    assert all(c.source_revision == 3 for c in plan.inputs.components)
+
+
+def test_conversion_stable_ids_and_independent_copies(old_documents):
+    old_documents[-1]["inputs"]["components"][0]["inputs"]["baseline"] = budget(120000)
+    first = convert_timeline_documents(
+        old_documents, profile_contexts=contexts(old_documents)
+    )
+    second = convert_timeline_documents(
+        old_documents, profile_contexts=contexts(old_documents)
+    )
+    assert [d.inputs for d in first] == [d.inputs for d in second]
+    standalone = next(d.inputs for d in first if str(d.id) == old_documents[0]["id"])
+    plan = next(d.inputs for d in first if d.inputs.kind == "plan")
+    selected = next(c.inputs for c in plan.components if c.inputs.kind == "spending")
+    assert standalone.expenses[0].levels[0].amount.central == 105000
+    assert selected.expenses[0].levels[0].amount.central == 125000
+    assert plan.household.children[0].id is not None
+    assert (
+        "both_retired"
+        not in next(
+            c.inputs for c in plan.components if c.inputs.kind == "retirement"
+        ).model_dump()
+    )
+
+
+def test_conversion_requires_explicit_context_and_resolved_plan(old_documents):
+    with pytest.raises(ValueError, match="Plan context"):
+        convert_timeline_documents(old_documents)
+    plan = old_documents[-1]
+    plan["inputs"]["components"].append(deepcopy(plan["inputs"]["components"][0]))
+    with pytest.raises(ValueError, match="one reviewed profile combination"):
+        convert_timeline_documents([plan])
+    plan["inputs"]["components"].pop()
+    plan["inputs"]["wealth"] = None
+    with pytest.raises(ValueError, match="fixed lifespans"):
+        convert_timeline_documents([plan])
+
+
+def test_conversion_rejects_resolved_conflicts_and_negative_net_costs(old_documents):
+    plan = old_documents[-1]
+    spending = plan["inputs"]["components"][0]["inputs"]
+    spending["replacements"].append(
+        {
+            "label": "Collision",
+            "when": {"kind": "adult_1", "offset": 1},
+            "budget": budget(70000),
+        }
+    )
+    with pytest.raises(ValueError, match="same year"):
+        convert_timeline_documents([plan])
+    spending["replacements"].pop()
+    spending["adjustments"][1]["amount"]["central"] = -1
+    with pytest.raises(ValueError, match="Negative net"):
+        convert_timeline_documents([plan])
+
+
+def test_conversion_preserves_signed_adjustment_totals_and_ranges(old_documents):
+    plan = old_documents[-1]
+    spending = plan["inputs"]["components"][0]["inputs"]
+    spending["baseline"]["amount"] |= {"lower": 95000, "upper": 110000}
+    spending["adjustments"][0]["amount"]["central"] = -5000
+    (converted,) = convert_timeline_documents([plan])
+    expense = converted.inputs.components[0].inputs.expenses[0]
+    assert expense.levels[0].amount.central == 95000
+    assert expense.levels[0].amount.lower == 90000
+    assert expense.levels[0].amount.upper == 105000
+
+
+def test_conversion_rejects_unknown_overridden_budget_and_mismatched_people(
+    old_documents,
+):
+    old_documents[-1]["inputs"]["components"][0]["inputs"]["replacements"][0][
+        "budget"
+    ] = budget(None)
+    with pytest.raises(ValueError, match="including overridden budgets"):
+        convert_timeline_documents([old_documents[-1]])
+    old_documents[-1]["inputs"]["components"][0]["inputs"]["replacements"][0][
+        "budget"
+    ] = budget(90000)
+    old_documents[1]["inputs"]["adults"].reverse()
+    with pytest.raises(ValueError, match="person mapping"):
+        convert_timeline_documents(
+            old_documents, profile_contexts=contexts(old_documents)
+        )
+
+
+def test_version_one_conversion_preserves_return_bounds_and_original():
+    old = document(
         EconomicAssumptions(
             name="Gross",
             equities={"central": ".06", "lower": ".03", "upper": ".08"},
             inflation={"central": ".025"},
-        )
+        ).model_dump(mode="json")
     )
-    old["inputs"]["fees"] = ".01"
-    old["inputs"]["equities"]["notes"] = "No longer a field"
+    old["schema_version"] = 1
+    old["inputs"] |= {
+        "fees": ".01",
+        "forecast_years": 10,
+        "return_basis": "nominal_compound_before_fees_and_taxes",
+    }
+    before = deepcopy(old)
     (new,) = convert_planning_documents([old])
+    assert old == before
     assert new.inputs.equities.central == Decimal(".0494")
     assert new.inputs.equities.lower == Decimal(".0197")
     assert new.inputs.equities.upper == Decimal(".0692")
     assert new.inputs.inflation.central == Decimal(".025")
-    assert "forecast_years" not in new.inputs.model_dump()
-    old["inputs"]["fees"] = None
-    (no_fee,) = convert_planning_documents([old])
-    assert no_fee.inputs.equities.central == Decimal(".06")
-    assert "kept unchanged" in no_fee.inputs.notes
-
-
-def test_migration_requires_review_for_undated_rows_and_rejects_retiming():
-    old = legacy(
-        SpendingAssumptions(
-            name="Spend",
-            replacements=(
-                {"label": "Retirement", "budget": {"amount": {"central": 80000}}},
-            ),
-        )
-    )
-    (retained,) = convert_planning_documents([old])
-    assert len(retained.inputs.replacements) == 1
-    records = convert_planning_documents([old], retirement_rows={old["id"]: (0,)})
-    assert len(records) == 2
-    assert not records[0].inputs.replacements
-    assert records[1].inputs.both_retired.amount.central == 80000
-    old["inputs"]["replacements"][0]["when"]["year"] = 2045
-    with pytest.raises(ValueError, match="retimed"):
-        convert_planning_documents([old], retirement_rows={old["id"]: (0,)})
-    old["schema_version"] = 9
-    with pytest.raises(ValueError, match="version-one"):
-        convert_planning_documents([old])
-
-
-def test_migration_unknown_budgets_do_not_create_duplicate_retirement_scenarios():
-    life = legacy(RetirementAssumptions(name="Life"))
-    spending = legacy(SpendingAssumptions(name="Spend", money_year=2026))
-    spending["inputs"]["survivor"] = {
-        "amount": {"central": None, "lower": None, "upper": None},
-        "essential": None,
-        "notes": "",
-    }
-    plan = legacy(PlanningScenario(name="Plan"))
-    plan["inputs"]["components"] = [chosen(life), chosen(spending)]
-    records = convert_planning_documents([life, spending, plan], money_year=2026)
-    assert len(records) == 3
-    assert sum(d.inputs.kind == "retirement" for d in records) == 1
+    assert new.schema_version == 4
+    assert new.revision == 4
 
 
 @pytest.mark.integration
-def test_migration_is_atomic_and_rejects_a_stale_preview(database_url, tmp_path):
+def test_migration_preview_backups_stale_detection_and_history(
+    database_url, tmp_path, old_documents
+):
     import importlib.util
     import json
     from pathlib import Path
@@ -210,51 +275,53 @@ def test_migration_is_atomic_and_rejects_a_stale_preview(database_url, tmp_path)
     from financial_model.storage import _connect
 
     spec = importlib.util.spec_from_file_location(
-        "migrate_retirement",
+        "migrate_timeline",
         Path(__file__).parents[2] / "scripts/migrate_planning_retirement.py",
     )
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
-    old = legacy(EconomicAssumptions(name="Economy"))
     with _connect(database_url) as connection:
-        connection.execute("DROP TABLE planning_documents")
-        schema = (
-            (Path(__file__).parents[2] / "scripts/schema.sql")
-            .read_text()
-            .split("CREATE TABLE IF NOT EXISTS planning_documents")[1]
-        )
-        connection.execute(
-            "CREATE TABLE planning_documents"
-            + schema.replace("FROM '3'", "FROM '1'").replace(
-                "'retirement'", "'longevity'"
+        checks = connection.execute(
+            "SELECT conname FROM pg_constraint WHERE conrelid = 'planning_documents'::regclass AND pg_get_constraintdef(oid) LIKE '%%schema_version%%'"
+        ).fetchall()
+        from psycopg import sql
+
+        for row in checks:
+            connection.execute(
+                sql.SQL("ALTER TABLE planning_documents DROP CONSTRAINT {}").format(
+                    sql.Identifier(row["conname"])
+                )
             )
-        )
-        connection.execute(
-            "INSERT INTO planning_documents VALUES (%s, %s, %s, %s)",
-            (old["id"], old["revision"], Jsonb(old), old["updated_at"]),
-        )
+        for old in old_documents:
+            connection.execute(
+                "INSERT INTO planning_documents VALUES (%s, %s, %s, %s)",
+                (old["id"], old["revision"], Jsonb(old), old["updated_at"]),
+            )
     directory = tmp_path / "preview"
-    script.preview(database_url, directory, {})
-    assert json.loads((directory / "originals.json").read_text()) == [old]
+    script.preview(
+        database_url, directory, {"profile_contexts": contexts(old_documents)}
+    )
+    backed_up = json.loads((directory / "originals.json").read_text())
+    assert {d["id"]: d for d in backed_up} == {d["id"]: d for d in old_documents}
+    assert (directory / "originals.json").stat().st_mode & 0o777 == 0o600
+    assert json.loads((directory / "annual-review.json").read_text())[0]["old_total"]
     with _connect(database_url) as connection:
-        edited = deepcopy(old)
-        edited["inputs"]["name"] = "Changed since preview"
+        edited = deepcopy(old_documents[0])
+        edited["inputs"]["name"] = "Changed"
         connection.execute(
-            "UPDATE planning_documents SET document = %s", (Jsonb(edited),)
+            "UPDATE planning_documents SET document = %s WHERE id = %s",
+            (Jsonb(edited), edited["id"]),
         )
     with pytest.raises(ValueError, match="changed since preview"):
         script.apply(database_url, directory)
     with _connect(database_url) as connection:
-        assert (
-            connection.execute("SELECT document FROM planning_documents").fetchone()[
-                "document"
-            ]
-            == edited
+        connection.execute(
+            "UPDATE planning_documents SET document = %s WHERE id = %s",
+            (Jsonb(old_documents[0]), old_documents[0]["id"]),
         )
-        connection.execute("UPDATE planning_documents SET document = %s", (Jsonb(old),))
     script.apply(database_url, directory)
-    (new,) = list_planning_documents(database_url, "economy")
-    assert new.inputs.name == "Economy"
-    assert new.revision == old["revision"] + 1
+    assert len(list_planning_documents(database_url, "spending")) == 2
+    assert len(list_planning_documents(database_url, "plan")) == 1
+    assert json.loads((directory / "originals.json").read_text()) == backed_up
     with pytest.raises(ValueError, match="changed since preview"):
         script.apply(database_url, directory)

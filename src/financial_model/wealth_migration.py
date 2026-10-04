@@ -162,15 +162,13 @@ def convert_plan_inputs(
     return data
 
 
-def convert_wealth_and_planning(
+def _convert_wealth_and_planning_stage(
     wealth: list[dict[str, Any]],
     planning: list[dict[str, Any]],
     *,
     account_updates: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Convert both stores while preserving historical source copies and revisions."""
-    from financial_model.planning import INPUT_ADAPTER, SavedPlanningDocument
-
     account_ids = {a["id"] for d in wealth for a in d["snapshot"]["accounts"]}
     account_ids.update(
         a["id"]
@@ -187,8 +185,8 @@ def convert_wealth_and_planning(
     original_wealth = {d["id"]: d for d in wealth}
     converted = {}
     for old in planning:
-        if old.get("schema_version") == 3:
-            converted[old["id"]] = SavedPlanningDocument.model_validate(old)
+        if old.get("schema_version") in {3, 4}:
+            converted[old["id"]] = deepcopy(old)
             continue
         if (
             old.get("schema_version") != 2
@@ -201,13 +199,9 @@ def convert_wealth_and_planning(
             continue
         if data["kind"] == "investments":
             data = convert_investment_inputs(data)
-        converted[old["id"]] = SavedPlanningDocument(
-            id=old["id"],
-            revision=old["revision"] + 1,
-            inputs=INPUT_ADAPTER.validate_python(data),
-        )
+        converted[old["id"]] = old | {"schema_version": 3, "inputs": data}
     for old in planning:
-        if old["inputs"]["kind"] != "plan" or old["schema_version"] == 3:
+        if old["inputs"]["kind"] != "plan" or old["schema_version"] in {3, 4}:
             continue
         data = convert_plan_inputs(old["inputs"], account_updates)
         source = old["inputs"].get("wealth")
@@ -215,19 +209,37 @@ def convert_wealth_and_planning(
             data["wealth"] = converted_wealth[source["id"]].model_dump(mode="json")
         for selection in data["components"]:
             current = converted.get(selection["source_id"])
-            if (
-                current
-                and current.inputs.model_dump(mode="json") == selection["inputs"]
-            ):
-                selection["source_revision"] = current.revision
-        converted[old["id"]] = SavedPlanningDocument(
-            id=old["id"],
-            revision=old["revision"] + 1,
-            inputs=INPUT_ADAPTER.validate_python(data),
-        )
+            if current and current["inputs"] == selection["inputs"]:
+                selection["source_revision"] = current["revision"] + 1
+        converted[old["id"]] = old | {"schema_version": 3, "inputs": data}
     return {
         "wealth_snapshots": [
             d.model_dump(mode="json") for d in converted_wealth.values()
         ],
-        "planning_documents": [d.model_dump(mode="json") for d in converted.values()],
+        "planning_documents": list(converted.values()),
+    }
+
+
+def convert_wealth_and_planning(
+    wealth: list[dict[str, Any]],
+    planning: list[dict[str, Any]],
+    *,
+    account_updates: dict[str, dict[str, Any]] | None = None,
+    profile_contexts: dict[str, str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Convert old Wealth and Planning through an explicit reviewed timeline stage."""
+    from financial_model.planning_migration import convert_timeline_documents
+
+    intermediate = _convert_wealth_and_planning_stage(
+        wealth, planning, account_updates=account_updates
+    )
+    proposals = convert_timeline_documents(
+        [d for d in intermediate["planning_documents"] if d["schema_version"] == 3],
+        profile_contexts=profile_contexts,
+    )
+    return intermediate | {
+        "planning_documents": [
+            d for d in intermediate["planning_documents"] if d["schema_version"] == 4
+        ]
+        + [p.model_dump(mode="json") for p in proposals]
     }

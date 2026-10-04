@@ -11,7 +11,13 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from rich.console import Console
 
-from financial_model.planning_migration import convert_planning_documents
+from financial_model.planning_migration import (
+    TIMELINE_CONVERSION_NOTICE,
+    _convert_version_one,
+    convert_planning_documents,
+    timeline_conversion_review,
+    upgrade_forecast_constraint,
+)
 from financial_model.storage import _connect
 
 
@@ -25,11 +31,30 @@ def preview(dsn: str, directory: Path, settings: dict) -> None:
                 "SELECT document FROM planning_documents ORDER BY id"
             ).fetchall()
         ]
-    proposals = convert_planning_documents(originals, **settings)
     for name, value in (
         ("originals", originals),
         ("settings", settings),
+    ):
+        path = directory / f"{name}.json"
+        path.write_text(json.dumps(value, indent=2))
+        path.chmod(0o600)
+    proposals = convert_planning_documents(originals, **settings)
+    old = originals
+    if originals and originals[0]["schema_version"] == 1:
+        old = list(
+            _convert_version_one(
+                originals,
+                **{
+                    key: value
+                    for key, value in settings.items()
+                    if key != "profile_contexts"
+                },
+            )
+        )
+    review = timeline_conversion_review(old, proposals)
+    for name, value in (
         ("proposals", [p.model_dump(mode="json") for p in proposals]),
+        ("annual-review", review),
     ):
         path = directory / f"{name}.json"
         path.write_text(json.dumps(value, indent=2))
@@ -37,6 +62,7 @@ def preview(dsn: str, directory: Path, settings: dict) -> None:
     Console().print(
         f"Prepared {len(proposals)} documents. Originals and proposals: {directory}"
     )
+    Console().print(TIMELINE_CONVERSION_NOTICE)
 
 
 def apply(dsn: str, directory: Path) -> None:
@@ -86,8 +112,9 @@ def apply(dsn: str, directory: Path) -> None:
                 ),
             )
         connection.execute(
-            "ALTER TABLE planning_documents ADD CONSTRAINT planning_schema_version CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '3'), ADD CONSTRAINT planning_kind CHECK ((document -> 'inputs' ->> 'kind' IN ('work', 'spending', 'retirement', 'investments', 'economy', 'plan')) IS TRUE)"
+            "ALTER TABLE planning_documents ADD CONSTRAINT planning_schema_version CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '4'), ADD CONSTRAINT planning_kind CHECK ((document -> 'inputs' ->> 'kind' IN ('work', 'spending', 'retirement', 'investments', 'economy', 'plan')) IS TRUE)"
         )
+        upgrade_forecast_constraint(connection)
     Console().print(f"Migrated {len(proposals)} planning documents.")
 
 
@@ -99,7 +126,7 @@ def main() -> None:
     parser.add_argument(
         "--settings",
         type=Path,
-        help="JSON with reviewed retirement_rows and money_year",
+        help="JSON with reviewed profile_contexts, and optional v1 retirement_rows/money_year",
     )
     args = parser.parse_args()
     dsn = os.environ["FINANCIAL_MODEL_DATABASE_URL"]

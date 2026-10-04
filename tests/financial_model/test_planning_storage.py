@@ -120,6 +120,15 @@ def test_import_strips_identity_and_rejects_size_and_bad_json():
             import_planning_backup(data)
 
 
+def test_import_old_planning_version_requires_explicit_conversion():
+    raw = SavedPlanningDocument(inputs=EconomicAssumptions(name="Old")).model_dump(
+        mode="json"
+    )
+    raw["schema_version"] = 3
+    with pytest.raises(ValueError, match=r"migrate_household_timeline\.py"):
+        import_planning_backup(json.dumps(raw).encode())
+
+
 @pytest.mark.integration
 def test_planning_runtime_grants_and_database_constraints(database_url):
     role = "planning_test_" + uuid4().hex
