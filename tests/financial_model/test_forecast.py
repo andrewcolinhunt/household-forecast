@@ -248,6 +248,33 @@ def test_forecast_pretax_tax_grossup_and_inaccessible_early_retirement(monkeypat
     assert first["accessible"] == 0
 
 
+def test_forecast_withdrawal_funds_expenses_across_tax_credit_step(monkeypatch):
+    def stepped_tax(**inputs):
+        n = len(inputs["wages"])
+        tax = np.where(np.asarray(inputs["gains"]) <= -999.75, 50.0, 100.0)
+        return ForecastTaxResult(tax, *(np.zeros(n) for _ in range(6)))
+
+    monkeypatch.setattr("financial_model.forecast.yearly_tax", stepped_tax)
+
+    def edit(data):
+        account = data["plans"][0]["wealth"]["snapshot"]["accounts"][0]
+        account.update(balance=100000, invested_in="stocks", cost_basis=200000)
+        retirement = _profile(data, "retirement")
+        retirement["both_retired"]["amount"]["central"] = 900
+        for adult in retirement["adults"]:
+            adult["age"]["central"] = 60
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    # A loss of $999.75 unlocks a $50 credit. No exact-zero residual exists;
+    # interpolation alone stalls below the threshold despite sufficient funds.
+    assert row["withdrawals"] == pytest.approx(999.75, abs=0.005)
+    assert row["realized_gains"] == pytest.approx(-999.75, abs=0.005)
+    assert row["taxes"] == row["tax_paid"] == 50
+    assert row["spending_paid"] == 900
+    assert row["unfunded"] == 0
+    assert row["assets"] == pytest.approx(99050, abs=0.005)
+
+
 def test_forecast_rmd_surplus_is_reinvested(zero_tax):
     def edit(data):
         for adult in data["plans"][0]["household"]["adults"]:

@@ -52,7 +52,7 @@ def editor(scenario: Scenario | None = None) -> AppTest:
         page.session_state["pending_inputs"] = scenario
     page.run()
     if not scenario:
-        press(page, "New scenario")
+        press(page, "New annual plan")
     assert not page.exception
     return page
 
@@ -62,13 +62,13 @@ def press(page: AppTest, label: str) -> AppTest:
     if label in {
         "Calculate",
         "Save",
-        "Save as new scenario",
+        "Save as new annual plan",
         "Keep snapshot",
         "Compare results",
         "Discard edits and reload",
     }:
         go(page, "editor")
-    elif label == "Add goal to scenario":
+    elif label == "Add goal to plan":
         go(page, "Investments")
     next(button for button in page.button if button.label == label).click().run()
     assert not page.exception
@@ -219,14 +219,14 @@ def test_main_calculation_and_session_comparison(scenario: Scenario) -> None:
     assert not page.dataframe
     assert page.session_state["session_snapshot"] == original
     calculated = page.session_state["document"]
-    page.radio(key="display_period").set_value("Annual").run()
+    page.button_group(key="display_period").set_value("Annual").run()
     rendered = "\n".join(element.proto.body for element in page.get("html"))
     assert "$220,000</span>" in rendered
     assert "+$1,667</span>" not in rendered
     assert page.session_state["document"] == calculated
     go(page, "household")
     go(page, "compare")
-    assert page.radio(key="display_period").value == "Annual"
+    assert page.button_group(key="display_period").value == "Annual"
     assert not page.exception
 
 
@@ -243,7 +243,7 @@ def test_main_comparison_rejects_mismatched_snapshots(
             update={"result": saved.result.model_copy(update={"model_revision": "old"})}
         )
     else:
-        widget(page, "selectbox", "year_").select(2026)
+        widget(page, "button_group", "year_").select(2026)
         press(page, "Calculate")
     go(page, "compare")
     select_comparison(page, ["snapshot", "draft"])
@@ -254,7 +254,7 @@ def test_main_comparison_rejects_mismatched_snapshots(
 
 def test_main_state_change_and_exemption_submit_together(scenario: Scenario) -> None:
     page = editor(scenario)
-    widget(page, "selectbox", "state_").select("WA")
+    widget(page, "button_group", "state_").select("WA")
     widget(page, "checkbox", "adult_0_wa_cares").check()
     press(page, "Calculate")
     assert not page.error
@@ -332,7 +332,7 @@ def test_main_two_sessions_conflict_keeps_draft(
     assert second.session_state["document"].inputs.adults[0].cash_pay == 130000
     assert load_scenario(database_url, saved.id).inputs.adults[0].cash_pay == 120000
     assert not second.success
-    press(second, "Save as new scenario")
+    press(second, "Save as new annual plan")
     assert len(list_scenarios(database_url)) == 2
 
 
@@ -571,7 +571,7 @@ def test_delete_requires_confirmation_and_cleans_session(
     press(page, "Cancel")
     assert load_scenario(database_url, saved.id) is not None
     press(page, "Delete")
-    press(page, "Delete scenario")
+    press(page, "Delete annual plan")
     assert not list_scenarios(database_url)
     assert "document" not in page.session_state
     assert "session_snapshot" not in page.session_state
@@ -593,7 +593,7 @@ def test_delete_conflict_and_database_failure_preserve_record(
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     press(page, "Delete")
     changed = update_scenario(database_url, saved)
-    press(page, "Delete scenario")
+    press(page, "Delete annual plan")
     assert page.warning
     assert load_scenario(database_url, saved.id) == changed
     press(page, "Cancel")
@@ -604,7 +604,7 @@ def test_delete_conflict_and_database_failure_preserve_record(
         raise psycopg.OperationalError(message)
 
     monkeypatch.setattr(app, "delete_scenario", unavailable)
-    press(page, "Delete scenario")
+    press(page, "Delete annual plan")
     assert any("Delete failed" in error.value for error in page.error)
     assert all("private connection" not in error.value for error in page.error)
     assert load_scenario(database_url, saved.id) == changed
@@ -624,7 +624,7 @@ def test_deleted_scenario_cannot_be_saved_back_by_another_session(
     assert any("was deleted" in warning.value for warning in page.warning)
     go(page, "editor")
     assert next(button for button in page.button if button.label == "Save").disabled
-    press(page, "Save as new scenario")
+    press(page, "Save as new annual plan")
     assert list_scenarios(database_url)[0].id != saved.id
     assert list_scenarios(database_url)[0].inputs.adults[0].cash_pay == 140000
 
@@ -730,7 +730,7 @@ def test_compare_pending_scenario_respects_order_and_limit(
     assert not page.exception
     assert page.session_state["comparison_selection"] == ids[:4][::-1]
     assert page.checkbox(key=f"compare_check_{ids[4]}").disabled
-    assert any("Remove one scenario" in info.value for info in page.info)
+    assert any("Remove one annual plan" in info.value for info in page.info)
     page.checkbox(key=f"compare_check_{ids[1]}").uncheck().run()
     page.session_state["pending_comparison"] = ids[4]
     page.run()
@@ -765,7 +765,7 @@ def test_option_award_save_preserves_taxes_and_survives_reload(
     baseline = evaluate_scenario(scenario)
     page = editor(scenario)
     widget(page, "checkbox", "adult_0_award_enabled").check().run()
-    widget(page, "selectbox", "adult_0_award_kind").select("NSO").run()
+    widget(page, "button_group", "adult_0_award_kind").select("NSO").run()
     widget(page, "number_input", "adult_0_award_shares").set_value(10000)
     widget(page, "number_input", "adult_0_award_strike").set_value(2.0)
     press(page, "Calculate")
@@ -780,7 +780,7 @@ def test_option_award_save_preserves_taxes_and_survives_reload(
     assert import_backup(saved.model_dump_json().encode()) == saved.inputs
     second = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     press(second, "Edit")
-    assert widget(second, "selectbox", "adult_0_award_kind").value == "NSO"
+    assert widget(second, "button_group", "adult_0_award_kind").value == "NSO"
     assert widget(second, "number_input", "adult_0_award_shares").value == 10000
     assert widget(second, "number_input", "adult_0_award_value").value == 5.0
     assert not any("Unsaved changes" in c.value for c in second.caption)
@@ -931,7 +931,7 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     data["adults"][0]["employer"] = "Acme"
     data["adults"][1]["employer"] = "Example"
     page = editor(Scenario.model_validate(data))
-    assert widget(page, "text_input", "name_").label == "Custom label (optional)"
+    assert widget(page, "text_input", "name_").label == "Annual plan name (optional)"
     press(page, "Save")
     original = list_scenarios(database_url)[0]
     assert original.inputs.name == ""
@@ -950,14 +950,14 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     go(page, "editor")
     widget(page, "text_input", "name_").set_value("Higher rent")
     press(page, "Save")
-    widget(page, "selectbox", "state_").select("WA").run()
+    widget(page, "button_group", "state_").select("WA").run()
     press(page, "Calculate")
     assert page.session_state["document"].inputs.name == "Higher rent"
     widget(page, "text_input", "name_").set_value("").run()
     press(page, "Save")
     html = "\n".join(e.proto.body for e in page.get("html"))
     assert '<span class="fm-scenario-name">Washington</span>' in html
-    press(page, "Save as new scenario")
+    press(page, "Save as new annual plan")
     assert len(list_scenarios(database_url)) == 3
     assert page.session_state["document"].inputs.name == ""
     go(page, "compare")
@@ -975,10 +975,10 @@ def test_allocation_units_preserve_cents_and_edits_across_navigation(scenario):
         str(page.session_state["document"].inputs.allocation_plan.fixed_cash)
         == "100.01"
     )
-    widget(page, "radio", "allocation_unit").set_value("Annual").run()
+    widget(page, "button_group", "allocation_unit").set_value("Annual").run()
     widget(page, "number_input", "allocation_cash_").set_value(1200.01).run()
-    widget(page, "radio", "allocation_unit").set_value("Monthly").run()
-    widget(page, "radio", "allocation_unit").set_value("Annual").run()
+    widget(page, "button_group", "allocation_unit").set_value("Monthly").run()
+    widget(page, "button_group", "allocation_unit").set_value("Annual").run()
     assert widget(page, "number_input", "allocation_cash_").value == 1200.01
     press(page, "Calculate")
     assert (
@@ -1011,7 +1011,7 @@ def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
     go(page, "editor")
     assert widget(page, "number_input", "adult_0_cash_pay").value == 120000
     assert not any(b.label == "Edit goals" for b in page.button)
-    press(page, "Add goal to scenario")
+    press(page, "Add goal to plan")
     widget(page, "number_input", f"allocation_cash_{house}").set_value(500).run()
     press(page, "Save")
     (saved,) = list_scenarios(database_url)
@@ -1086,9 +1086,9 @@ def test_household_defaults_apply_only_to_new_scenarios(
     assert widget(page, "text_input", "adult_0_name").value == "Alex"
     assert widget(page, "number_input", "adult_0_cash_pay").value == 123456
     go(page, "scenarios")
-    press(page, "New scenario")
+    press(page, "New annual plan")
     assert widget(page, "text_input", "adult_0_name").value == "Alexandra"
-    assert widget(page, "selectbox", "year_").value == 2026
+    assert widget(page, "button_group", "year_").value == 2026
 
 
 def app_categories():
@@ -1118,7 +1118,7 @@ def test_removing_allocation_does_not_delete_shared_goal(
     monkeypatch.setattr(app, "_database_url", lambda: database_url)
     goal = create_goal(database_url, Goal(name="Travel"))
     page = editor(scenario)
-    press(page, "Add goal to scenario")
+    press(page, "Add goal to plan")
     assert len(page.session_state["draft_data"]["allocation_plan"]["rows"]) == 3
     widget(page, "number_input", f"allocation_cash_{goal.id}").set_value(50).run()
     assert widget(page, "button", f"remove_allocation_{goal.id}").disabled

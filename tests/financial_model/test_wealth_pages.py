@@ -177,6 +177,7 @@ def test_wealth_forecast_details_survive_navigation_and_validation():
     press(page, "Add debt")
     field(page, "text_input", "Annual payment ($)").set_value("1200.02").run()
     field(page, "text_input", "Interest rate (%)").set_value("5.75").run()
+    assert {section.label for section in page.expander} == {"Wealth backups"}
     go(page, "scenarios")
     go(page, "wealth")
     press(page, next(b.label for b in page.button if b.label.startswith("Resume")))

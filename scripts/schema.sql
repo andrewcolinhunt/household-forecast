@@ -72,8 +72,9 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
 );
 
 -- Keep original immutable runs intact while allowing the current format.
--- Replace the version-1 constraint created by the original table definition.
+-- Replace either auto-generated name used by the original version-1 schema.
 ALTER TABLE forecast_runs
+    DROP CONSTRAINT IF EXISTS forecast_runs_document_check,
     DROP CONSTRAINT IF EXISTS forecast_runs_document_check1,
     DROP CONSTRAINT IF EXISTS forecast_runs_schema_version,
     ADD CONSTRAINT forecast_runs_schema_version

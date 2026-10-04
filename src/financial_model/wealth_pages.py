@@ -192,31 +192,29 @@ def _account_tax_details(row: dict[str, Any]) -> None:
     )
     if not basis:
         return
-    with st.expander(f"{row['label']} · tax details"):
-        hsa = row["tax_treatment"] == "hsa"
-        forms.money(
-            row,
-            "cost_basis",
-            "California HSA cost basis ($)" if hsa else "Taxable cost basis ($)",
-            _key(row, "cost_basis"),
-            help_text=(
-                "California tax basis for this HSA, needed when a Plan includes California. "
-                if hsa
-                else "Total purchase cost adjusted for prior transactions, used to calculate gains on sale. "
-            )
-            + "Include cash at face value in the total. Leave blank if unknown.",
+    hsa = row["tax_treatment"] == "hsa"
+    forms.money(
+        row,
+        "cost_basis",
+        "California HSA cost basis ($)" if hsa else "Taxable cost basis ($)",
+        _key(row, "cost_basis"),
+        help_text=(
+            "California tax basis for this HSA, needed when a plan includes California. "
+            if hsa
+            else "Total purchase cost adjusted for prior transactions, used to calculate gains on sale. "
         )
+        + "Include cash at face value in the total. Leave blank if unknown.",
+    )
 
 
 def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bool:
     """Keep ownership visible beside the account's balance and classification."""
-    name, balance, tax, investment, owner, remove = st.columns(
-        [3, 2, 2, 2, 2, 0.5], vertical_alignment="center"
-    )
+    name, balance, remove = st.columns([3, 2, 0.5], vertical_alignment="bottom")
     with name:
-        forms.text(row, "label", "Account", _key(row, "label"), compact=True)
+        forms.text(row, "label", "Account", _key(row, "label"))
     with balance:
-        forms.money(row, "balance", "Balance ($)", _key(row, "balance"), compact=True)
+        forms.money(row, "balance", "Balance ($)", _key(row, "balance"))
+    tax, investment, owner = st.columns(3)
     with tax:
         forms.choice(
             row,
@@ -225,7 +223,6 @@ def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bo
             get_args(TaxTreatment),
             _key(row, "tax_treatment"),
             labels={v: _label(v) for v in get_args(TaxTreatment)},
-            compact=True,
         )
     with investment:
         st.selectbox(
@@ -236,7 +233,6 @@ def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bo
             key=_key(row, "invested_in"),
             on_change=_investment_choice,
             args=(row,),
-            label_visibility="collapsed",
         )
     with owner:
         if row["tax_treatment"] in {"tax_deferred", "roth", "hsa"}:
@@ -247,11 +243,14 @@ def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bo
                 (None, 1, 2),
                 _key(row, "owner"),
                 labels=owner_labels,
-                compact=True,
-                help_text="Adult 1 and Adult 2 refer to the first and second people in the Plan's household.",
+                help_text="Choose the person who owns this retirement or HSA account.",
             )
         else:
-            st.caption("Not needed" if row["tax_treatment"] == "taxable" else "—")
+            st.caption(
+                "Taxable accounts are shared for forecasting."
+                if row["tax_treatment"] == "taxable"
+                else "Choose tax treatment to see owner requirements."
+            )
     removed = remove.button(
         f"Remove {row['label'] or 'account'}",
         icon=":material/close:",
@@ -263,15 +262,14 @@ def _account_row(row: dict[str, Any], owner_labels: dict[int | None, str]) -> bo
     if row["invested_in"] == "mixed":
         if row["mix"] is None:
             row["mix"] = {"equities": None, "fixed_income": None, "cash": None}
-        with st.expander(f"{row['label']} · investment percentages", expanded=True):
-            st.caption("Enter percentages totaling 100%.")
-            for column, field in zip(
-                st.columns(3), ("equities", "fixed_income", "cash"), strict=True
-            ):
-                with column:
-                    forms.percent(
-                        row["mix"], field, f"{_label(field)} (%)", _key(row, field)
-                    )
+        st.caption("Investment mix: enter percentages totaling 100%.")
+        for column, field in zip(
+            st.columns(3), ("equities", "fixed_income", "cash"), strict=True
+        ):
+            with column:
+                forms.percent(
+                    row["mix"], field, f"{_label(field)} (%)", _key(row, field)
+                )
     _account_tax_details(row)
     return removed
 
@@ -288,19 +286,16 @@ def _contents(data: dict[str, Any], owner_labels: dict[int | None, str]) -> bool
     </style>""")
     st.subheader("Accounts")
     st.caption(
-        "Invested in chooses the return assumptions used in a future projection. Use Mixed for a stocks, bonds, and cash split."
+        "Enter each balance as of the snapshot date. Invested in determines forecast returns; choose Mixed to enter a stocks, bonds, and cash split."
     )
     st.caption(
         "Choose an owner for each retirement or HSA account. Taxable accounts are pooled for forecasting and do not need an owner."
     )
-    if data["accounts"]:
-        for column, label in zip(
-            st.columns([3, 2, 2, 2, 2, 0.5]),
-            ("Account", "Balance ($)", "Tax treatment", "Invested in", "Owner", ""),
-            strict=True,
-        ):
-            column.markdown(label)
-    removed = [row["id"] for row in data["accounts"] if _account_row(row, owner_labels)]
+    removed = []
+    for row in data["accounts"]:
+        with st.container(border=True):
+            if _account_row(row, owner_labels):
+                removed.append(row["id"])
     data["accounts"] = [row for row in data["accounts"] if row["id"] not in removed]
     added = st.button("Add account", key=_key(data, "add_account"))
     if added:
@@ -308,23 +303,26 @@ def _contents(data: dict[str, Any], owner_labels: dict[int | None, str]) -> bool
             AccountPosition(label="New account").model_dump(mode="json")
         )
     st.subheader("Debts")
+    st.caption(
+        "Enter balances and repayment terms. Forecasts add debt payments to living costs, so exclude them from your spending budget."
+    )
     debt_removed = []
     for row in data["debts"]:
-        name, amount, remove = st.columns([3, 2, 0.5], vertical_alignment="bottom")
-        with name:
-            _text(row, "label", "Debt name")
-        with amount:
-            _amount(row, "amount_owed", "Amount owed ($)")
-        if remove.button(
-            f"Remove {row['label'] or 'debt'}",
-            icon=":material/close:",
-            type="tertiary",
-            width=32,
-            key=_key(row, "remove"),
-            help=f"Remove {row['label'] or 'debt'}",
-        ):
-            debt_removed.append(row["id"])
-        with st.expander(f"{row['label']} · repayment terms"):
+        with st.container(border=True):
+            name, amount, remove = st.columns([3, 2, 0.5], vertical_alignment="bottom")
+            with name:
+                _text(row, "label", "Debt name")
+            with amount:
+                _amount(row, "amount_owed", "Amount owed ($)")
+            if remove.button(
+                f"Remove {row['label'] or 'debt'}",
+                icon=":material/close:",
+                type="tertiary",
+                width=32,
+                key=_key(row, "remove"),
+                help=f"Remove {row['label'] or 'debt'}",
+            ):
+                debt_removed.append(row["id"])
             payment, interest = st.columns(2)
             with payment:
                 forms.money(
@@ -357,8 +355,6 @@ def _metadata(data: dict[str, Any], *, saved: bool) -> None:
         _date(data, "as_of", "Snapshot date", disabled=saved)
     if saved:
         st.caption("To record a different date, duplicate this snapshot.")
-    with st.expander("Notes (optional)"):
-        _notes(data, "notes", "Notes")
 
 
 def _summary(snapshot: WealthSnapshot, *, details: bool = False) -> None:
@@ -378,9 +374,9 @@ def _summary(snapshot: WealthSnapshot, *, details: bool = False) -> None:
             f"{len(snapshot.missing_details)} inputs to complete. Totals include entered amounts only."
         )
         if details:
-            with st.expander("What still needs input"):
-                for detail in snapshot.missing_details:
-                    st.text(detail)
+            st.markdown("**Inputs still needed for forecasting**")
+            for detail in snapshot.missing_details:
+                st.text(detail)
 
 
 def _save(dsn: str, snapshot: WealthSnapshot, *, new: bool) -> None:
@@ -469,6 +465,7 @@ def wealth_editor_page(dsn: str | None) -> None:
     changed = _contents(data, _owner_labels(dsn))
     if changed:
         st.rerun()
+    _notes(data, "notes", "Notes (optional)")
     snapshot = None
     try:
         snapshot = WealthSnapshot.model_validate(data)
@@ -565,7 +562,7 @@ def wealth_page(dsn: str | None) -> None:
     """List reusable dated positions separately from annual planning scenarios."""
     st.title("Wealth")
     st.caption(
-        "Account balances and debts at one date. Future allocations and cash reserves belong in Investments."
+        "Record account balances and debts at one date to set a combined plan's starting wealth. Set future investments and cash reserves in Investments."
     )
     records = _read(dsn)
     with st.container(horizontal=True):
@@ -578,7 +575,9 @@ def wealth_page(dsn: str | None) -> None:
         _card(record)
     drafts = st.session_state.get("wealth_drafts", {})
     if drafts:
-        with st.expander("Session drafts"):
+        with st.container():
+            st.subheader("Continue editing")
+            st.caption("Save a snapshot to keep changes beyond this browser session.")
             for draft_id, draft in drafts.items():
                 name = (
                     draft["data"].get("name")

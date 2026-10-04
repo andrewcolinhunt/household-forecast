@@ -194,14 +194,13 @@ def _status(inputs: PlanningInputs) -> None:
             else "1 item needs input"
         )
         if details
-        else "Scenario selections complete"
+        else "Plan selections complete"
         if isinstance(inputs, PlanningScenario)
         else "Inputs entered"
     )
     if details:
-        with st.expander("What still needs input"):
-            for detail in details:
-                st.text(detail)
+        for detail in details:
+            st.text(detail)
     elif isinstance(inputs, PlanningScenario):
         _forecast_readiness(inputs)
 
@@ -224,17 +223,12 @@ def _forecast_readiness(plan: PlanningScenario) -> None:
         st.caption(
             f"Forecast: {len(issues)} {'item needs' if len(issues) == 1 else 'items need'} input"
         )
-        with st.expander("Complete these scenarios for forecasting", expanded=True):
+        with st.container(border=True):
             for issue in issues:
                 st.text(issue)
-            with st.container(horizontal=True):
-                for category in ("Wealth", "Retirement", "Economy"):
-                    category_link(
-                        f"Edit {category} scenarios",
-                        category,
-                        target="library",
-                        view="library",
-                    )
+            st.caption(
+                "Edit the saved assumptions in their tabs, then update the copies in this plan and save it. Edit this plan's family details in Household."
+            )
     else:
         st.success("Ready for a fixed forecast")
     simulation_request = request.model_copy(
@@ -501,7 +495,7 @@ def category_page(kind: Kind, dsn: str | None) -> None:
     st.subheader("Combined plans" if kind == "plan" else f"{LABELS[kind]} assumptions")
     st.caption(
         {
-            "plan": "Choose one scenario to hold a category fixed, or several to compare alternatives. Forecasts come next.",
+            "plan": "Combine saved Work, Spending, Retirement, Investments, and Economy assumptions with starting Wealth. Save a plan, then open Forecast to project it through retirement.",
             "work": "Pay, salary growth, contributions, and equity compensation. Retirement dates belong in Retirement.",
             "spending": "Regular living costs and extra expenses. Retirement living costs belong in Retirement.",
             "retirement": "When each of you retires, what you spend, and how long to plan for.",
@@ -528,7 +522,8 @@ def category_page(kind: Kind, dsn: str | None) -> None:
         st.info(f"No saved {LABELS[kind]} inputs yet.")
     if records:
         forms.table_header(
-            ("Scenario", "Assumptions", "Inputs", ""), (2.5, 4, 1.4, 1.5)
+            ("Plan" if kind == "plan" else "Name", "Summary", "Inputs", ""),
+            (2.5, 4, 1.4, 1.5),
         )
     for record in records:
         name, summary, status, actions = st.columns(
@@ -539,11 +534,9 @@ def category_page(kind: Kind, dsn: str | None) -> None:
         details = missing_details(record.inputs)
         with status:
             if details:
-                with st.popover(f"{len(details)} missing"):
-                    for detail in details:
-                        st.text(detail)
+                st.caption(f"{len(details)} missing · Edit to complete")
             else:
-                st.caption("Complete")
+                st.caption("Selections made" if kind == "plan" else "Inputs entered")
         with actions, st.container(horizontal=True, gap="small"):
             if forms.row_action("Edit", "edit", f"planning_edit_{record.id}"):
                 _open(record)
@@ -564,7 +557,8 @@ def category_page(kind: Kind, dsn: str | None) -> None:
         if draft["data"]["kind"] == kind
     ]
     if drafts:
-        with st.expander(f"{LABELS[kind]} session drafts"):
+        with st.container(border=True):
+            st.markdown("**Continue editing**")
             for draft_id, draft in drafts:
                 if st.button(
                     f"Resume {draft['data'].get('name') or 'Unnamed'} · {draft_id[:8]}",
@@ -629,7 +623,7 @@ def _editor(
     category_link(
         f"All {LABELS[kind]} inputs", LABELS[kind], target="library", view="library"
     )
-    st.caption("Combined plan" if kind == "plan" else f"{LABELS[kind]} scenario")
+    st.caption("Combined plan" if kind == "plan" else f"{LABELS[kind]} assumptions")
     scope = _scope(kind)
     _metadata(data, scope)
     if kind == "work":
@@ -649,7 +643,8 @@ def _editor(
         inputs = INPUT_ADAPTER.validate_python(data)
     except ValueError as error:
         _setup_error(error)
-    st.caption("Saved" if loaded and inputs == loaded.inputs else "Unsaved changes")
+    saved = loaded and inputs == loaded.inputs
+    st.caption("Saved" if saved else "Unsaved changes")
     if inputs:
         _status(inputs)
     latest = next((r for r in records if loaded and r.id == loaded.id), None)
@@ -661,18 +656,29 @@ def _editor(
     with st.container(horizontal=True):
         if (
             st.button(
-                "Save inputs", type="primary", disabled=not available or inputs is None
+                "Save plan" if kind == "plan" else "Save inputs",
+                type="primary",
+                disabled=not available or inputs is None,
             )
             and dsn
             and inputs
         ):
             _save(kind, dsn, inputs, new=False)
         if (
-            st.button("Save as new inputs", disabled=not available or inputs is None)
+            st.button(
+                "Save as new plan" if kind == "plan" else "Save as new inputs",
+                disabled=not available or inputs is None,
+            )
             and dsn
             and inputs
         ):
             _save(kind, dsn, inputs, new=True)
+        if kind == "plan":
+            from financial_model.app import PAGE_DIR
+
+            st.page_link(str(PAGE_DIR / "forecast.py"), label="Open Forecast")
+    if kind == "plan" and not saved:
+        st.caption("Save this plan before selecting it in Forecast.")
     if latest:
         with st.expander("Reload saved inputs"):
             if st.button("Discard edits and reload inputs", disabled=not available):
@@ -754,17 +760,6 @@ def _budget_details(data: dict[str, Any], scope: str) -> None:
     forms.text(data, "notes", "Included costs", f"notes_{scope}")
 
 
-def _range(
-    data: dict[str, Any], label: str, scope: str, *, unit: str = "money"
-) -> None:
-    """Show a primary assumption and a readable optional range."""
-    _range_value(data, "central", label, scope, unit)
-    summary = _range_summary(data, unit)
-    with st.expander("Range (optional)" if summary == "—" else f"Range: {summary}"):
-        _range_details(data, label, scope, unit)
-        st.caption("Enter both ends. Ranges describe alternatives, not probabilities.")
-
-
 def _range_value(
     data: dict[str, Any],
     field: str,
@@ -810,10 +805,11 @@ def _time(data: dict[str, Any], label: str, scope: str) -> None:
         f"anchor_{scope}",
         labels={
             "year": "Calendar year",
-            "adult_1": "Household adult 1 retirement",
-            "adult_2": "Household adult 2 retirement",
-            "both": "Both retired (later date)",
+            "adult_1": "Person 1 retires",
+            "adult_2": "Person 2 retires",
+            "both": "Both retired",
         },
+        segmented=True,
     )
     if data["kind"] == "year":
         data["offset"] = 0
@@ -888,13 +884,24 @@ def _work(data: dict[str, Any], scope: str) -> None:
                                 optional=True,
                             )
                     forms.compensation(phase, phase_key, annual=False)
-                    _range(
+                    _range_value(
                         phase["real_growth"],
+                        "central",
                         "Salary growth above inflation",
                         f"growth_{phase_key}",
-                        unit="rate",
+                        "rate",
                     )
-                    with st.expander("Work phase notes (optional)"):
+                    if _range_summary(phase["real_growth"], "rate") != "—":
+                        st.caption(
+                            f"Growth range: {_range_summary(phase['real_growth'], 'rate')}"
+                        )
+                    with st.expander("Growth range and notes (optional)"):
+                        _range_details(
+                            phase["real_growth"],
+                            "Salary growth",
+                            f"growth_{phase_key}",
+                            "rate",
+                        )
                         forms.text(phase, "notes", "Notes", f"notes_{phase_key}")
                     _remove(adult["phases"], j, "Remove work phase", phase_key)
             phase = WorkPhase().model_dump(mode="json")
@@ -904,49 +911,39 @@ def _work(data: dict[str, Any], scope: str) -> None:
 
 
 def _vesting_and_options(adult: dict[str, Any], scope: str) -> None:
-    """Show equity schedules as short rows with secondary terms in details."""
-    with st.expander("Vesting and option events"):
-        if adult["vesting"]:
-            forms.table_header(("Years", "Annual vesting", "", ""), (2, 2, 1.5, 0.5))
+    """Keep dated equity events together and make entered events visible."""
+    with st.expander(
+        "Dated equity events (optional)",
+        expanded=bool(adult["vesting"] or adult["options"]),
+    ):
         for i, row in enumerate(adult["vesting"]):
             key = f"vesting_{i}_{scope}"
-            years, amount, details, remove = st.columns(
-                (2, 2, 1.5, 0.5), vertical_alignment="center"
-            )
-            years.caption(
-                f"{row['start'] or 'Start needed'} → {row['end'] or 'End needed'}"
-            )
-            with amount:
+            with st.container(border=True):
+                st.markdown(f"**Vesting schedule {i + 1}**")
+                for column, field, label in zip(
+                    st.columns(2),
+                    ("start", "end"),
+                    ("Vesting start year", "First year without vesting"),
+                    strict=True,
+                ):
+                    with column:
+                        forms.number(
+                            row,
+                            field,
+                            label,
+                            f"{field}_{key}",
+                            integer=True,
+                            minimum=1900,
+                            maximum=9999,
+                            optional=True,
+                        )
                 forms.text(
                     row,
                     "amount",
                     "Annual vesting amount",
                     f"amount_{key}",
                     optional=True,
-                    compact=True,
                 )
-                st.caption(
-                    {
-                        "nominal": "Nominal dollars",
-                        "real": "Reference-year dollars",
-                        "shares": "Shares",
-                    }[row["basis"]]
-                )
-            with details, st.popover("Details"):
-                for field, label in (
-                    ("start", "Vesting start year"),
-                    ("end", "Vesting end year (exclusive)"),
-                ):
-                    forms.number(
-                        row,
-                        field,
-                        label,
-                        f"{field}_{key}",
-                        integer=True,
-                        minimum=1900,
-                        maximum=9999,
-                        optional=True,
-                    )
                 forms.choice(
                     row,
                     "basis",
@@ -954,13 +951,13 @@ def _vesting_and_options(adult: dict[str, Any], scope: str) -> None:
                     ("nominal", "real", "shares"),
                     f"basis_{key}",
                     labels={
-                        "nominal": "Nominal dollars",
+                        "nominal": "Future dollars",
                         "real": "Reference-year dollars",
                         "shares": "Number of shares",
                     },
+                    segmented=True,
                 )
-                forms.text(row, "notes", "Vesting notes", f"notes_{key}")
-            with remove:
+                forms.text(row, "notes", "Vesting notes (optional)", f"notes_{key}")
                 _remove(adult["vesting"], i, "Remove vesting entry", key)
         _add(
             adult["vesting"],
@@ -968,14 +965,10 @@ def _vesting_and_options(adult: dict[str, Any], scope: str) -> None:
             "Add vesting entry",
             f"vesting_{scope}",
         )
-        if adult["options"]:
-            forms.table_header(("Year", "Option event", "", ""), (1.5, 2.5, 1.5, 0.5))
         for i, row in enumerate(adult["options"]):
             key = f"option_{i}_{scope}"
-            year, event, details, remove = st.columns(
-                (1.5, 2.5, 1.5, 0.5), vertical_alignment="center"
-            )
-            with year:
+            with st.container(border=True):
+                st.markdown(f"**Option event {i + 1}**")
                 forms.number(
                     row,
                     "year",
@@ -985,20 +978,7 @@ def _vesting_and_options(adult: dict[str, Any], scope: str) -> None:
                     minimum=1900,
                     maximum=9999,
                     optional=True,
-                    compact=True,
                 )
-            event.caption(
-                " + ".join(
-                    label
-                    for field, label in (
-                        ("award", "Award"),
-                        ("exercise", "ISO exercise"),
-                    )
-                    if row[field] is not None
-                )
-                or "Choose an event"
-            )
-            with details, st.popover("Details"):
                 if forms.optional_section(
                     row,
                     "award",
@@ -1015,8 +995,9 @@ def _vesting_and_options(adult: dict[str, Any], scope: str) -> None:
                     {},
                 ):
                     forms.option_exercise(row["exercise"], key)
-                forms.text(row, "notes", "Option event notes", f"notes_{key}")
-            with remove:
+                forms.text(
+                    row, "notes", "Option event notes (optional)", f"notes_{key}"
+                )
                 _remove(adult["options"], i, "Remove option event", key)
         _add(
             adult["options"],
@@ -1027,56 +1008,46 @@ def _vesting_and_options(adult: dict[str, Any], scope: str) -> None:
 
 
 def _spending(data: dict[str, Any], scope: str) -> None:
-    """Show regular budgets and added expenses in separate compact tables."""
+    """Keep each expense's amount and dates together, with optional detail on demand."""
     st.caption(
         "Total household costs, excluding taxes and saving. Inflation is set in Economy."
     )
-    forms.table_header(("Budget", "Annual amount ($)", "Range", ""), (3, 2, 2, 1.2))
-    name, amount, bounds, details = st.columns(
-        (3, 2, 2, 1.2), vertical_alignment="center"
+    details = st.toggle(
+        "Edit ranges, essential costs, and notes", key=f"budget_details_{scope}"
     )
-    name.text("Regular living costs")
-    with amount:
-        _range_value(
-            data["baseline"]["amount"],
-            "central",
-            "Regular living costs",
-            f"baseline_{scope}",
-            "money",
-            compact=True,
-        )
-    bounds.caption(_range_summary(data["baseline"]["amount"]))
-    with details, st.popover("Details"):
+    st.subheader("Regular living costs")
+    _range_value(
+        data["baseline"]["amount"],
+        "central",
+        "Regular living costs",
+        f"baseline_{scope}",
+        "money",
+    )
+    if _range_summary(data["baseline"]["amount"]) != "—":
+        st.caption(f"Range: {_range_summary(data['baseline']['amount'])}")
+    if details:
         _budget_details(data["baseline"], f"baseline_{scope}")
     st.subheader("Changes to regular living costs")
     st.caption("Each change replaces the regular budget from its start date.")
-    if data["replacements"]:
-        forms.table_header(
-            ("Change", "Annual amount ($)", "Starts", "", ""), (3, 2, 2, 1.2, 0.4)
-        )
     for i, row in enumerate(data["replacements"]):
         key = f"replacement_{i}_{scope}"
-        name, amount, when, details, remove = st.columns(
-            (3, 2, 2, 1.2, 0.4), vertical_alignment="top"
-        )
-        with name:
-            forms.text(row, "label", "Change name", f"label_{key}", compact=True)
-        with amount:
-            _range_value(
-                row["budget"]["amount"],
-                "central",
-                "New regular living costs",
-                key,
-                "money",
-                compact=True,
-            )
-        if _range_summary(row["budget"]["amount"]) != "—":
-            amount.caption(f"Range: {_range_summary(row['budget']['amount'])}")
-        when.caption(_when(row["when"]))
-        with details, st.popover("Details"):
+        with st.container(border=True):
+            name, amount = st.columns(2)
+            with name:
+                forms.text(row, "label", "Change name", f"label_{key}")
+            with amount:
+                _range_value(
+                    row["budget"]["amount"],
+                    "central",
+                    "New regular living costs",
+                    key,
+                    "money",
+                )
+                if _range_summary(row["budget"]["amount"]) != "—":
+                    st.caption(f"Range: {_range_summary(row['budget']['amount'])}")
             _time(row["when"], "Change starts", key)
-            _budget_details(row["budget"], key)
-        with remove:
+            if details:
+                _budget_details(row["budget"], key)
             _remove(data["replacements"], i, "Remove change", key)
     _add(
         data["replacements"],
@@ -1086,65 +1057,48 @@ def _spending(data: dict[str, Any], scope: str) -> None:
     )
     st.subheader("Extra expenses")
     st.caption(
-        "These add to the living-cost budget, including during retirement. End dates are the first year excluded."
+        "Added to regular living costs, including during retirement. An end year is the first year you no longer pay the expense."
     )
-    if data["adjustments"]:
-        forms.table_header(
-            ("Expense", "Frequency", "Amount ($)", "Timing", "", ""),
-            (2.5, 1.5, 1.7, 2, 1.2, 0.4),
-        )
     for i, row in enumerate(data["adjustments"]):
         key = f"adjustment_{i}_{scope}"
-        name, frequency, amount, when, details, remove = st.columns(
-            (2.5, 1.5, 1.7, 2, 1.2, 0.4), vertical_alignment="top"
-        )
-        with name:
-            forms.text(row, "label", "Expense name", f"label_{key}", compact=True)
-        with frequency:
-            forms.choice(
-                row,
-                "frequency",
-                "Frequency",
-                ("recurring", "once"),
-                f"frequency_{key}",
-                labels={"recurring": "Annual", "once": "One-time"},
-                compact=True,
-            )
-        unit = "once" if row["frequency"] == "once" else "money"
-        with amount:
+        with st.container(border=True):
+            name, frequency = st.columns(2)
+            with name:
+                forms.text(row, "label", "Expense name", f"label_{key}")
+            with frequency:
+                forms.choice(
+                    row,
+                    "frequency",
+                    "Frequency",
+                    ("recurring", "once"),
+                    f"frequency_{key}",
+                    labels={"recurring": "Every year", "once": "One time"},
+                    segmented=True,
+                )
+            unit = "once" if row["frequency"] == "once" else "money"
             _range_value(
                 row["amount"],
                 "central",
                 "One-time amount" if unit == "once" else "Extra annual cost",
                 key,
                 unit,
-                compact=True,
             )
-        if _range_summary(row["amount"]) != "—":
-            amount.caption(f"Range: {_range_summary(row['amount'])}")
-        if row["frequency"] == "once":
-            row["end"] = None
-        when.caption(
-            _when(row["start"])
-            + (
-                f" → {_when(row['end'], empty='Ongoing')}"
-                if row["frequency"] == "recurring"
-                else ""
-            )
-        )
-        with details, st.popover("Details"):
+            if _range_summary(row["amount"]) != "—":
+                st.caption(f"Range: {_range_summary(row['amount'])}")
             _time(row["start"], "Expense starts", key)
-            if row["frequency"] == "recurring" and forms.optional_section(
+            if row["frequency"] == "once":
+                row["end"] = None
+            elif forms.optional_section(
                 row,
                 "end",
                 "Specify an end date",
                 f"end_enabled_{key}",
                 TimeAnchor().model_dump(mode="json"),
             ):
-                _time(row["end"], "Expense ends (exclusive)", f"end_{key}")
-            _range_details(row["amount"], "Expense", key, unit)
-            forms.text(row, "notes", "Expense notes", f"notes_{key}")
-        with remove:
+                _time(row["end"], "Payments stop", f"end_{key}")
+            if details:
+                _range_details(row["amount"], "Expense", key, unit)
+                forms.text(row, "notes", "Expense notes", f"notes_{key}")
             _remove(data["adjustments"], i, "Remove additional expense", key)
     _add(
         data["adjustments"],
@@ -1177,7 +1131,7 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
         "reserved_cash",
         "Cash reserve ($)",
         f"reserved_cash_{scope}",
-        help_text="Cash kept outside the portfolio allocation, in this scenario's reference-year dollars. It is already part of Wealth, not an extra asset. Enter 0 for none.",
+        help_text="Cash kept outside the portfolio allocation, in the reference-year dollars set above. It is already part of Wealth, not an extra asset. Enter 0 for none.",
     )
     st.subheader("Portfolio strategy")
     forms.choice(
@@ -1188,12 +1142,13 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
         f"policy_{scope}",
         labels={
             "undecided": "Undecided",
-            "constant": "Keep the same allocation",
-            "gradual": "Glide path",
+            "constant": "Keep the same mix",
+            "gradual": "Change the mix over time",
         },
+        segmented=True,
     )
     st.caption(
-        "For a glide path, enter a starting mix and a final mix with their dates. Stocks, bonds, and cash must total 100%; the cash reserve is separate."
+        "Stocks, bonds, and cash must total 100%. The cash reserve is separate. To change the mix over time, add a starting target and a final target with their dates."
     )
     if data["policy"] == "gradual":
         forms.choice(
@@ -1203,48 +1158,33 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
             tuple(GLIDE_SHAPES),
             f"glide_shape_{scope}",
             labels=GLIDE_SHAPES,
+            segmented=True,
         )
         st.caption(
             "The shape changes how quickly you move toward the final mix. All shapes reach it on the finish date and hold it afterward. With extra dated targets, the same shape applies between each pair."
         )
-    if data["checkpoints"]:
-        forms.table_header(
-            ("Starting when", "Stocks (%)", "Bonds (%)", "Cash (%)", "", ""),
-            (3, 1.5, 1.5, 1.5, 1.2, 0.4),
-        )
     for i, row in enumerate(data["checkpoints"]):
         key = f"checkpoint_{i}_{scope}"
-        when, stocks, bonds, cash, details, remove = st.columns(
-            (3, 1.5, 1.5, 1.5, 1.2, 0.4), vertical_alignment="center"
-        )
-        when.text(_when(row["when"]))
-        with details, st.popover("Details"):
+        with st.container(border=True):
+            st.markdown(f"**Allocation target {i + 1}**")
             _time(row["when"], "Allocation effective", key)
-            forms.optional_section(
+            if forms.optional_section(
                 row,
                 "mix",
                 "Specify target allocation",
                 f"mix_enabled_{key}",
                 {"equities": None, "fixed_income": None, "cash": None},
-            )
-        for column, field, label in zip(
-            (stocks, bonds, cash),
-            ("equities", "fixed_income", "cash"),
-            ("Stocks", "Bonds", "Cash"),
-            strict=True,
-        ):
-            with column:
-                if row["mix"] is not None:
-                    forms.percent(
-                        row["mix"],
-                        field,
-                        f"{label} (%)",
-                        f"{field}_{key}",
-                        compact=True,
-                    )
-                else:
-                    st.caption("Not entered")
-        with remove:
+            ):
+                for column, field, label in zip(
+                    st.columns(3),
+                    ("equities", "fixed_income", "cash"),
+                    ("Stocks", "Bonds", "Cash"),
+                    strict=True,
+                ):
+                    with column:
+                        forms.percent(
+                            row["mix"], field, f"{label} (%)", f"{field}_{key}"
+                        )
             _remove(data["checkpoints"], i, "Remove allocation checkpoint", key)
     _add(
         data["checkpoints"],
@@ -1261,15 +1201,17 @@ def _investments(data: dict[str, Any], scope: str, dsn: str | None) -> None:
         labels={
             "undecided": "Undecided",
             "annual": "Annual",
-            "flows_only": "Contributions and withdrawals only",
+            "flows_only": "When money enters or leaves",
         },
+        segmented=True,
+        help_text="Annual rebalancing restores the target mix each year. The other option moves toward the target only through contributions and withdrawals.",
     )
 
 
 def _economy(data: dict[str, Any], scope: str) -> None:
     """Capture compound outlooks separately from editable simulation assumptions."""
     st.caption(
-        "Enter average yearly growth after investment fees and before tax. Returns include inflation; do not subtract it here."
+        "Enter annual inflation and total investment returns. Returns are after fees, before tax, and include inflation."
     )
     fields = (
         ("inflation", "Inflation"),
@@ -1303,7 +1245,7 @@ def _economy(data: dict[str, Any], scope: str) -> None:
         )
     st.subheader("Investment income")
     st.caption(
-        "Dividends and interest are part of total returns above, not extra growth. These yields determine the income taxed each year."
+        "The returns above already include dividends and interest. These yields determine how much income is taxed each year."
     )
     for column, field, label in zip(
         st.columns(2),
@@ -1434,12 +1376,17 @@ def _list_percent(row: list[Any], index: int, label: str, key: str) -> None:
 
 
 def _retirement(data: dict[str, Any], scope: str) -> None:
-    """Keep each person's timing and each household budget visible together."""
+    """Keep retirement dates and household budgets visible; offer ranges on demand."""
     st.subheader("Retirement and lifespan")
     st.caption(
-        "Retirement year is the first full year without employment income. Planning age is how long spending should be covered."
+        "Retirement year is the first full year without employment income. Plan through age sets how long spending must be covered."
     )
-    with st.expander("Lifespan settings"):
+    details = st.toggle(
+        "Edit ranges, essential costs, and notes", key=f"retirement_details_{scope}"
+    )
+    with st.expander(
+        "Mortality assumptions (advanced)", expanded=data["mode"] == "sample"
+    ):
         forms.choice(
             data,
             "mode",
@@ -1448,12 +1395,13 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
             f"mode_{scope}",
             labels={
                 "ages": "Choose planning ages",
-                "sample": "Use a mortality model later",
+                "sample": "Mortality model (not forecastable yet)",
             },
+            segmented=True,
         )
         if data["mode"] == "sample":
-            st.caption(
-                "A mortality model would sample lifespans. No sampling runs here yet."
+            st.warning(
+                "Forecasts currently require planning ages. Mortality model inputs can be saved for later use."
             )
             forms.choice(
                 data,
@@ -1462,6 +1410,7 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
                 ("unknown", "period", "cohort"),
                 f"table_basis_{scope}",
                 help_text="Period tables use current death rates; cohort tables allow rates to change over time.",
+                segmented=True,
             )
             for i, adult in enumerate(data["adults"]):
                 adult["age"] = {"central": None, "lower": None, "upper": None}
@@ -1471,14 +1420,9 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
                     f"{adult['name']} table classification",
                     f"classification_{i}_{scope}",
                 )
-    forms.table_header(
-        ("Person", "Retirement year", "Plan through age", "Ranges", ""),
-        (2, 1.8, 1.8, 2.5, 1.2),
-    )
+    forms.table_header(("Person", "Retirement year", "Plan through age"), (2, 2, 2))
     for i, adult in enumerate(data["adults"]):
-        name, year, age, ranges, details = st.columns(
-            (2, 1.8, 1.8, 2.5, 1.2), vertical_alignment="center"
-        )
+        name, year, age = st.columns(3, vertical_alignment="center")
         name.text(adult["name"])
         with year:
             _range_value(
@@ -1500,34 +1444,36 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
                     compact=True,
                 )
             else:
-                st.caption("Sampled later")
-        ranges.caption(
-            f"Retire: {_range_summary(adult['retirement'], 'year')} · Age: {_range_summary(adult['age'], 'age')}"
-        )
-        with details, st.popover("Ranges"):
+                st.caption("Mortality model selected")
+        if any(
+            _range_summary(adult[field], unit) != "—"
+            for field, unit in (("retirement", "year"), ("age", "age"))
+        ):
+            st.caption(
+                f"{adult['name']} ranges · Retire: {_range_summary(adult['retirement'], 'year')} · Age: {_range_summary(adult['age'], 'age')}"
+            )
+        if details:
             _range_details(
                 adult["retirement"],
-                "Retirement year",
+                f"{adult['name']} retirement year",
                 f"retirement_{i}_{scope}",
                 "year",
             )
             if data["mode"] == "ages":
-                _range_details(adult["age"], "Planning age", f"age_{i}_{scope}", "age")
+                _range_details(
+                    adult["age"],
+                    f"{adult['name']} planning age",
+                    f"age_{i}_{scope}",
+                    "age",
+                )
     st.subheader("Household living costs")
     st.caption(
-        "Total household costs replace regular living costs. Dated extra expenses continue separately. Include any health costs you want forecast in these budgets until separate health-expense modeling is added."
-    )
-    forms.table_header(
-        ("Household situation", "Budget", "Annual amount ($)", ""), (2.5, 3, 2, 1.2)
+        "These budgets replace regular living costs from Spending. Extra expenses continue on their own dates. Include healthcare in the household total."
     )
     for i, field in enumerate(("only_adult_1", "only_adult_2")):
         choice = data[field]
         label = f"Only {data['adults'][i]['name']} retired"
-        situation, mode, amount, details = st.columns(
-            (2.5, 3, 2, 1.2), vertical_alignment="top"
-        )
-        situation.text(label)
-        with mode:
+        with st.container(border=True):
             forms.choice(
                 choice,
                 "mode",
@@ -1535,42 +1481,36 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
                 ("unknown", "continue", "replace"),
                 f"budget_mode_{i}_{scope}",
                 labels={
-                    "unknown": "Choose a budget",
-                    "continue": "Continue regular living costs",
-                    "replace": "Use a different household budget",
+                    "unknown": "Not decided",
+                    "continue": "Keep regular living costs",
+                    "replace": "Use a new budget",
                 },
-                compact=True,
+                segmented=True,
             )
-        if choice["mode"] == "replace":
-            if choice["budget"] is None:
-                choice["budget"] = Budget().model_dump(mode="json")
-            with amount:
+            if choice["mode"] == "replace":
+                if choice["budget"] is None:
+                    choice["budget"] = Budget().model_dump(mode="json")
                 _range_value(
                     choice["budget"]["amount"],
                     "central",
                     "Household living costs",
                     f"only_{i}_{scope}",
                     "money",
-                    compact=True,
                 )
-            if _range_summary(choice["budget"]["amount"]) != "—":
-                amount.caption(f"Range: {_range_summary(choice['budget']['amount'])}")
-            with details, st.popover("Details"):
-                _budget_details(choice["budget"], f"only_{i}_{scope}")
-        else:
-            choice["budget"] = None
-            amount.caption(
-                "From Spending" if choice["mode"] == "continue" else "Not entered"
-            )
+                if _range_summary(choice["budget"]["amount"]) != "—":
+                    st.caption(f"Range: {_range_summary(choice['budget']['amount'])}")
+                if details:
+                    _budget_details(choice["budget"], f"only_{i}_{scope}")
+            else:
+                choice["budget"] = None
+                if choice["mode"] == "continue":
+                    st.caption("Uses the regular living-cost budget from Spending.")
     for field, label in (
         ("both_retired", "Both retired"),
         ("survivor", "After one person dies"),
     ):
-        situation, mode, amount, details = st.columns(
-            (2.5, 3, 2, 1.2), vertical_alignment="top"
-        )
-        situation.text(label)
-        with mode:
+        with st.container(border=True):
+            st.markdown(f"**{label}**")
             enabled = field == "both_retired" or forms.optional_section(
                 data,
                 "survivor",
@@ -1578,33 +1518,29 @@ def _retirement(data: dict[str, Any], scope: str) -> None:
                 f"survivor_enabled_{scope}",
                 Budget().model_dump(mode="json"),
             )
-            if field == "both_retired":
-                st.caption("Retired household budget")
-        if enabled:
+            if not enabled:
+                continue
             budget = data[field]
             budget_scope = (
                 f"both_{scope}" if field == "both_retired" else f"survivor_{scope}"
             )
-            with amount:
-                _range_value(
-                    budget["amount"],
-                    "central",
-                    "Both retired"
-                    if field == "both_retired"
-                    else "Remaining person's living costs",
-                    budget_scope,
-                    "money",
-                    compact=True,
-                )
+            _range_value(
+                budget["amount"],
+                "central",
+                "Both retired"
+                if field == "both_retired"
+                else "Remaining person's living costs",
+                budget_scope,
+                "money",
+            )
             if _range_summary(budget["amount"]) != "—":
-                amount.caption(f"Range: {_range_summary(budget['amount'])}")
-            with details, st.popover("Details"):
+                st.caption(f"Range: {_range_summary(budget['amount'])}")
+            if details:
                 _budget_details(budget, budget_scope)
-        else:
-            amount.caption("Not entered")
-    st.caption(
-        "After a death, use the remaining person's total budget, even if they are still working."
-    )
+            if field == "survivor":
+                st.caption(
+                    "Use the remaining person's total budget, even if they are still working."
+                )
     _retirement_income(data, scope)
 
 
@@ -1639,10 +1575,11 @@ def _pension(adult: dict[str, Any], scope: str) -> None:
     status = _benefit_status(amount)
     selected = status if status in {"unknown", "none"} else "pension"
     choices = ("unknown", "none", "pension")
-    choice = st.selectbox(
+    choice = st.segmented_control(
         f"{adult['name']} pension",
         choices,
-        index=choices.index(selected),
+        default=selected,
+        required=True,
         format_func=lambda value: {
             "unknown": "Not entered",
             "none": "No pension",
@@ -1678,7 +1615,7 @@ def _retirement_income(data: dict[str, Any], scope: str) -> None:
     """Collect benefits once in the reusable Retirement scenario."""
     st.subheader("Retirement income")
     st.caption(
-        f"Annual amounts in {data['money_year'] or 'the scenario money-year'} dollars, before tax. Enter the Social Security estimate for the chosen claiming age; use 0 if none."
+        f"Annual amounts in {data['money_year'] or 'the reference-year'} dollars, before tax. Enter the Social Security estimate for the chosen claiming age; use 0 if none."
     )
     for i, adult in enumerate(data["adults"]):
         key = f"income_{i}_{scope}"
@@ -1709,169 +1646,181 @@ def _retirement_income(data: dict[str, Any], scope: str) -> None:
 def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
     """Choose and explicitly replace self-contained source copies in a Plan."""
     from financial_model import wealth_pages
+    from financial_model.wealth import SavedWealthSnapshot
 
     st.caption(
-        "Choose one scenario to hold a category fixed, or add alternatives to vary it. Household and starting Wealth stay the same."
+        "Choose saved assumptions for each category. Add alternatives to compare combinations. Household and starting Wealth apply to every combination."
     )
-    forms.table_header(
-        ("Category", "Selected scenarios", "Mode", ""), (1.4, 4.5, 1.3, 1.4)
+    st.caption(
+        "This plan keeps copies of your selections. After editing a source, update its copy here and save the plan."
     )
-    category, selected_names, mode, change = st.columns(
-        (1.4, 4.5, 1.3, 1.4), vertical_alignment="center"
-    )
-    category.text("Household")
-    selected_names.text(" · ".join(a["name"] for a in data["household"]["adults"]))
-    mode.caption("Fixed")
-    with change:
+    with st.container(border=True):
+        st.markdown("**Household**")
+        st.text(" · ".join(a["name"] for a in data["household"]["adults"]))
         category_link("Edit plan Household", "Household", target="plan")
     for kind in PROFILE_KINDS:
         records = _read(dsn, kind)
         selected = [c for c in data["components"] if c["inputs"]["kind"] == kind]
-        state = (
-            "Choose a scenario"
-            if not selected
-            else f"Fixed · {selected[0]['inputs']['name']}"
-            if len(selected) == 1
-            else f"Vary · {len(selected)} alternatives"
-        )
-        category, selected_names, mode, change = st.columns(
-            (1.4, 4.5, 1.3, 1.4), vertical_alignment="center"
-        )
-        category.text(LABELS[kind])
-        selected_names.text(
-            "; ".join(c["inputs"]["name"] for c in selected) or "Not selected"
-        )
-        mode.caption(
-            "Fixed"
-            if len(selected) == 1
-            else f"Vary · {len(selected)}"
-            if selected
-            else "Needs input"
-        )
-        with change, st.popover("Change"):
-            st.caption(state)
-            for selection in selected:
-                inputs = INPUT_ADAPTER.validate_python(selection["inputs"])
-                st.markdown(f"**{inputs.name}**")
-                st.caption(_summary(inputs).replace("$", r"\$"))
-                _review(inputs, "Details")
-                current = next(
-                    (r for r in records if str(r.id) == selection["source_id"]), None
-                )
-                if st.session_state["planning_available"][kind]:
-                    if current is None:
-                        st.caption(
-                            "Source no longer in library. This plan keeps its copy."
-                        )
-                    elif current.revision != selection["source_revision"]:
-                        st.caption(
-                            "Newer version available. Update this copy, then save the Plan."
-                        )
-                        if st.button(
-                            "Update this copy",
-                            key=f"refresh_{selection['source_id']}_{scope}",
+        with st.container(border=True):
+            st.subheader(LABELS[kind])
+            current_column, choose_column = st.columns((3, 2))
+            with current_column:
+                st.caption("In this plan")
+                if not selected:
+                    st.caption("No assumptions selected")
+                elif len(selected) > 1:
+                    st.caption(f"Compare {len(selected)} alternatives")
+                for selection in selected:
+                    inputs = INPUT_ADAPTER.validate_python(selection["inputs"])
+                    st.text(inputs.name)
+                    st.caption(_summary(inputs).replace("$", r"\$"))
+                    current = next(
+                        (r for r in records if str(r.id) == selection["source_id"]),
+                        None,
+                    )
+                    if st.session_state["planning_available"][kind]:
+                        if current is None:
+                            st.caption(
+                                "Source no longer in library. This plan keeps its copy."
+                            )
+                        elif current.revision != selection["source_revision"]:
+                            st.warning(
+                                "Saved source has changed. Update this copy to use it."
+                            )
+                            if st.button(
+                                "Update this copy",
+                                key=f"refresh_{selection['source_id']}_{scope}",
+                            ):
+                                _refresh_profile_copy(data, current)
+                    with st.container(horizontal=True):
+                        if current and st.button(
+                            "Edit source",
+                            key=f"source_{selection['source_id']}_{scope}",
                         ):
-                            _refresh_profile_copy(data, current)
-                with st.container(horizontal=True):
-                    if current and st.button(
-                        "Edit source", key=f"source_{selection['source_id']}_{scope}"
-                    ):
-                        _open(current)
-                    if st.button(
-                        "Remove",
-                        key=f"remove_selection_{selection['source_id']}_{scope}",
-                    ):
-                        data["components"].remove(selection)
-                        _changed_rows()
-            choices = {str(r.id): r for r in records}
-            if choices:
-                chosen = st.selectbox(
-                    f"Choose {LABELS[kind]} from library",
-                    list(choices),
-                    format_func=partial(_profile_label, choices),
-                    key=f"select_{kind}_{scope}",
-                )
-                st.caption(_summary(choices[chosen].inputs).replace("$", r"\$"))
-                with st.container(horizontal=True):
-                    if st.button(
-                        "Use only this scenario" if selected else "Choose",
-                        key=f"choose_{kind}_{scope}",
-                        disabled=not st.session_state["planning_available"][kind],
-                    ):
-                        _apply_replacement(data, choices[chosen])
-                    if selected and st.button(
-                        "Add alternative",
-                        key=f"alternative_{kind}_{scope}",
-                        disabled=not st.session_state["planning_available"][kind]
-                        or any(c["source_id"] == chosen for c in selected),
-                    ):
-                        data["components"].append(
-                            select_profile(choices[chosen]).model_dump(mode="json")
+                            _open(current)
+                        if st.button(
+                            "Remove",
+                            key=f"remove_selection_{selection['source_id']}_{scope}",
+                        ):
+                            data["components"].remove(selection)
+                            _changed_rows()
+                    _review(inputs, "Review copied inputs")
+            with choose_column:
+                choices = {str(r.id): r for r in records}
+                if choices:
+                    chosen = st.selectbox(
+                        f"Choose {LABELS[kind]} from library",
+                        list(choices),
+                        index=list(choices).index(selected[0]["source_id"])
+                        if selected and selected[0]["source_id"] in choices
+                        else 0,
+                        format_func=partial(_profile_label, choices),
+                        key=f"select_{kind}_{scope}",
+                    )
+                    st.caption(_summary(choices[chosen].inputs).replace("$", r"\$"))
+                    with st.container(horizontal=True):
+                        if st.button(
+                            "Replace selection"
+                            if selected
+                            else "Use these assumptions",
+                            key=f"choose_{kind}_{scope}",
+                            disabled=not st.session_state["planning_available"][kind],
+                        ):
+                            _apply_replacement(data, choices[chosen])
+                        if selected and st.button(
+                            "Add alternative",
+                            key=f"alternative_{kind}_{scope}",
+                            disabled=not st.session_state["planning_available"][kind]
+                            or any(c["source_id"] == chosen for c in selected),
+                        ):
+                            data["components"].append(
+                                select_profile(choices[chosen]).model_dump(mode="json")
+                            )
+                            _changed_rows()
+                    if len(selected) > 1:
+                        st.caption(
+                            "Replace selection removes the other alternatives in this category."
                         )
-                        _changed_rows()
-            else:
-                st.caption(f"Save a {LABELS[kind]} scenario to choose it here.")
+                else:
+                    st.caption(f"Save {LABELS[kind]} assumptions to choose them here.")
+                    category_link(
+                        f"Create {LABELS[kind]} assumptions",
+                        LABELS[kind],
+                        target="library",
+                        view="library",
+                    )
     wealth = wealth_pages._read(dsn)
-    category, selected_names, mode, change = st.columns(
-        (1.4, 4.5, 1.3, 1.4), vertical_alignment="center"
-    )
-    category.text("Wealth")
-    selected_names.text(
-        (data["wealth"]["snapshot"]["name"] or data["wealth"]["snapshot"]["as_of"])
-        if data["wealth"]
-        else "Not selected"
-    )
-    mode.caption("Fixed")
-    with change, st.popover("Change"):
-        st.caption("Starting Wealth")
-        if data["wealth"]:
-            from financial_model.wealth import SavedWealthSnapshot
-
-            selected_wealth = SavedWealthSnapshot.model_validate(data["wealth"])
-            st.text(
-                f"Selected: {selected_wealth.snapshot.title} · {selected_wealth.snapshot.as_of} · revision {selected_wealth.revision}"
-            )
-            current_wealth = next(
-                (r for r in wealth if r.id == selected_wealth.id), None
-            )
-            if st.session_state["wealth_store_available"] and (
-                current_wealth is None
-                or current_wealth.revision != selected_wealth.revision
-            ):
-                st.caption(
-                    "Source no longer in library."
-                    if current_wealth is None
-                    else "Newer version available."
+    with st.container(border=True):
+        st.subheader("Starting Wealth")
+        current_column, choose_column = st.columns((3, 2))
+        with current_column:
+            if data["wealth"]:
+                selected_wealth = SavedWealthSnapshot.model_validate(data["wealth"])
+                st.text(
+                    f"{selected_wealth.snapshot.title} · {selected_wealth.snapshot.as_of}"
                 )
-                if current_wealth and st.button(
-                    "Update Wealth copy", key=f"refresh_wealth_{scope}"
+                st.text(
+                    f"Net recorded wealth: ${selected_wealth.snapshot.net_recorded:,.2f}"
+                    if selected_wealth.snapshot.has_balances
+                    else "No balances entered"
+                )
+                current_wealth = next(
+                    (r for r in wealth if r.id == selected_wealth.id), None
+                )
+                if st.session_state["wealth_store_available"] and (
+                    current_wealth is None
+                    or current_wealth.revision != selected_wealth.revision
                 ):
-                    _apply_wealth(data, current_wealth)
-            if st.button("Remove Wealth selection", key=f"remove_wealth_{scope}"):
-                _apply_wealth(data, None)
-        wealth_choices = {str(r.id): r for r in wealth}
-        if wealth_choices:
-            chosen_wealth = st.selectbox(
-                "Choose Wealth from library",
-                list(wealth_choices),
-                format_func=lambda key: f"{wealth_choices[key].snapshot.title} · {wealth_choices[key].snapshot.as_of} · {key[:8]}",
-                key=f"select_wealth_{scope}",
-            )
-            wealth_pages._summary(wealth_choices[chosen_wealth].snapshot)
-            if st.button(
-                "Replace Wealth" if data["wealth"] else "Choose Wealth",
-                disabled=not st.session_state["wealth_store_available"],
-            ):
-                _apply_wealth(data, wealth_choices[chosen_wealth])
-        else:
-            st.caption("Save a Wealth snapshot to choose it here.")
+                    st.caption(
+                        "Source no longer in library. This plan keeps its copy."
+                        if current_wealth is None
+                        else "Saved source has changed. Update this copy to use it."
+                    )
+                    if current_wealth and st.button(
+                        "Update Wealth copy", key=f"refresh_wealth_{scope}"
+                    ):
+                        _apply_wealth(data, current_wealth)
+                if st.button("Remove Wealth selection", key=f"remove_wealth_{scope}"):
+                    _apply_wealth(data, None)
+            else:
+                st.caption("No starting Wealth selected")
+        with choose_column:
+            wealth_choices = {str(r.id): r for r in wealth}
+            if wealth_choices:
+                chosen_wealth = st.selectbox(
+                    "Choose Wealth from library",
+                    list(wealth_choices),
+                    index=list(wealth_choices).index(data["wealth"]["id"])
+                    if data["wealth"] and data["wealth"]["id"] in wealth_choices
+                    else 0,
+                    format_func=lambda key: f"{wealth_choices[key].snapshot.title} · {wealth_choices[key].snapshot.as_of} · {key[:8]}",
+                    key=f"select_wealth_{scope}",
+                )
+                candidate = wealth_choices[chosen_wealth].snapshot
+                st.caption(
+                    f"Net recorded wealth: ${candidate.net_recorded:,.2f}".replace(
+                        "$", r"\$"
+                    )
+                    if candidate.has_balances
+                    else "No balances entered"
+                )
+                if st.button(
+                    "Replace Wealth" if data["wealth"] else "Choose Wealth",
+                    disabled=not st.session_state["wealth_store_available"],
+                ):
+                    _apply_wealth(data, wealth_choices[chosen_wealth])
+            else:
+                st.caption("Save a Wealth snapshot to choose it here.")
+                category_link(
+                    "Create Wealth snapshot", "Wealth", target="library", view="library"
+                )
 
     plan = PlanningScenario(name="Preview", components=data["components"])
     if plan.combination_count:
         st.info(
-            f"{plan.combination_count} {'combination' if plan.combination_count == 1 else 'combinations'} selected. Forecast results are not calculated yet."
+            f"{plan.combination_count} {'combination' if plan.combination_count == 1 else 'combinations'} selected. Save this plan, then select it in Forecast."
         )
-        with st.expander("Preview combinations"):
+        if plan.combination_count > 1:
             import itertools
 
             st.table(

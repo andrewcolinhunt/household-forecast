@@ -75,15 +75,13 @@ def _annual_category(category: str, dsn: str | None) -> None:
     for row in data["allocation_plan"]["rows"]:
         if row["goal"]["id"] in catalogue:
             row["goal"] = catalogue[row["goal"]["id"]].model_dump(mode="json")
-    st.info(f"Editing annual plan: {data.get('name') or 'New annual plan'}")
+    st.caption(f"Editing annual plan: {data.get('name') or 'New annual plan'}")
     loaded = st.session_state.get("loaded_record")
     latest = next(
         (r for r in st.session_state["records"] if loaded and r.id == loaded.id), None
     )
     if loaded and st.session_state["store_available"] and latest is None:
-        st.warning(
-            "This annual plan was deleted. Save as new scenario to keep this draft."
-        )
+        st.warning("This annual plan was deleted. Save a new copy to keep this draft.")
     elif loaded and latest and loaded.revision != latest.revision:
         st.warning(
             "This annual plan has a newer saved version. Save a new copy or reload."
@@ -110,6 +108,7 @@ def _annual_category(category: str, dsn: str | None) -> None:
         st.session_state["draft_ages"] = ages["text"]
     elif category == "Work":
         st.subheader("Compensation")
+        st.caption("Enter each person's pay and contributions for this tax year.")
         forms.rsu_funding(data, scope, annual=True)
         for i, column in enumerate(st.columns(2)):
             with column:
@@ -119,6 +118,9 @@ def _annual_category(category: str, dsn: str | None) -> None:
                 forms.annual_options(adult, f"adult_{i}_{scope}")
     elif category == "Spending":
         st.subheader("Living expenses")
+        st.caption(
+            "Enter your monthly budget, then the childcare and renter details used for tax credits."
+        )
         forms.living_costs(data["living_costs"], scope)
     elif category == "Investments":
         st.subheader("Saving instructions")
@@ -138,9 +140,12 @@ def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
     from financial_model import app, planning_pages
 
     st.subheader("Annual plan")
+    st.caption(
+        "Compare one tax year of income, taxes, spending, and savings. Use a combined plan to forecast through retirement."
+    )
     name, year = st.columns((3, 1))
     with name:
-        forms.text(data, "name", "Custom label (optional)", f"name_{scope}")
+        forms.text(data, "name", "Annual plan name (optional)", f"name_{scope}")
     with year:
         forms.choice(
             data,
@@ -149,15 +154,27 @@ def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
             [2025, 2026],
             f"year_{scope}",
             labels={2025: "2025", 2026: "2026"},
+            segmented=True,
         )
-    with st.container(horizontal=True):
-        for category in ("Household", "Work", "Spending", "Investments"):
-            category_link(f"Edit {category}", category)
-    st.caption(
-        "Household owns family and residence facts; Work owns compensation; Spending owns expenses; Investments owns saving instructions."
-    )
-    with st.expander("Notes (optional)"):
-        forms.text(data, "notes", "Scenario notes", f"notes_{scope}", multiline=True)
+    st.markdown("**Plan inputs**")
+    for sections in (
+        (
+            ("Household", "People, ages, and state of residence"),
+            ("Work", "Pay, equity compensation, and 401(k) contributions"),
+        ),
+        (
+            ("Spending", "Monthly expenses and tax-credit eligibility"),
+            ("Investments", "How cash and retained shares are assigned to goals"),
+        ),
+    ):
+        for column, (category, description) in zip(
+            st.columns(2), sections, strict=True
+        ):
+            with column, st.container(border=True):
+                st.markdown(f"**{category}**")
+                st.caption(description)
+                category_link(f"Edit {category}", category)
+    forms.text(data, "notes", "Notes (optional)", f"notes_{scope}", multiline=True)
     forms.check(
         data,
         "assumptions_confirmed",
@@ -182,7 +199,8 @@ def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
         )
         copy = (
             st.button(
-                "Save as new scenario", disabled=not st.session_state["store_available"]
+                "Save as new annual plan",
+                disabled=not st.session_state["store_available"],
             )
             if loaded
             else False

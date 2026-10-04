@@ -36,9 +36,9 @@ def _setup_error(error: Exception) -> None:
 
 def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     """Edit the family defaults that new scenarios copy, retaining an editing buffer."""
-    st.title("Shared Household defaults")
+    st.title("Shared household defaults")
     st.caption(
-        "Defaults for new scenarios. Saved scenarios keep their own assumptions."
+        "Starting household details for new annual and combined plans. Each plan keeps its own copy; edits here apply only to new plans."
     )
     if "household_draft" not in st.session_state:
         try:
@@ -87,6 +87,7 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
         [2025, 2026],
         f"household_year_{epoch}",
         labels={2025: "2025", 2026: "2026"},
+        segmented=True,
     )
     forms.table_header(("Person", "Age at year end"), (3, 1))
     for index, person in enumerate(raw["adults"]):
@@ -147,7 +148,7 @@ def _save_household_inputs(dsn: str | None, raw: dict[str, Any]) -> None:
     if not dsn:
         st.session_state["local_household"] = saved
     st.session_state["notice"] = (
-        "Household defaults saved. Existing scenarios are unchanged."
+        "Household defaults saved. Existing plans keep their own details."
     )
     st.rerun()
 
@@ -168,7 +169,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
                     goal = create_goal(dsn, goal)
                 st.session_state["goals"] = (*st.session_state.get("goals", ()), goal)
                 st.session_state["notice"] = (
-                    "Goal added. Choose it in a scenario to allocate assets."
+                    "Goal added. Choose it in Investments to assign savings."
                 )
                 st.rerun()
             except (ValueError, psycopg.Error) as error:
@@ -225,7 +226,7 @@ def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -
                 "delete",
                 f"delete_goal_{goal.id}",
                 disabled=bool(used or draft_used),
-                help_text="Remove the goal from saved scenarios and open drafts before deleting it.",
+                help_text="Remove the goal from saved annual plans and open drafts before deleting it.",
             )
         if not (change or remove):
             return
@@ -247,7 +248,7 @@ def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -
                     updated if g.id == goal.id else g for g in st.session_state["goals"]
                 )
             st.session_state["notice"] = (
-                "Goal deleted." if remove else "Goal renamed across all scenarios."
+                "Goal deleted." if remove else "Goal renamed across annual plans."
             )
             st.rerun()
         except (ValueError, RevisionConflictError, psycopg.Error) as error:
