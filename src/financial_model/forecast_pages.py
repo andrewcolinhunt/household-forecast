@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 from typing import Any
 
 import psycopg
@@ -15,7 +13,6 @@ from financial_model.forecast_models import (
     ForecastSettings,
     SavedForecast,
 )
-from financial_model.forecast_paths import parse_history_csv
 from financial_model.forecast_storage import (
     create_forecast,
     import_forecast_backup,
@@ -194,14 +191,22 @@ def _scenario_links() -> None:
 
 
 def _settings(scope: str) -> dict[str, Any]:
-    """Collect reproducible simulation settings and dated historical evidence."""
+    """Set up fixed assumptions or reproducible simulated returns."""
     data: dict[str, Any] = st.session_state.setdefault(
         "forecast_settings", ForecastSettings().model_dump(mode="json")
     )
     key = f"mode_{scope}"
+    methods = ("fixed", "monte_carlo")
+    if data["mode"] not in methods:
+        data = ForecastSettings(
+            mode="fixed", count=data["count"], seed=data["seed"]
+        ).model_dump(mode="json")
+        st.session_state["forecast_settings"] = data
+        if key in st.session_state:
+            st.session_state[key] = data["mode"]
     data["mode"] = st.segmented_control(
         "Forecast method",
-        tuple(_MODES),
+        methods,
         default=data["mode"],
         required=True,
         format_func=_MODES.__getitem__,
@@ -213,12 +218,9 @@ def _settings(scope: str) -> dict[str, Any]:
         {
             "fixed": "Use each Plan's expected returns and inflation every year.",
             "monte_carlo": "Simulate different annual returns and inflation using each Plan's Economy assumptions (Monte Carlo).",
-            "historical": "Replay observed annual returns and inflation from an uploaded history.",
-            "bootstrap": "Build futures by sampling consecutive blocks from an uploaded history.",
-            "stress": "Test a specific market loss or period of high inflation.",
         }[data["mode"]]
     )
-    if data["mode"] in {"monte_carlo", "bootstrap"}:
+    if data["mode"] == "monte_carlo":
         forms.number(
             data,
             "count",
@@ -237,59 +239,9 @@ def _settings(scope: str) -> dict[str, Any]:
             maximum=2**32 - 1,
             help_text="Keep this number unchanged to repeat the same simulated futures.",
         )
-    if data["mode"] == "monte_carlo":
         st.caption(
             "Compared Plans share the same economic shocks. Low/high input ranges "
             "are separate choices; they do not define the simulated uncertainty."
-        )
-    if data["mode"] in {"historical", "bootstrap"}:
-        st.caption(
-            "Upload joint annual decimal rates, after investment fees: year,equities,fixed_income,cash,inflation. Years must be consecutive. Historical replay requires enough years for the full forecast; blocks sample consecutive stretches without wrapping."
-        )
-        history = st.file_uploader(
-            "Joint annual history CSV", type="csv", key=f"history_{scope}"
-        )
-        if history is not None:
-            text = history.getvalue().decode("utf-8-sig")
-            data["history"] = parse_history_csv(text)
-            data["history_start_year"] = int(
-                next(csv.DictReader(io.StringIO(text)))["year"]
-            )
-        forms.text(
-            data,
-            "history_source",
-            "History source, retrieval date, and fee convention",
-            f"history_source_{scope}",
-            multiline=True,
-        )
-        if not data["history_source"].strip():
-            msg = "Enter the history source, retrieval date, and fee convention before running historical scenarios."
-            raise ValueError(msg)
-        st.caption(f"{len(data['history'])} annual observations retained in this run.")
-        if data["mode"] == "bootstrap":
-            forms.number(
-                data,
-                "block_years",
-                "Consecutive years per block",
-                f"blocks_{scope}",
-                integer=True,
-                minimum=1,
-                maximum=30,
-            )
-    if data["mode"] == "stress":
-        forms.choice(
-            data,
-            "stress",
-            "Adverse scenario",
-            ("early_loss", "persistent_inflation"),
-            f"stress_{scope}",
-            labels={
-                "early_loss": "Early stock losses: -40%, -20%, 0%",
-                "persistent_inflation": "At least 8% inflation for ten years",
-            },
-        )
-        st.caption(
-            "These events have no assigned probability. Other rates use each Plan's expected assumptions."
         )
     return data
 
@@ -463,93 +415,12 @@ def _chart(document: SavedForecast) -> None:
     )
 
 
-def _inspect(document: SavedForecast) -> None:
-    """Show an individual annual ledger, reconstructing only when explicitly requested."""
-    with st.expander("Inspect an individual future"):
-        scenario = 0
-        if len(document.summaries) > 1:
-            scenario = st.segmented_control(
-                "Plan to inspect",
-                range(len(document.summaries)),
-                default=0,
-                required=True,
-                format_func=lambda index: f"{index + 1}. {document.summaries[index].name}",
-                key=f"inspect_scenario_{document.id}",
-            )
-        summary = document.summaries[scenario]
-        path = 1
-        if summary.paths > 1:
-            path = st.number_input(
-                "Future number",
-                min_value=1,
-                max_value=summary.paths,
-                value=1,
-                step=1,
-                key=f"inspect_path_{document.id}_{scenario}",
-            )
-        if document.request.settings.mode == "historical":
-            start = document.request.settings.history_start_year
-            if start is not None:
-                st.caption(
-                    f"This replay begins with the observed economic year {start + int(path) - 1}."
-                )
-        calculation = st.session_state.get("forecast_calculation")
-        if calculation is not None and calculation.document.id == document.id:
-            ledger = calculation.inspect(scenario, int(path) - 1)
-        elif path == 1:
-            ledger = list(summary.example)
-        else:
-            st.info("Rerun these inputs to reconstruct other individual futures.")
-            ledger = []
-        st.caption(
-            "Annual nominal dollars, with reference-year values where labeled. Transfers stay inside the household; an unfunded expense remains a shortfall."
-        )
-        st.dataframe(ledger, hide_index=True, width="stretch")
-
-
-def _results(document: SavedForecast, dsn: str | None) -> None:
-    """Present uncertainty, accessible funds, and funding failures together."""
-    st.subheader(document.request.name)
-    st.caption(
-        f"Run on {document.created_at:%Y-%m-%d %H:%M} UTC · {_MODES[document.request.settings.mode]}"
-    )
+def _overview(document: SavedForecast) -> None:
+    """Summarize the saved run before inspecting any individual future."""
     years = ", ".join(
         str(year) for year in sorted({s.money_year for s in document.summaries})
     )
     single_future = all(s.paths == 1 for s in document.summaries)
-    st.markdown("#### Lifetime funding")
-    funding_rows: list[dict[str, str | int | float | None]] = [
-        {
-            "Plan": s.name,
-            "Expenses funded through lifetime": "Yes"
-            if s.funded_fraction == 1
-            else "No",
-            "First shortfall": s.first_shortfall_year,
-            "Unpaid expenses ($)": round(s.mean_unfunded_total),
-            "Years with shortfall": round(s.mean_unfunded_years),
-        }
-        if single_future
-        else {
-            "Plan": s.name,
-            "Futures": s.paths,
-            "Fully funded futures (%)": round(s.funded_fraction * 100, 1),
-            "First shortfall in any future": s.first_shortfall_year,
-            "Average unpaid expenses ($)": round(s.mean_unfunded_total),
-            "Average years with a shortfall": round(s.mean_unfunded_years, 1),
-        }
-        for s in document.summaries
-    ]
-    st.dataframe(funding_rows, hide_index=True, width="stretch")
-    st.caption(
-        (
-            "Each Plan shows one projected future, not a probability. "
-            if single_future
-            else "Fully funded means every year's expenses can be paid through the planning "
-            "lifetimes. Averages include every future. "
-        )
-        + "A positive balance can still leave "
-        f"expenses unpaid if funds are inaccessible. Amounts use {years} purchasing power."
-    )
     st.markdown("#### Net wealth over time")
     st.caption(
         f"Balances use {years} purchasing power. Each line shows one projected future. "
@@ -581,7 +452,28 @@ def _results(document: SavedForecast, dsn: str | None) -> None:
             hide_index=True,
             width="stretch",
         )
-    _inspect(document)
+
+
+def _results(document: SavedForecast, dsn: str | None) -> None:
+    """Group overview and accepted breakdowns around the same frozen run."""
+    from financial_model.forecast_views import forecast_breakdown, forecast_sensitivity
+
+    st.subheader(document.request.name)
+    st.caption(
+        f"Run on {document.created_at:%Y-%m-%d %H:%M} UTC · {_MODES[document.request.settings.mode]}"
+    )
+    labels = ("Overview", "Cash flow", "Simulated future", "Sensitivity")
+    tabs = st.tabs(labels, key=f"forecast_result_tab_{document.id}", on_change="rerun")
+    for label, tab in zip(labels, tabs, strict=True):
+        if not tab.open:
+            continue
+        with tab:
+            if label == "Overview":
+                _overview(document)
+            elif label == "Sensitivity":
+                forecast_sensitivity(document)
+            else:
+                forecast_breakdown(document, label)
     st.markdown("#### Keep this forecast")
     if not dsn:
         st.caption(
@@ -639,50 +531,52 @@ def forecast_page() -> None:
     )
     dsn = _database_url()
     _saved_runs(dsn)
-    st.subheader("Set up forecast")
-    scope = str(st.session_state.get("forecast_epoch", 0))
-    options = _plans(dsn)
-    request = None
-    if options:
-        plans = _selection(options, scope)
-        if plans:
-            names = st.session_state.setdefault(
-                "forecast_name", {"name": "Retirement forecast"}
-            )
-            forms.text(names, "name", "Forecast name", f"forecast_name_{scope}")
-            _assumptions()
-            try:
-                settings = _settings(scope)
-                request = ForecastRequest(
-                    name=names["name"],
-                    plans=plans,
-                    settings=ForecastSettings.model_validate(settings),
+    with st.expander(
+        "Set up forecast", expanded="forecast_document" not in st.session_state
+    ):
+        scope = str(st.session_state.get("forecast_epoch", 0))
+        options = _plans(dsn)
+        request = None
+        if options:
+            plans = _selection(options, scope)
+            if plans:
+                names = st.session_state.setdefault(
+                    "forecast_name", {"name": "Retirement forecast"}
                 )
-                issues = forecast_issues(request)
-            except (ValueError, UnicodeDecodeError) as error:
-                st.error(str(error))
-                request, issues = None, ()
-            if issues:
-                with st.container(border=True):
-                    st.markdown("#### Complete these inputs before running")
-                    for issue in issues:
-                        st.markdown(f"- {issue}")
-                _scenario_links()
-            if (
-                st.button(
-                    "Run forecast",
-                    type="primary",
-                    disabled=request is None or bool(issues),
-                )
-                and request is not None
-            ):
-                _run(request)
+                forms.text(names, "name", "Forecast name", f"forecast_name_{scope}")
+                _assumptions()
+                try:
+                    settings = _settings(scope)
+                    request = ForecastRequest(
+                        name=names["name"],
+                        plans=plans,
+                        settings=ForecastSettings.model_validate(settings),
+                    )
+                    issues = forecast_issues(request)
+                except ValueError as error:
+                    st.error(str(error))
+                    request, issues = None, ()
+                if issues:
+                    with st.container(border=True):
+                        st.markdown("#### Complete these inputs before running")
+                        for issue in issues:
+                            st.markdown(f"- {issue}")
+                    _scenario_links()
+                if (
+                    st.button(
+                        "Run forecast",
+                        type="primary",
+                        disabled=request is None or bool(issues),
+                    )
+                    and request is not None
+                ):
+                    _run(request)
+            else:
+                st.info("Choose at least one saved Plan to set up a forecast.")
         else:
-            st.info("Choose at least one saved Plan to set up a forecast.")
-    else:
-        st.info(
-            "Save a combined Plan with Work, Spending, Investments, Economy, and Retirement choices, or open a forecast JSON above."
-        )
+            st.info(
+                "Save a combined Plan with Work, Spending, Investments, Economy, and Retirement choices, or open a forecast JSON above."
+            )
     if document := st.session_state.get("forecast_document"):
         st.subheader("Results")
         if options and request != document.request:

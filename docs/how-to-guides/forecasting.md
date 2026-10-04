@@ -21,8 +21,8 @@ snapshot and matching economic futures.
    under **Scenarios → Plans**. Review its forecast readiness. When a source
    changes, choose **Update this copy** or **Update Wealth copy**, then save the
    Plan. Other Plans retain their own copies.
-3. Open **Forecast** and select up to four combinations. Categories with saved
-   alternatives produce separate choices. Compared choices must share their
+3. Open **Forecast → Set up forecast** and select up to four combinations.
+   Categories with saved alternatives produce separate choices. Compared choices must share their
    dated accounts, debts, and household demographics; residence may differ.
 4. Start with **Fixed assumptions** to check your cash flows. Then choose
    **Simulated returns** (Monte Carlo) for uncertainty bands. The default is 10,000 simulated
@@ -57,51 +57,41 @@ there is no separate opening-year setting.
 
 ## Read the results
 
-Start with **Lifetime funding**. A single projected future shows whether expenses
-are funded and any unpaid expenses; it is not a probability. Runs with multiple
-futures show the funded fraction and average shortfalls.
+Use the four result tabs:
 
-The main chart shows net wealth at each year end, in 2026 purchasing power.
-For multiple futures, it shows the median and middle 80% of modeled outcomes.
-Retirement dates appear as vertical marks. The band is neither a worst-case
-boundary nor a lifetime guarantee.
-The time axis has three aligned numeric rows: year and both people's year-end
-ages, with row labels on the left. Ages use the household saved with the forecast.
-Hover over a line for exact ages and balances. The full-width chart limits its
-height to keep the following results within reach. Its legend sits inside the upper-left
-corner, with solid samples matching the median lines.
+- **Overview** compares net wealth at each year end, in 2026 purchasing power.
+  Fixed assumptions show one projected future; simulated returns show the median
+  and middle 80% of modeled outcomes. Retirement dates appear as vertical marks,
+  and the time axis includes both people's ages. Open the annual table below the
+  chart for accessible funds, cash, debt, and shortfalls.
+- **Cash flow** shows income above zero and planned spending and paid taxes below
+  zero. Use **Inspect year** beside the asset waterfall to reconcile that year's
+  opening assets, income, investment returns, and paid costs with closing assets.
+  The unexplained difference should be near zero. Transfers and employee
+  contributions remain inside assets.
+- **Simulated future** follows one actual future across net wealth, total and
+  accessible assets, account balances by tax treatment, returns, inflation,
+  spending, withdrawals, and unpaid expenses.
+- **Sensitivity** shows which assumptions most affect wealth in a selected year.
+  Choose a Plan and **Inspect year**, then select **Run sensitivity analysis**.
+  It changes one input at a time against a fixed baseline and ranks the changes
+  in net wealth within the displayed ranges. The ranking depends on those ranges
+  and the selected year; it does not describe probabilities.
 
-Read the funding summary and annual table alongside the chart. Positive total
-wealth can coexist with a spending shortfall when money remains in inaccessible
-retirement accounts. Accessible balances are gross of future withdrawal taxes;
-HSA funds are excluded from accessible balances. Cash means taxable
-cash available to the household.
+In Cash flow and Simulated future, use **Dollar display** to switch units. Runs
+with multiple Plans or futures also offer **Plan to inspect** and **Future number**.
+These selections carry between the two tabs, whose charts follow the same complete
+future. Open **Annual ledger** for the nominal amounts. The saved example is
+**Future 1**, not a path through each year's median.
 
-Inspect an individual path to see nominal
-account balances and the annual reconciliation. The saved example is **Future 1**,
-not an invented path through each year's median.
+Positive total wealth can coexist with a spending shortfall when money remains
+in inaccessible accounts. Accessible balances are before withdrawal taxes and
+exclude HSA funds. Cash means taxable cash available to the household. The
+Overview band is neither a worst-case boundary nor a lifetime guarantee.
 
-## Check adverse and historical outcomes
-
-**Adverse scenario** applies an illustrative stock decline or sustained high
-inflation. These scenarios have no assigned probability.
-
-For **Historical replay** or **Historical blocks**, upload a CSV with consecutive
-calendar years and this exact header:
-
-```csv
-year,equities,fixed_income,cash,inflation
-2024,0.08,0.03,0.02,0.025
-2025,-0.12,0.04,0.02,0.03
-```
-
-These rows illustrate the format; they are not observed market data. Use decimal
-annual total returns after fees, with inflation for the same periods, and record
-the source, retrieval date, and fee convention. Replay needs a history at least
-as long as the forecast and evaluates every complete consecutive window. Blocks
-sample consecutive stretches jointly, with replacement, without wrapping from
-the last historical year to the first. Neither mode changes history to match
-the central economic outlook.
+In purchasing-power mode, annual flows use start-of-year prices and balances use
+year-end prices. Every waterfall term uses the same year-end prices so its
+amounts still reconcile. Recurring opening-year flows start on the saved Wealth date.
 
 ## Save and reproduce a run
 
@@ -114,6 +104,9 @@ Open a saved forecast to review its frozen results. Choose **Rerun these inputs*
 inspect other individual paths. Exact reproduction requires the same model and
 numerical dependencies recorded by the run. JSON downloads also work when
 database saving is unavailable; imports are limited to 10 MB.
+
+Previously saved historical and adverse runs remain viewable and can be rerun
+with **Rerun these inputs**. Their new forecast setup starts with **Fixed assumptions**.
 
 For an existing database, its owner must reapply `scripts/schema.sql` and grant
 the runtime role `SELECT` and `INSERT` on `forecast_runs`. This creates an
