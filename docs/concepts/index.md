@@ -162,9 +162,17 @@ and their primary sources are in `tests/fixtures/tax_cases.json`.
 
 Pydantic validates submitted inputs, calculations, database documents, and JSON
 backups. Each saved result identifies its inputs and model/tax versions.
-PostgreSQL stores inputs and results together. A revision check rejects a save
-if another session already changed that record. Local drafts remain available
-for a new copy or backup.
+SQLite stores inputs and results together in a separate database for each browser
+session. A revision check rejects a save when its record has changed since it was
+loaded. Local drafts remain available for a new copy or backup. Other sessions
+have independent databases, so revisions cannot detect or merge edits made in
+another session's copy.
+
+**Save** updates the session's database. **Download database** preserves all saved
+records in a file, excluding unsaved editor drafts. The hosted app provides no
+durable database: upload the latest download to continue in a new session. An
+uploaded file is processed by the app server, so hosted access still needs to be
+private.
 
 Old results are labeled for recalculation. Comparisons require the same tax
 year and current model versions. Recalculating does not save automatically.

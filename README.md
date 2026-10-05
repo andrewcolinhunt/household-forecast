@@ -1,6 +1,6 @@
 # financial-model
 
-A shared household decision-planning app built with Streamlit. Its purpose is
+A household decision-planning app built with Streamlit. Its purpose is
 to understand how choices such as moving, changing jobs, or changing spending
 affect cash available today, future wealth, and retirement options.
 
@@ -28,21 +28,22 @@ pixi run --locked setup
 pixi run --locked app
 ```
 
-Open <http://localhost:8501>. Enter both adults' ages and household assumptions,
-then select **Calculate**. Without a database, the app runs in local preview:
-sessions are temporary, saving is disabled, and JSON backups keep your work.
+Open <http://localhost:8501>. Each browser session starts with an empty SQLite
+database. Use **Open database** to upload an existing database, or **New database**
+to start over. Enter household assumptions and use the normal **Save** actions
+to keep scenarios, Plans, Wealth, and forecasts in that session's database.
 
-This computer's database is configured through `compose.yaml`. With Docker
-Desktop running, start it with `docker compose up -d --wait`. PostgreSQL listens
-only on `127.0.0.1:5433`; its named volume preserves scenarios across restarts.
-The ignored `.env` and `.streamlit/secrets.toml` files hold local credentials.
-See [local database operations](docs/how-to-guides/index.md#run-the-local-database).
+Choose **Download database** before closing or refreshing the browser tab,
+replacing its database, or restarting the app. The download contains all saved
+records, including their identities and revisions; unsaved editor drafts are
+excluded. Upload that file next time to continue. Keep it private: it contains
+household financial data.
 
-For shared persistence, create the table with `scripts/schema.sql` in a dedicated
-PostgreSQL database. Set `FINANCIAL_MODEL_DATABASE_URL`, or copy
-`.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in the
-connection string. Remote connections require verified TLS. Keep credentials
-out of Git.
+Each session has an isolated copy. Two people opening the same file can make
+different changes, but the app does not synchronize or merge their copies. Pass
+the latest downloaded file to the next person before they edit. No database
+server or credentials are required. See the [database workflow and private
+deployment guide](docs/how-to-guides/index.md#work-with-a-database-file).
 
 [Usage and deployment](docs/how-to-guides/index.md) ·
 [Calculation assumptions](docs/concepts/index.md) ·
@@ -71,10 +72,9 @@ pixi run --locked docs-build
 pixi run --locked check-cloud
 ```
 
-Database tests skip unless `FINANCIAL_MODEL_TEST_DATABASE_URL` points to a local,
-dedicated database whose name ends in `_test`. Each test creates an isolated
-schema. CI supplies PostgreSQL and runs these tests. Never point tests at the
-family database.
+Database tests use temporary SQLite databases and run without a database server.
+An optional `postgres-export` Pixi environment provides the driver for the
+[one-time export of an existing PostgreSQL database](docs/how-to-guides/index.md#export-an-existing-postgresql-database).
 
 `pyproject.toml` and `pixi.lock` are the dependency source of truth.
 `pixi run --locked export-cloud` generates the Linux `environment.yml` used by

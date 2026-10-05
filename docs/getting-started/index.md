@@ -11,6 +11,10 @@ pixi run --locked app
 Open <http://localhost:8501>. The first calculation loads the tax engine and can
 take longer than later calculations. No tax-service account is required.
 
+Each session starts with an empty database. To continue previous work, use
+**Open database** to upload your latest SQLite database file. **New database**
+replaces the current session's database with an empty one.
+
 Open **Scenarios**. Its sub-tabs collect Plans, Household, Wealth, Work,
 Spending, Retirement, Investments, Economy, and Goals. **Compare annual plans**
 remains a separate results page. **Forecast** projects saved combined Plans
@@ -24,7 +28,7 @@ annual amounts; rent, childcare, and other living expenses are monthly.
 
 Return to **Plans**, read **Supported household and calculation assumptions**,
 confirm the facts, and select **Calculate**. Results describe the last calculated
-inputs. Choose **Save** to keep those inputs and results in the shared store.
+inputs. Choose **Save** to keep those inputs and results in this session's database.
 
 To collect longer-term assumptions, create reusable profiles in **Household**,
 **Work**, **Spending**, **Retirement**, **Investments**, and **Economy**. Household
@@ -37,10 +41,15 @@ alternatives share the Plan's Household copy. Save the Plan, then open
 **Forecast** to select combinations and enter the additional account and benefit
 details needed to [project future wealth](#run-forecast).
 
-Without a database connection, drafts last for the browser session. Use
-**Backups → Download calculated scenario** for annual results, or the category's
-backup section to download current valid assumptions or Wealth. New input saves
+Before closing or refreshing the browser tab or replacing its database, save your
+edits and choose **Download database**. This keeps all saved records in one file
+you can upload next time. Unsaved editor drafts are not included. New input saves
 can be incomplete; **What still needs input** lists what is still unknown.
+
+Sessions are independent, including when two people upload the same file. Share
+the latest download to hand work to another person; changes do not synchronize
+automatically. Keep database files private. Category-level JSON backups remain
+available when you need to move an individual scenario or snapshot.
 
 Next, [compare and save scenarios](../how-to-guides/index.md) or read
 [how the calculations work](../concepts/index.md).

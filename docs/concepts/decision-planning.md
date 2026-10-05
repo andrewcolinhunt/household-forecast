@@ -15,6 +15,13 @@ The app implements annual comparisons and multi-year forecasts from saved
 Plans. Forecasts connect starting Wealth, work, spending, retirement, investments,
 and economic assumptions through both people's planning lifetimes.
 
+Saved work belongs to the SQLite database open in the current browser session.
+The household can pass a downloaded database between people or computers. Each
+upload creates an independent working copy, so later changes do not synchronize
+with other sessions or with the original file. Saving updates the working copy;
+downloading preserves it for the next session. Unsaved editor drafts stay outside
+the downloaded database.
+
 ## Compare decisions from the same starting point
 
 Consider staying in the current job and location versus accepting a different

@@ -183,32 +183,26 @@ amounts still reconcile. Recurring opening-year flows start on the saved Wealth 
 
 ## Save and reproduce a run
 
-Save the forecast to the shared database or download its JSON file. A saved run
+Save the forecast to the session's database or download its JSON file. A saved run
 contains the selected Plan copies, including Wealth and all financial assumptions,
 simulation settings, seed, model versions, summary results, and example ledger.
 Later library edits do not change it. Rerunning creates a separate result.
 
 Open a saved forecast to review its frozen results. Choose **Rerun these inputs** to
 inspect other individual paths. Exact reproduction requires the same model and
-numerical dependencies recorded by the run. JSON downloads also work when
-database saving is unavailable; imports are limited to 10 MB.
+numerical dependencies recorded by the run. **Download database** includes saved
+runs, so download after saving to keep them for the next session. JSON imports
+are limited to 10 MB.
 
 Previously saved runs in the current format remain viewable. Rerunning an older
 method starts a new setup with **Fixed assumptions**.
 
-New Plans use format version 4; new forecasts use version 5. Applying the current
-database schema or planning migration deletes forecasts in older formats. Only
-current-format results can be saved or imported.
-
-For version 3 Plans, the database owner should create and review a migration
-preview with `pixi run --locked python scripts/migrate_household_timeline.py preview DIRECTORY`,
-optionally supplying `--settings FILE`, then run the same command with `apply DIRECTORY`.
-The private backup retains original records, settings, proposed inputs, and an
-annual spending comparison. Converted expense dates are fixed calendar years;
-review any intended retirement or age links explicitly. Converted expenses stop
-at the old planning horizon; review their ends when testing longer lives. Reusable profiles need
-their reviewed Plan context to resolve the old budget rules. Ambiguous inputs
-must be resolved before conversion.
+New Plans use format version 4; new forecasts use version 5. Only current-format
+results can be saved or imported, including through an uploaded database.
+Earlier Plan formats need explicit conversion with reviewed context; see
+[historical conversion rules](#historical-conversions). Converted expense dates
+are fixed calendar years and stop at the old planning horizon. Review any intended
+retirement or age links and longer lifetimes before forecasting again.
 
 See [forecast methodology and limits](#forecast-method) for the accounting and
 tax assumptions behind the results.

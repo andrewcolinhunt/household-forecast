@@ -163,7 +163,7 @@ instructions. Annual calculated taxes, surplus and saving totals are excluded.
 `financial_model.planning_storage` provides category-filtered
 `list_planning_documents`, `load_planning_document`, `create_planning_document`,
 `update_planning_document`, and `delete_planning_document`. The `planning_documents`
-table stores canonical JSONB documents. Updates require a matching ID, revision and
+table stores canonical JSON text. Updates require a matching ID, revision and
 kind; deleted records cannot be recreated by update. Embedded source and goal
 identities are provenance, not foreign-key dependencies or permission to recreate
 catalogue records.
@@ -172,20 +172,18 @@ catalogue records.
 version, payload and 1 MB limit, then discards the outer identity/revision. Embedded
 copies and their provenance survive; the import does not populate source libraries.
 
-### Migrate earlier planning inputs
+(historical-conversions)=
+### Historical conversion rules
 
-Earlier planning documents require explicit conversion to version 4. For
-versions 1 and 3, run
-`pixi run --locked python scripts/migrate_household_timeline.py preview DIRECTORY`
-with the database-owner connection in `FINANCIAL_MODEL_DATABASE_URL`. The private directory contains
-`originals.json`, `settings.json`, `proposals.json`, and `annual-review.json`.
-Review the old and new recurring and one-time totals before `apply DIRECTORY`.
-Apply locks the table, verifies the stored records and reviewed proposals, and
-updates planning documents and version constraints in one transaction.
-Historical forecasts remain unchanged.
+Earlier planning documents require explicit conversion to version 4. The pure
+`financial_model.planning_migration.convert_planning_documents` function converts
+versions 1 and 3 using reviewed inputs; `timeline_conversion_review` compares old
+and new annual spending. These functions do not read or update a database. The
+historical PostgreSQL preview/apply commands have been retired. The current app
+and PostgreSQL exporter accept current-format records only.
 
-Optional `--settings FILE` supplies `profile_contexts`, mapping standalone
-Spending or Retirement source UUIDs to reviewed Plan UUIDs. Conversion needs that
+The optional `profile_contexts` argument maps standalone Spending or Retirement
+source UUIDs to reviewed Plan UUIDs. Conversion needs that
 context to resolve the old budget precedence.
 For Retirement profiles, the context value may be a list of reviewed Plan UUIDs;
 each distinct full household schedule becomes a named Spending alternative.
@@ -201,10 +199,18 @@ Ambiguity prevents conversion, and originals remain available for recovery.
 Version-one conversion also accepts `money_year` and `retirement_rows` (source
 UUIDs mapped to reviewed row indices) to identify undated retirement budgets.
 Known fees convert returns using `(1 + return) * (1 - fee) - 1`; missing fee
-assumptions remain marked for review. If Wealth is still at schema 1, follow with
-`pixi run --locked python scripts/migrate_wealth.py`, which preserves already
-upgraded Planning documents. Planning version 2 also requires this Wealth
-migration command, which converts its planning inputs to version 4.
+assumptions remain marked for review.
+
+`financial_model.wealth_migration.convert_wealth_and_planning` converts Wealth
+schema 1 and Planning schema 2, preserving already upgraded Planning documents.
+Reviewed `account_updates`, keyed by account UUID, supply tax treatment or
+investment mix; the converter does not infer them from names. It preserves names,
+balances, IDs, dates, and independent Plan copies, and moves each Plan's cash
+reserve into its copied Investment scenarios. Fully classified holdings become
+an asset mix; partial holdings remain unclassified. Direct assets, holdings
+without a total, and active company-share sale instructions require review.
+Keep original documents before using these converters; removed metadata is not
+part of their output.
 
 ## Calculate a scenario
 
@@ -311,6 +317,26 @@ Display context does not change saved inputs or calculation outputs.
 
 ## Persistence
 
+The app uses one SQLite database per browser session. New databases use
+`financial_model/schema.sql`, database format version 1 (`PRAGMA user_version`),
+and application ID `1179471692` (`PRAGMA application_id`). The database contains
+`scenarios`, `goals`, `scenario_goals`, `household`, `wealth_snapshots`,
+`planning_documents`, and `forecast_runs`.
+
+Database uploads are limited to 50 MiB. Validation checks the application ID,
+format version, schema, SQLite integrity, and saved document models before
+replacing the active database. A failed upload keeps the existing working copy.
+
+An uploaded database becomes a separate working copy. **Save** writes to that
+copy, and **Download database** exports its saved contents, including record IDs,
+revisions, and frozen results. Downloads exclude editor drafts and unsaved
+calculations. They do not include application code or credentials. Sessions have
+no shared database, automatic synchronization, or durable hosted persistence.
+See [the database file workflow](#database-files).
+
+Storage functions take a SQLite file path in their `dsn` argument. There is no
+runtime PostgreSQL connection or database URL configuration.
+
 `financial_model.storage` provides `list_scenarios`, `load_scenario`,
 `create_scenario`, `update_scenario`, and `delete_scenario`. Each call uses a short
 transaction. Updates and deletions require the revision previously loaded and
@@ -318,8 +344,9 @@ raise `RevisionConflictError` if the record changed or no longer exists. `import
 returns only the inputs for fresh calculation.
 
 Schema and model version 2 replace individual saving rates with goal allocations.
-Version-one records require the explicit preview/apply migration; version-one
-backups require reviewed `legacy_destinations` in `import_backup`. Unknown versions
+Version-one records require explicit conversion using the pure functions in
+`financial_model.migration`; version-one backups require reviewed
+`legacy_destinations` in `import_backup`. Unknown versions
 and unsupported inputs fail validation. There is no general Excel importer.
 
 `list_goals`, `create_goal`, `update_goal`, and `delete_goal` manage the shared
@@ -343,7 +370,7 @@ No snapshot operation modifies scenarios, household defaults, or goal assignment
 
 `import_wealth_backup(bytes) -> WealthSnapshot` validates the wealth document
 type and schema, enforces the 1 MB limit, and returns contents without database
-identity. The UI opens those contents as an unsaved draft. Backups and PostgreSQL
+identity. The UI opens those contents as an unsaved draft. Backups and SQLite
 use the same document shape. Saved forecasts embed the exact wealth and scenario
 inputs used, rather than resolving mutable library IDs on display.
 
@@ -380,8 +407,8 @@ Difference percentiles are absent outside the baseline's planning horizon.
 `list_forecasts(dsn)` reads current-format runs in reverse creation order.
 `import_forecast_backup(bytes)` validates an exported document up to 10 MB and
 preserves its identity. Only the current format can be saved or imported.
-Applying the database schema or planning migration deletes older-format results
-and preserves current-format runs. Runtime reads do not delete or migrate results.
+Uploaded databases and the PostgreSQL exporter require current-format runs.
+Runtime reads do not delete or migrate results.
 
 See [forecast methodology](#forecast-method) for conventions, limitations, and
 the distinction between simulated outcome bands and guarantees.

@@ -1,5 +1,37 @@
 # Using and Hosting the App
 
+(database-files)=
+## Work with a database file
+
+Each browser session starts with an empty SQLite database. **Open database**
+uploads a database you previously downloaded. Opening another database or choosing
+**New database** replaces the current session's contents after confirmation.
+Uploads are limited to 50 MiB. Invalid or incompatible files leave the current
+database unchanged.
+
+1. Open your latest database file, or start with the empty database.
+2. Edit assumptions and use the normal **Save** actions in each editor. Save
+   forecast runs you want to keep too.
+3. Choose **Download database** to keep the updated database on your computer.
+4. Open that downloaded file in your next session.
+
+The download includes saved annual scenarios, Household defaults, goals, Wealth,
+planning inputs, combined Plans, and saved forecast runs, with their identities and
+revisions. It excludes unsaved editor drafts and calculations you have not saved.
+Save those first, or use the appropriate JSON backup for a valid individual draft.
+
+Download before closing or refreshing the browser tab, replacing its database,
+or restarting the app. A hosted restart or lost browser session can discard the
+working copy.
+**Save** updates that copy; it does not update the file you originally uploaded
+or store a durable database on the host.
+
+Two sessions that open the same file have independent copies. They do not share
+changes, detect edits in the other copy, or merge automatically. To share work,
+finish editing, download the database, and pass that file to the next person.
+Keep earlier downloads if you need recovery points. Store and share them privately
+because they contain household financial data.
+
 ## Organize assumptions and combine plans
 
 Under **Scenarios**, save the inputs you want to reuse, then combine them in Plans.
@@ -199,18 +231,18 @@ duplicate remains unsaved until you save it. **Save as new snapshot** also keeps
 an independent copy of current edits. Changing one snapshot never changes another.
 
 Edits survive navigation between pages within the browser session. Return through
-**Edit** or **Continue editing**. If someone else changed or deleted the record,
-saving cannot overwrite their change. Save a new copy, or choose **Reload saved
+**Edit** or **Continue editing**. If the record changed or was deleted after the
+draft loaded, saving cannot overwrite that change. Save a new copy, or choose **Reload saved
 snapshot → Discard edits and reload wealth**. **Refresh** updates the library.
 
 Under **Wealth backups**, download the current valid contents as JSON, including
-unsaved edits. This also works in local preview, where database saving is disabled.
+unsaved edits. This differs from **Download database**, which includes saved records only.
 Upload a wealth backup and choose **Load wealth backup as new draft** to restore
 its contents without reusing its saved identity. Files are limited to 1 MB;
 scenario backups and wealth backups have different readers. Keep exports private.
 
 **Delete** opens a confirmation identifying the saved snapshot. Deletion removes
-it for both users and clears its draft in the current session. A changed revision
+it from this session's database and clears its draft. A changed revision
 cannot be deleted until you refresh and review it again. Revisions detect
 competing edits; they do not provide an archive of every previous edit.
 
@@ -235,7 +267,7 @@ and cash available for spending after funding goals.
   banner identifies the annual case; these edits do not change shared defaults.
 - Return to **Plans** for **Calculate**, which shows results without saving.
   **Save** calculates and saves the current inputs and matching results.
-- **Unsaved changes** identifies edits that are not in the shared database.
+- **Unsaved changes** identifies edits that are not in the session's database.
   A separate notice identifies results that need recalculation.
 
 Leave **Annual plan name (optional)** blank to use the state as the heading.
@@ -266,15 +298,16 @@ effective tax rate stay the same. Choose **Calculate** to preview the result or
 
 Edits stay in your browser session when you switch pages or open another
 annual plan. Use its **Edit** button or **Continue editing annual plans** to
-return. Save before closing the browser.
+return. Save, then choose **Download database** before closing or refreshing the
+browser tab.
 
 Reopening a scenario loads a newer saved version when you have no unsaved edits.
 If you do have edits, the editor keeps them and shows a warning about the newer
 saved version.
 
-If another person has changed or deleted a scenario, your save cannot overwrite
-that change. Keep your version with **Save as new annual plan**, or use
-**Reload saved version → Discard edits and reload** when a saved version still
+If a scenario has changed or been deleted in this database since you loaded it,
+your save cannot overwrite that change. Keep your version with **Save as new annual plan**,
+or use **Reload saved version → Discard edits and reload** when a saved version still
 exists. **Refresh** updates the library without replacing your drafts.
 
 ## Set savings goals
@@ -405,14 +438,18 @@ through year end. NSO exercises and share sales are not supported.
 
 In **Scenarios → Plans → Annual plans**, choose **Delete** on the scenario's card. Check the name
 in the confirmation dialog, then choose **Delete annual plan** or **Cancel**.
-Deletion removes the shared record for both people and its draft in your current
-session. It cannot be undone. Download a backup first if you want to keep a copy.
+Deletion removes the record from this session's database and clears its draft.
+It cannot be undone. Download a backup first if you want to keep a copy.
 
 A scenario changed since the dialog opened cannot be deleted until you refresh
 and review it again. Deleted scenarios disappear from comparison selectors.
-An open draft in another session can only be saved as a new scenario.
+Other sessions and previously downloaded databases keep their own copies.
 
 ## Back up and recover
+
+Use **Download database** to preserve all saved work together, then **Open
+database** to recover that file. Individual JSON backups are useful when you want
+to copy one record into a different database without replacing its other contents.
 
 In the annual plan's **Plans → Backups** section, download the last calculated scenario as
 JSON. To restore it, upload the file under **Backups** in Annual plans or the editor and choose
@@ -425,105 +462,51 @@ current name, explicitly keep the shared goal or create a separate one. Version-
 backups require review of the proposed destinations before loading. Their old extra
 saving becomes a fixed annual Retirement allocation; taxes are recalculated.
 
-## Run the local database
+## Export an existing PostgreSQL database
 
-The configured local database uses Docker Desktop and `compose.yaml`:
-
-```bash
-docker compose up -d --wait
-pixi run --locked app
-```
-
-The database is `financial_model`, on `127.0.0.1:5433`. Its data lives in the
-`financial-model-postgres` Docker volume. `docker compose stop` stops the
-service without removing that data; `docker compose up -d --wait` starts it
-again. Keep the named volume when recreating the container.
-
-Local credentials are in the ignored `.env` and `.streamlit/secrets.toml` files.
-The app uses a separate account with read/create/update/delete access to scenarios,
-goals, scenario-goal references, household defaults, wealth snapshots, and planning inputs.
-These files and the volume belong to this computer; cloning the repository does
-not copy the database. Local access does not provide a shared hosted URL.
-
-For a database backup, choose a private destination outside the application
-repository and run:
+The app no longer connects to PostgreSQL. To keep an existing current-format
+household database, export it once to SQLite. Set `FINANCIAL_MODEL_DATABASE_URL`
+to its connection string in your shell, then choose a private output location:
 
 ```bash
-docker compose exec -T db pg_dump -U financial_model_admin -d financial_model \
-  --format=custom > /path/to/private/financial-model.dump
+pixi run --locked -e postgres-export python scripts/export_postgres.py /private/path/financial-model.sqlite
 ```
 
-The dump contains financial inputs and results. Keep it private. Scenario-level
-JSON backups are also available in the app.
+The optional `postgres-export` environment supplies the PostgreSQL driver; the
+app and its cloud environment do not need it. The exporter reads a consistent
+snapshot without changing the source and refuses to overwrite an existing file.
+It preserves saved identities, revisions, household defaults, goal relationships,
+and frozen forecast results. It creates the local file with owner-only access.
 
-## Connect another PostgreSQL database
-
-Create a dedicated database, then apply `scripts/schema.sql` using its SQL
-console or a PostgreSQL client. The app never creates or migrates tables on
-startup. Give its runtime role `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on
-`scenarios`, `goals`, `scenario_goals`, `household`, `wealth_snapshots`, and
-`planning_documents`,
-plus `SELECT` and `INSERT` on `forecast_runs`, schema usage, and database connection
-rights. Use a separate owner for
-schema changes.
-
-Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, then replace
-the placeholder with the runtime role's connection string. Alternatively set
-`FINANCIAL_MODEL_DATABASE_URL` in the server environment. Remote connections
-require `sslmode=verify-full`; the system CA store is the default. Credentials
-remain on the server and are not part of scenario exports.
-
-Restart the app and save a synthetic scenario. Open another browser session and
-verify that it can load it. Use a separate test database for automated tests;
-never use the family database for testing.
-
-For an existing version-two database, reapply `scripts/schema.sql` as its owner
-to add missing `wealth_snapshots`, `planning_documents`, and `forecast_runs` tables, then grant those
-four privileges on the new tables to
-the runtime role for Wealth and Plans; forecasts need only `SELECT` and `INSERT`.
-This setup step also deletes forecast results in obsolete formats, preserving
-current-format runs. It does not rewrite scenarios, household defaults, or goals.
-If a new table or its permissions are missing, that category reports the read
-failure and retains session drafts; other categories remain available. The app
-does not apply schema changes automatically.
-
-## Migrate a version-one database
-
-Use an owner connection in `FINANCIAL_MODEL_DATABASE_URL`, with a private folder
-outside this repository. The first command writes original backups and a preview;
-review the destinations and totals before applying:
-
-```bash
-pixi run --locked python scripts/migrate_goal_allocations.py preview /private/path/review
-pixi run --locked python scripts/migrate_goal_allocations.py apply /private/path/review
-```
-
-The migration preserves scenario IDs and verifies unchanged taxes and net additions.
-It stops if records changed after the preview. Give the app role access to the new
-`goals` and `scenario_goals` tables after migration. Restart the app once complete.
+Open the resulting file with **Open database** and review its saved libraries and
+forecasts before continuing. Keep the original database and a private backup
+until you have verified the exported file. The exporter accepts current-format
+records only; it does not guess how to upgrade historical input formats. See
+[historical conversion rules](#historical-conversions) if it reports an older schema.
 
 ## Prepare a private deployment
 
-The proposed host is private Streamlit Community Cloud with managed PostgreSQL.
-Hosting is a separate setup step; running the app locally does not publish it.
+Streamlit Community Cloud can host the app without a separate database service.
+Hosting is a separate setup step; running locally does not publish the app.
+Uploaded databases are processed on the server, so restrict access before using
+household data.
 
-1. Confirm that the household accepts both providers and that a private app slot
-   is available. Configure the database as above.
-2. Generate deployment dependencies with `pixi run --locked export-cloud` and
+1. Generate deployment dependencies with `pixi run --locked export-cloud` and
    verify them with `pixi run --locked check-cloud`. Commit `environment.yml`.
-3. Deploy the private GitHub repository with entry point `streamlit_app.py` and
-   Python 3.12. Community Cloud installs the generated `environment.yml`.
-4. Put `database_url` in the host's secrets settings. Restrict app access to the
-   household's two email addresses before entering family data.
-5. Verify both people can sign in, an uninvited browser cannot access data, two
-   sessions detect competing saves, and saved scenarios survive a restart and
-   redeploy. Verify JSON recovery and acceptable calculation time with both
-   sessions in use.
+2. Deploy the GitHub repository with entry point `streamlit_app.py` and Python
+   3.12. Community Cloud installs the generated `environment.yml`.
+3. Set app sharing to **Only specific people can view this app** and invite the
+   household's email addresses. No database credentials or connection URL are
+   required.
+4. With a synthetic database, verify that invited users can sign in and an
+   uninvited browser cannot use the app. In two sessions, check that opening the
+   same file produces independent copies. Save a change, download the database,
+   and reopen that download in a fresh session to check recovery.
 
-Community Cloud currently supports one private app per workspace; invited
-viewers can invite others. Treat sharing as trusted-family access. Local files
-on the host are not durable storage. Hosting capacity, authentication, and
-restart behavior must pass these checks before the deployment is ready.
+Community Cloud supports one private app per workspace; invited viewers can
+invite others. The host provides no durable copy of your database. Download
+saved changes before closing or replacing the session, and keep the downloaded
+file private. A separate hosted session must upload its own file to continue.
 
 Sources: [private sharing](https://docs.streamlit.io/deploy/streamlit-community-cloud/share-your-app),
 [dependency formats](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies),
@@ -540,32 +523,3 @@ Never update expected results solely to match a new engine output.
 Run formatting, tests, type checks, and documentation build. Test the exported
 Linux environment before redeploying. Recalculate existing scenarios to compare
 them with the updated rules; saving remains explicit.
-
-
-## Simplify existing Wealth records
-
-Wealth schema 1 and Planning schema 2 require an explicit migration before they
-can be opened by the simplified editor. Already upgraded Planning documents are
-retained unchanged. Stop the app, set an owner connection in
-`FINANCIAL_MODEL_DATABASE_URL`, then preview into a private directory:
-
-```bash
-pixi run --locked python scripts/migrate_wealth.py preview /private/path/wealth-review
-pixi run --locked python scripts/migrate_wealth.py apply /private/path/wealth-review
-```
-
-Review `originals.json` and `proposals.json` before applying. The original files
-retain the removed account metadata. A settings file passed with `--settings`
-can supply reviewed `account_updates`, keyed by account UUID, for tax treatment
-or investment mix. The converter does not guess these from account names.
-
-The migration keeps account names, balances, IDs, snapshot dates, and independent
-Plan copies. It moves each Plan's cash reserve into its copied Investment scenarios.
-Unknown library reserves stay unknown. Fully classified holdings become a mix;
-partial holdings stay unclassified. Direct assets, holdings without a total, and
-active company-share sale instructions require review before conversion.
-
-Applying a stale or altered preview fails. Both stores and their version checks
-change in one transaction. Annual plans, results, Household defaults, and goals
-are not changed. Restart the app after migration. Old JSON backups also need
-explicit conversion; the editor accepts the current schema only.
