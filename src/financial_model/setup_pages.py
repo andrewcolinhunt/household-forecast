@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 from uuid import UUID
 
-import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
@@ -45,7 +45,7 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
             saved = (
                 load_household(dsn) if dsn else st.session_state.get("local_household")
             )
-        except (psycopg.Error, ValueError):
+        except (sqlite3.Error, ValueError):
             st.error("Household defaults could not be loaded. Try again.")
             return
         st.session_state["household_draft"] = (
@@ -141,7 +141,7 @@ def _save_household_inputs(dsn: str | None, raw: dict[str, Any]) -> None:
             if dsn
             else inputs.model_copy(update={"revision": inputs.revision + 1})
         )
-    except (ValueError, RevisionConflictError, psycopg.Error) as error:
+    except (ValueError, RevisionConflictError, sqlite3.Error) as error:
         _setup_error(error)
         return
     st.session_state["household_draft"] = saved.model_dump(mode="json")
@@ -172,7 +172,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
                     "Goal added. Choose it in Investments to assign savings."
                 )
                 st.rerun()
-            except (ValueError, psycopg.Error) as error:
+            except (ValueError, sqlite3.Error) as error:
                 _setup_error(error)
     spending_ids = {
         row.goal.id
@@ -251,5 +251,5 @@ def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -
                 "Goal deleted." if remove else "Goal renamed across annual plans."
             )
             st.rerun()
-        except (ValueError, RevisionConflictError, psycopg.Error) as error:
+        except (ValueError, RevisionConflictError, sqlite3.Error) as error:
             _setup_error(error)

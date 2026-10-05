@@ -1,17 +1,16 @@
-"""Shared PostgreSQL scenarios with atomic revision checks."""
+"""Portable SQLite scenarios with atomic revision checks."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
 from uuid import UUID
 
-import psycopg
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-
+from financial_model.database import MAX_DATABASE_BYTES
 from financial_model.migration import convert_legacy_inputs
 from financial_model.schemas import (
     AllocationPlan,
@@ -29,16 +28,20 @@ class RevisionConflictError(Exception):
     """The record changed or was deleted after this session loaded it."""
 
 
-def _connect(dsn: str) -> psycopg.Connection[dict[str, Any]]:
-    """Use short-lived connections and verified TLS outside loopback test servers."""
-    options = conninfo_to_dict(dsn)
-    host = options.get("host", "")
-    if host not in {"localhost", "127.0.0.1", "::1"}:
-        options["sslmode"] = "verify-full"
-        options.setdefault("sslrootcert", "system")
-    return psycopg.connect(
-        make_conninfo("", **options), connect_timeout=5, row_factory=dict_row
-    )
+@contextmanager
+def _connect(dsn: str) -> Iterator[sqlite3.Connection]:
+    """Open an existing database and commit or roll back before closing it."""
+    connection = sqlite3.connect(Path(dsn).resolve().as_uri() + "?mode=rw", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA trusted_schema = OFF")
+        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+        connection.execute(f"PRAGMA max_page_count = {MAX_DATABASE_BYTES // page_size}")
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def list_scenarios(dsn: str) -> tuple[SavedScenario, ...]:
@@ -47,16 +50,16 @@ def list_scenarios(dsn: str) -> tuple[SavedScenario, ...]:
         rows = connection.execute(
             "SELECT document FROM scenarios ORDER BY lower(document -> 'inputs' ->> 'name'), id"
         ).fetchall()
-    return tuple(SavedScenario.model_validate(row["document"]) for row in rows)
+    return tuple(SavedScenario.model_validate_json(row["document"]) for row in rows)
 
 
 def load_scenario(dsn: str, scenario_id: UUID) -> SavedScenario | None:
     """Read one shared scenario, returning None when it no longer exists."""
     with _connect(dsn) as connection:
         row = connection.execute(
-            "SELECT document FROM scenarios WHERE id = %s", (scenario_id,)
+            "SELECT document FROM scenarios WHERE id = ?", (str(scenario_id),)
         ).fetchone()
-    return SavedScenario.model_validate(row["document"]) if row else None
+    return SavedScenario.model_validate_json(row["document"]) if row else None
 
 
 def create_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
@@ -67,12 +70,12 @@ def create_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
     with _connect(dsn) as connection:
         _register_goals(connection, document)
         connection.execute(
-            "INSERT INTO scenarios (id, revision, document, updated_at) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO scenarios (id, revision, document, updated_at) VALUES (?, ?, ?, ?)",
             (
-                document.id,
+                str(document.id),
                 document.revision,
-                Jsonb(document.model_dump(mode="json")),
-                document.updated_at,
+                document.model_dump_json(),
+                document.updated_at.astimezone(UTC).isoformat(),
             ),
         )
         _save_goal_references(connection, document)
@@ -83,7 +86,7 @@ def update_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
     """Save a replacement only if its loaded revision is still current.
 
     Args:
-        dsn: PostgreSQL connection string; never shown in UI errors.
+        dsn: Path of the active SQLite database; never shown in UI errors.
         document: Matching inputs/result with the ID and revision previously loaded.
 
     Returns:
@@ -102,13 +105,13 @@ def update_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
     with _connect(dsn) as connection:
         _register_goals(connection, document)
         row = connection.execute(
-            "UPDATE scenarios SET revision = %s, document = %s, updated_at = %s "
-            "WHERE id = %s AND revision = %s RETURNING id",
+            "UPDATE scenarios SET revision = ?, document = ?, updated_at = ? "
+            "WHERE id = ? AND revision = ? RETURNING id",
             (
                 updated.revision,
-                Jsonb(updated.model_dump(mode="json")),
-                updated.updated_at,
-                document.id,
+                updated.model_dump_json(),
+                updated.updated_at.astimezone(UTC).isoformat(),
+                str(document.id),
                 document.revision,
             ),
         ).fetchone()
@@ -123,7 +126,7 @@ def delete_scenario(dsn: str, scenario_id: UUID, revision: int) -> None:
     """Delete only the revision the user reviewed in the confirmation dialog.
 
     Args:
-        dsn: PostgreSQL connection string.
+        dsn: Path of the active SQLite database.
         scenario_id: Identity of the scenario to remove.
         revision: Revision shown when deletion was requested.
 
@@ -132,8 +135,8 @@ def delete_scenario(dsn: str, scenario_id: UUID, revision: int) -> None:
     """
     with _connect(dsn) as connection:
         row = connection.execute(
-            "DELETE FROM scenarios WHERE id = %s AND revision = %s RETURNING id",
-            (scenario_id, revision),
+            "DELETE FROM scenarios WHERE id = ? AND revision = ? RETURNING id",
+            (str(scenario_id), revision),
         ).fetchone()
         if row is None:
             message = (
@@ -164,15 +167,15 @@ def list_goals(dsn: str) -> tuple[Goal, ...]:
         rows = connection.execute(
             "SELECT id, name, revision FROM goals ORDER BY name, id"
         ).fetchall()
-    return tuple(Goal.model_validate(row) for row in rows)
+    return tuple(Goal.model_validate(dict(row)) for row in rows)
 
 
 def create_goal(dsn: str, goal: Goal) -> Goal:
     """Create a user-named purpose without assigning any assets."""
     with _connect(dsn) as connection:
         connection.execute(
-            "INSERT INTO goals (id, name, revision) VALUES (%s, %s, 1)",
-            (goal.id, goal.name),
+            "INSERT INTO goals (id, name, revision) VALUES (?, ?, 1)",
+            (str(goal.id), goal.name),
         )
     return goal.model_copy(update={"revision": 1})
 
@@ -181,13 +184,13 @@ def update_goal(dsn: str, goal: Goal) -> Goal:
     """Rename only the reviewed goal revision, preserving all assignments."""
     with _connect(dsn) as connection:
         row = connection.execute(
-            "UPDATE goals SET name = %s, revision = revision + 1 WHERE id = %s AND revision = %s RETURNING id, name, revision",
-            (goal.name, goal.id, goal.revision),
+            "UPDATE goals SET name = ?, revision = revision + 1 WHERE id = ? AND revision = ? RETURNING id, name, revision",
+            (goal.name, str(goal.id), goal.revision),
         ).fetchone()
         if row is None:
             msg = "This goal changed or was deleted. Refresh and try again."
             raise RevisionConflictError(msg)
-    return Goal.model_validate(row)
+    return Goal.model_validate(dict(row))
 
 
 def delete_goal(dsn: str, goal: Goal) -> None:
@@ -195,31 +198,31 @@ def delete_goal(dsn: str, goal: Goal) -> None:
     try:
         with _connect(dsn) as connection:
             row = connection.execute(
-                "DELETE FROM goals WHERE id = %s AND revision = %s RETURNING id",
-                (goal.id, goal.revision),
+                "DELETE FROM goals WHERE id = ? AND revision = ? RETURNING id",
+                (str(goal.id), goal.revision),
             ).fetchone()
             if row is None:
                 msg = "This goal changed or was deleted. Refresh and try again."
                 raise RevisionConflictError(msg)
-    except psycopg.errors.ForeignKeyViolation as error:
+    except sqlite3.IntegrityError as error:
+        if error.sqlite_errorcode != sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
+            raise
         msg = "Reassign this goal in saved scenarios before deleting it."
         raise ValueError(msg) from error
 
 
-def _register_goals(
-    connection: psycopg.Connection[dict[str, Any]], document: SavedScenario
-) -> None:
-    """Lock goal identities before saving references; never merge by name."""
+def _register_goals(connection: sqlite3.Connection, document: SavedScenario) -> None:
+    """Register goal identities in the write transaction; never merge by name."""
     for allocation in sorted(
         document.inputs.allocation_plan.rows, key=lambda row: str(row.goal.id)
     ):
         goal = allocation.goal
         connection.execute(
-            "INSERT INTO goals (id, name, revision) VALUES (%s, %s, %s) ON CONFLICT (id) DO NOTHING",
-            (goal.id, goal.name, goal.revision),
+            "INSERT INTO goals (id, name, revision) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING",
+            (str(goal.id), goal.name, goal.revision),
         )
         current = connection.execute(
-            "SELECT name FROM goals WHERE id = %s FOR SHARE", (goal.id,)
+            "SELECT name FROM goals WHERE id = ?", (str(goal.id),)
         ).fetchone()
         if current is None or current["name"] != goal.name:
             msg = "A goal name differs from the shared catalogue. Review its destination and calculate again."
@@ -227,16 +230,16 @@ def _register_goals(
 
 
 def _save_goal_references(
-    connection: psycopg.Connection[dict[str, Any]], document: SavedScenario
+    connection: sqlite3.Connection, document: SavedScenario
 ) -> None:
     """Replace the scenario's goal references in the same transaction as its data."""
     connection.execute(
-        "DELETE FROM scenario_goals WHERE scenario_id = %s", (document.id,)
+        "DELETE FROM scenario_goals WHERE scenario_id = ?", (str(document.id),)
     )
     for allocation in document.inputs.allocation_plan.rows:
         connection.execute(
-            "INSERT INTO scenario_goals (scenario_id, goal_id) VALUES (%s, %s)",
-            (document.id, allocation.goal.id),
+            "INSERT INTO scenario_goals (scenario_id, goal_id) VALUES (?, ?)",
+            (str(document.id), str(allocation.goal.id)),
         )
 
 
@@ -262,7 +265,7 @@ def load_household(dsn: str) -> Household | None:
         row = connection.execute(
             "SELECT document FROM household WHERE id = TRUE"
         ).fetchone()
-    return Household.model_validate(row["document"]) if row else None
+    return Household.model_validate_json(row["document"]) if row else None
 
 
 def save_household(dsn: str, household: Household) -> Household:
@@ -271,15 +274,15 @@ def save_household(dsn: str, household: Household) -> Household:
     with _connect(dsn) as connection:
         if household.revision == 0:
             row = connection.execute(
-                "INSERT INTO household (id, revision, document) VALUES (TRUE, %s, %s) ON CONFLICT (id) DO NOTHING RETURNING id",
-                (updated.revision, Jsonb(updated.model_dump(mode="json"))),
+                "INSERT INTO household (id, revision, document) VALUES (TRUE, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING id",
+                (updated.revision, updated.model_dump_json()),
             ).fetchone()
         else:
             row = connection.execute(
-                "UPDATE household SET revision = %s, document = %s WHERE id = TRUE AND revision = %s RETURNING id",
+                "UPDATE household SET revision = ?, document = ? WHERE id = TRUE AND revision = ? RETURNING id",
                 (
                     updated.revision,
-                    Jsonb(updated.model_dump(mode="json")),
+                    updated.model_dump_json(),
                     household.revision,
                 ),
             ).fetchone()
@@ -298,16 +301,18 @@ def list_wealth_snapshots(dsn: str) -> tuple[SavedWealthSnapshot, ...]:
             "SELECT document FROM wealth_snapshots "
             "ORDER BY document -> 'snapshot' ->> 'as_of' DESC, updated_at DESC, id"
         ).fetchall()
-    return tuple(SavedWealthSnapshot.model_validate(row["document"]) for row in rows)
+    return tuple(
+        SavedWealthSnapshot.model_validate_json(row["document"]) for row in rows
+    )
 
 
 def load_wealth_snapshot(dsn: str, snapshot_id: UUID) -> SavedWealthSnapshot | None:
     """Read one wealth document without substituting newer data into an open draft."""
     with _connect(dsn) as connection:
         row = connection.execute(
-            "SELECT document FROM wealth_snapshots WHERE id = %s", (snapshot_id,)
+            "SELECT document FROM wealth_snapshots WHERE id = ?", (str(snapshot_id),)
         ).fetchone()
-    return SavedWealthSnapshot.model_validate(row["document"]) if row else None
+    return SavedWealthSnapshot.model_validate_json(row["document"]) if row else None
 
 
 def create_wealth_snapshot(
@@ -320,12 +325,12 @@ def create_wealth_snapshot(
     with _connect(dsn) as connection:
         connection.execute(
             "INSERT INTO wealth_snapshots (id, revision, document, updated_at) "
-            "VALUES (%s, %s, %s, %s)",
+            "VALUES (?, ?, ?, ?)",
             (
-                document.id,
+                str(document.id),
                 document.revision,
-                Jsonb(document.model_dump(mode="json")),
-                document.updated_at,
+                document.model_dump_json(),
+                document.updated_at.astimezone(UTC).isoformat(),
             ),
         )
     return document
@@ -337,7 +342,7 @@ def update_wealth_snapshot(
     """Replace the reviewed revision; a new financial date requires a new record.
 
     Args:
-        dsn: Server-held PostgreSQL connection string.
+        dsn: Path of the active SQLite database.
         document: Inventory with the ID and revision previously loaded.
 
     Returns:
@@ -351,14 +356,14 @@ def update_wealth_snapshot(
     )
     with _connect(dsn) as connection:
         row = connection.execute(
-            "UPDATE wealth_snapshots SET revision = %s, document = %s, updated_at = %s "
-            "WHERE id = %s AND revision = %s "
-            "AND document -> 'snapshot' ->> 'as_of' = %s RETURNING id",
+            "UPDATE wealth_snapshots SET revision = ?, document = ?, updated_at = ? "
+            "WHERE id = ? AND revision = ? "
+            "AND document -> 'snapshot' ->> 'as_of' = ? RETURNING id",
             (
                 updated.revision,
-                Jsonb(updated.model_dump(mode="json")),
-                updated.updated_at,
-                document.id,
+                updated.model_dump_json(),
+                updated.updated_at.astimezone(UTC).isoformat(),
+                str(document.id),
                 document.revision,
                 document.snapshot.as_of.isoformat(),
             ),
@@ -376,8 +381,8 @@ def delete_wealth_snapshot(dsn: str, snapshot_id: UUID, revision: int) -> None:
     """Delete only the saved wealth revision reviewed in the confirmation dialog."""
     with _connect(dsn) as connection:
         row = connection.execute(
-            "DELETE FROM wealth_snapshots WHERE id = %s AND revision = %s RETURNING id",
-            (snapshot_id, revision),
+            "DELETE FROM wealth_snapshots WHERE id = ? AND revision = ? RETURNING id",
+            (str(snapshot_id), revision),
         ).fetchone()
         if row is None:
             message = (

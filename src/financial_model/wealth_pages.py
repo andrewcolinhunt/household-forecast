@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date
 from typing import Any, get_args
 from uuid import uuid4
 
-import psycopg
 import streamlit as st
 
 from financial_model import input_forms as forms
@@ -105,7 +105,7 @@ def _read(dsn: str | None) -> tuple[SavedWealthSnapshot, ...]:
         return ()
     try:
         return list_wealth_snapshots(dsn)
-    except (psycopg.Error, ValueError):
+    except (sqlite3.Error, ValueError):
         st.session_state["wealth_store_available"] = False
         st.error(
             "Saved wealth could not be read. Your drafts are still available. Check database setup or try Refresh."
@@ -183,7 +183,7 @@ def _owner_labels(dsn: str | None) -> dict[int | None, str]:
         household = (
             load_household(dsn) if dsn else st.session_state.get("local_household")
         )
-    except (psycopg.Error, ValueError):
+    except (sqlite3.Error, ValueError):
         return labels
     if household:
         labels.update(
@@ -478,7 +478,7 @@ def _save(dsn: str, snapshot: WealthSnapshot, *, new: bool) -> None:
             if loaded and not new
             else create_wealth_snapshot(dsn, document)
         )
-    except (ValueError, RevisionConflictError, psycopg.Error) as error:
+    except (ValueError, RevisionConflictError, sqlite3.Error) as error:
         _setup_error(error)
         return
     if not loaded or not new:
@@ -531,7 +531,7 @@ def _backups(
             _new_draft(imported)
             navigate("Wealth", target="library", view="editor")
         st.caption(
-            "Exports include current valid edits, even in local preview. Imports do not overwrite saved snapshots."
+            "Exports include current valid edits, even before saving. Imports do not overwrite saved snapshots."
         )
 
 
@@ -613,7 +613,7 @@ def _confirm_delete(dsn: str | None, record: SavedWealthSnapshot) -> None:
     """Delete the reviewed revision only, after an explicit shared-record confirmation."""
     st.text(f"{record.snapshot.title} · {record.snapshot.as_of} · {str(record.id)[:8]}")
     st.caption(
-        "This removes the saved snapshot for both of you and its draft in this session. It cannot be undone."
+        "This removes the saved snapshot and its draft from this session. It cannot be undone."
     )
     cancel, confirm = st.columns(2)
     if cancel.button("Cancel"):
@@ -625,7 +625,7 @@ def _confirm_delete(dsn: str | None, record: SavedWealthSnapshot) -> None:
     ):
         try:
             delete_wealth_snapshot(dsn, record.id, record.revision)
-        except (RevisionConflictError, psycopg.Error) as error:
+        except (RevisionConflictError, sqlite3.Error) as error:
             _setup_error(error)
             return
         st.session_state.get("wealth_drafts", {}).pop(str(record.id), None)

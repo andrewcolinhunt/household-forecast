@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+import sqlite3
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-import psycopg
 import streamlit as st
 from pydantic import ValidationError
 
@@ -25,6 +24,11 @@ from financial_model.comparison import (
     period_divisor,
     remaining_cash,
     tax_html,
+)
+from financial_model.database_pages import (
+    database_controls,
+    database_download,
+    session_database,
 )
 from financial_model.model import evaluate_scenario
 from financial_model.scenario_display import (
@@ -65,14 +69,9 @@ DRAFT_FIELDS = (
 )
 
 
-def _database_url() -> str | None:
-    """Read server-held configuration without displaying credentials."""
-    if configured := os.environ.get("FINANCIAL_MODEL_DATABASE_URL"):
-        return configured
-    try:
-        return str(st.secrets["database_url"])
-    except (KeyError, FileNotFoundError):
-        return None
+def _database_path() -> str | None:
+    """Use only the current browser session's private database copy."""
+    return session_database().path
 
 
 def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
@@ -82,7 +81,7 @@ def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
         return ()
     try:
         return list_scenarios(dsn)
-    except (psycopg.Error, ValidationError, ValueError):
+    except (sqlite3.Error, ValidationError, ValueError):
         st.session_state["store_available"] = False
         st.error(
             "Saved annual plans could not be read. Your draft is still available; try Refresh annual plans."
@@ -109,12 +108,12 @@ def _set_editor(inputs: Scenario | None, record: SavedScenario | None = None) ->
 
 def _household_defaults() -> dict[str, Any]:
     """Copy shared family facts only when starting a new scenario."""
-    dsn = _database_url()
+    dsn = _database_path()
     try:
         household = (
             load_household(dsn) if dsn else st.session_state.get("local_household")
         )
-    except (psycopg.Error, ValueError):
+    except (sqlite3.Error, ValueError):
         st.warning(
             "Household defaults could not be loaded. Enter the family details for this draft."
         )
@@ -168,7 +167,7 @@ def _read_goal_catalogue(dsn: str | None) -> None:
     if dsn:
         try:
             st.session_state["goals"] = list_goals(dsn)
-        except (psycopg.Error, ValueError):
+        except (sqlite3.Error, ValueError):
             st.session_state["goals"] = ()
     else:
         st.session_state.setdefault("goals", ())
@@ -222,7 +221,7 @@ def _save(dsn: str, document: SavedScenario, *, new: bool) -> None:
     except RevisionConflictError as error:
         st.warning(str(error))
         return
-    except (psycopg.Error, ValueError):
+    except (sqlite3.Error, ValueError):
         st.error(
             "Save failed. Your calculated draft is still here; retry or download a backup."
         )
@@ -396,8 +395,8 @@ def compare_page() -> None:
     st.caption(
         "Annual plans compare a single year. The combined plans used in Forecast are a separate list."
     )
-    st.session_state["records"] = _read_store(_database_url())
-    _read_goal_catalogue(_database_url())
+    st.session_state["records"] = _read_store(_database_path())
+    _read_goal_catalogue(_database_path())
     choices = _comparison_choices(st.session_state["records"])
     status_labels = {"draft": "Last calculated draft", "snapshot": "Kept snapshot"}
     displays = dict(
@@ -684,14 +683,14 @@ def _confirm_delete(record: SavedScenario) -> None:
     """Require confirmation of a specific saved revision before deleting it."""
     st.html(_document_display(record).html())
     st.caption(
-        "This removes the annual plan for both of you, including its draft in this session. It cannot be undone."
+        "This removes the annual plan and its draft from this session. It cannot be undone."
     )
     cancel, confirm = st.columns(2)
     if cancel.button("Cancel", width="stretch"):
         st.session_state.pop("pending_delete", None)
         st.rerun()
     if confirm.button("Delete annual plan", type="primary", width="stretch"):
-        dsn = _database_url()
+        dsn = _database_path()
         if not dsn:
             st.error("Saved annual plans are unavailable.")
             return
@@ -700,7 +699,7 @@ def _confirm_delete(record: SavedScenario) -> None:
         except RevisionConflictError as error:
             st.warning(str(error))
             return
-        except psycopg.Error:
+        except sqlite3.Error:
             st.error("Delete failed. The annual plan has not been removed; try again.")
             return
         _forget_scenario(record)
@@ -820,11 +819,7 @@ def main() -> None:
         ],
         position="top",
     )
-    dsn = _database_url()
-    if not dsn:
-        st.info(
-            "Local preview: drafts last for this session. Download a backup to keep them."
-        )
+    database_controls()
     if notice := st.session_state.pop("notice", None):
         st.success(notice)
     if imported := st.session_state.pop("pending_inputs", None):
@@ -841,3 +836,4 @@ def main() -> None:
             st.session_state[key] = st.session_state[key]
     st.html(Path(__file__).with_name("comparison.css"))
     page.run()
+    database_download()

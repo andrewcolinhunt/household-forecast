@@ -1,12 +1,11 @@
-"""Input-only planning documents with atomic PostgreSQL revision checks."""
+"""Input-only planning documents with atomic SQLite revision checks."""
 
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from typing import Any
 from uuid import UUID
-
-from psycopg.types.json import Jsonb
 
 from financial_model.planning import Kind, PlanningInputs, SavedPlanningDocument
 from financial_model.storage import MAX_BACKUP_BYTES, RevisionConflictError, _connect
@@ -21,19 +20,19 @@ def list_planning_documents(dsn: str, kind: Kind) -> tuple[SavedPlanningDocument
     )
     with _connect(dsn) as connection:
         rows = connection.execute(
-            f"SELECT document FROM planning_documents WHERE document -> 'inputs' ->> 'kind' = %s ORDER BY {order}",
+            f"SELECT document FROM planning_documents WHERE document -> 'inputs' ->> 'kind' = ? ORDER BY {order}",
             (kind,),
         ).fetchall()
-    return tuple(_read_document(row["document"]) for row in rows)
+    return tuple(_read_document(json.loads(row["document"])) for row in rows)
 
 
 def load_planning_document(dsn: str, document_id: UUID) -> SavedPlanningDocument | None:
     """Read a latest input document, without replacing a caller's draft."""
     with _connect(dsn) as connection:
         row = connection.execute(
-            "SELECT document FROM planning_documents WHERE id = %s", (document_id,)
+            "SELECT document FROM planning_documents WHERE id = ?", (str(document_id),)
         ).fetchone()
-    return _read_document(row["document"]) if row else None
+    return _read_document(json.loads(row["document"])) if row else None
 
 
 def create_planning_document(
@@ -45,12 +44,12 @@ def create_planning_document(
         raise ValueError(msg)
     with _connect(dsn) as connection:
         connection.execute(
-            "INSERT INTO planning_documents (id, revision, document, updated_at) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO planning_documents (id, revision, document, updated_at) VALUES (?, ?, ?, ?)",
             (
-                document.id,
+                str(document.id),
                 document.revision,
-                Jsonb(document.model_dump(mode="json")),
-                document.updated_at,
+                document.model_dump_json(),
+                document.updated_at.astimezone(UTC).isoformat(),
             ),
         )
     return document
@@ -62,7 +61,7 @@ def update_planning_document(
     """Replace only the loaded revision and category; deleted records stay deleted.
 
     Args:
-        dsn: Server-held PostgreSQL connection string.
+        dsn: Path of the active SQLite database.
         document: Current inputs with their reviewed identity and revision.
 
     Returns:
@@ -76,12 +75,12 @@ def update_planning_document(
     )
     with _connect(dsn) as connection:
         row = connection.execute(
-            "UPDATE planning_documents SET revision = %s, document = %s, updated_at = %s WHERE id = %s AND revision = %s AND document -> 'inputs' ->> 'kind' = %s RETURNING id",
+            "UPDATE planning_documents SET revision = ?, document = ?, updated_at = ? WHERE id = ? AND revision = ? AND document -> 'inputs' ->> 'kind' = ? RETURNING id",
             (
                 updated.revision,
-                Jsonb(updated.model_dump(mode="json")),
-                updated.updated_at,
-                document.id,
+                updated.model_dump_json(),
+                updated.updated_at.astimezone(UTC).isoformat(),
+                str(document.id),
                 document.revision,
                 document.inputs.kind,
             ),
@@ -96,8 +95,8 @@ def delete_planning_document(dsn: str, document_id: UUID, revision: int) -> None
     """Delete only the revision reviewed by the user; embedded Plan copies survive."""
     with _connect(dsn) as connection:
         row = connection.execute(
-            "DELETE FROM planning_documents WHERE id = %s AND revision = %s RETURNING id",
-            (document_id, revision),
+            "DELETE FROM planning_documents WHERE id = ? AND revision = ? RETURNING id",
+            (str(document_id), revision),
         ).fetchone()
         if row is None:
             msg = "This input document changed or was deleted. Refresh and try again."
@@ -123,15 +122,10 @@ def _read_document(raw: Any) -> SavedPlanningDocument:
         raise ValueError(message)
     current = SavedPlanningDocument.model_fields["schema_version"].default
     if raw["schema_version"] != current:
-        script = (
-            "scripts/migrate_wealth.py"
-            if raw["schema_version"] == 2
-            else "scripts/migrate_household_timeline.py"
-        )
         message = (
             f"Unsupported planning schema version {raw['schema_version']}; "
             f"this app reads version {current}. The original is unchanged. "
-            f"Preview the explicit conversion with {script}."
+            "This backup needs explicit conversion before it can be opened."
         )
         raise ValueError(message)
     return SavedPlanningDocument.model_validate(raw)

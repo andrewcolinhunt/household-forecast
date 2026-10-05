@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
-import psycopg
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -225,7 +225,7 @@ def calculation_calls(monkeypatch):
     module.calculate_forecast = calculate
     module.forecast_issues = lambda request: ()
     monkeypatch.setitem(sys.modules, "financial_model.forecast", module)
-    monkeypatch.setattr(app, "_database_url", lambda: None)
+    monkeypatch.setattr(app, "_database_path", lambda: None)
     return calls
 
 
@@ -338,7 +338,9 @@ def test_forecast_setup_offers_only_fixed_and_simulated_returns(
         "Fixed assumptions",
         "Simulated returns",
     ]
-    assert [widget.label for widget in page.get("file_uploader")] == ["Forecast JSON"]
+    assert [widget.label for widget in page.main.get("file_uploader")] == [
+        "Forecast JSON"
+    ]
     assert not page.text_area
     assert not any(widget.label == "Adverse scenario" for widget in page.selectbox)
     assert not field(page, "button", "Run forecast").disabled
@@ -372,7 +374,7 @@ def test_forecast_older_saved_modes_open_unchanged_and_rerun_exact_inputs(
             ),
         }
     )
-    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(app, "_database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(
         forecast_pages, "list_planning_documents", lambda dsn, kind: (plan_record,)
@@ -387,7 +389,9 @@ def test_forecast_older_saved_modes_open_unchanged_and_rerun_exact_inputs(
     method = page.button_group(key="mode_1")
     assert method.value == "fixed"
     assert method.options == ["Fixed assumptions", "Simulated returns"]
-    assert [widget.label for widget in page.get("file_uploader")] == ["Forecast JSON"]
+    assert [widget.label for widget in page.main.get("file_uploader")] == [
+        "Forecast JSON"
+    ]
     assert not page.text_area
     labels = {widget.label for widget in (*page.selectbox, *page.number_input)}
     assert "Adverse scenario" not in labels
@@ -437,7 +441,7 @@ def test_forecast_opened_run_does_not_restore_deleted_plan_options(
             "inputs": plan_record.inputs.model_copy(update={"name": "Current Plan"}),
         }
     )
-    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(app, "_database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(
         forecast_pages, "list_planning_documents", lambda dsn, kind: (replacement,)
@@ -458,7 +462,7 @@ def test_forecast_opened_run_does_not_restore_deleted_plan_options(
     assert calculation_calls[-1] == original.request
 
 
-@pytest.mark.parametrize("error_type", [psycopg.OperationalError, ValueError])
+@pytest.mark.parametrize("error_type", [sqlite3.OperationalError, ValueError])
 def test_forecast_plan_read_failure_does_not_offer_cached_plans(
     monkeypatch, plan_record, calculation_calls, error_type
 ) -> None:
@@ -471,7 +475,7 @@ def test_forecast_plan_read_failure_does_not_offer_cached_plans(
         message = "Saved Plan read failed"
         raise error_type(message)
 
-    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(app, "_database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(forecast_pages, "list_planning_documents", unavailable)
     page.run()
@@ -490,7 +494,7 @@ def test_forecast_saved_run_controls_omit_historical_inventory(
     page.multiselect[0].select(f"{plan_record.id}:0").run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
-    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(app, "_database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: ())
     monkeypatch.setattr(forecast_pages, "list_planning_documents", lambda dsn, kind: ())
     page.run()
@@ -582,23 +586,17 @@ def test_forecast_failed_rerun_preserves_previous_result(
 
 
 @pytest.mark.parametrize(
-    "constraint",
-    [
-        "forecast_runs_document_check",
-        "forecast_runs_document_check1",
-        "forecast_runs_schema_version",
-        "forecast_runs_document_id",
-    ],
+    "error_type", [sqlite3.IntegrityError, sqlite3.OperationalError]
 )
 def test_forecast_save_failure_preserves_run_and_can_retry(
-    monkeypatch, plan_record, calculation_calls, constraint
+    monkeypatch, plan_record, calculation_calls, error_type
 ) -> None:
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
     records = []
-    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(app, "_database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: tuple(records))
     monkeypatch.setattr(
         forecast_pages, "list_planning_documents", lambda dsn, kind: (plan_record,)
@@ -606,9 +604,7 @@ def test_forecast_save_failure_preserves_run_and_can_retry(
 
     def failed(dsn, document):
         message = "Private database detail"
-        raise psycopg.errors.CheckViolation(
-            message, info={ord("n"): constraint.encode()}
-        )
+        raise error_type(message)
 
     monkeypatch.setattr(forecast_pages, "create_forecast", failed)
     page.run()
@@ -619,10 +615,7 @@ def test_forecast_save_failure_preserves_run_and_can_retry(
     assert not field(page, "button", "Save forecast").disabled
     assert page.get("download_button")
     assert "Private database detail" not in page.error[0].value
-    if constraint == "forecast_runs_document_id":
-        assert "could not be saved" in page.error[0].value
-    else:
-        assert "database needs an update" in page.error[0].value
+    assert "could not be saved" in page.error[0].value
 
     monkeypatch.setattr(
         forecast_pages,

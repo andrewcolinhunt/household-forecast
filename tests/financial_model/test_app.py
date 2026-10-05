@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 
-import psycopg
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -118,7 +118,7 @@ def select_comparison(page: AppTest, keys: list[str]) -> None:
 
 @pytest.fixture(autouse=True)
 def local_preview(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: None)
+    monkeypatch.setattr(app, "_database_path", lambda: None)
 
 
 @pytest.mark.integration
@@ -127,7 +127,7 @@ def test_rsu_tax_toggle_preserves_drafts_saves_and_comparison(
 ) -> None:
     from financial_model.storage import import_backup
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     data = scenario.model_dump(mode="json")
     data["adults"][0]["rsu_vesting"] = 30000
     page = editor(Scenario.model_validate(data))
@@ -273,7 +273,7 @@ def test_main_imported_inputs_require_calculation(scenario: Scenario) -> None:
 def test_main_saves_current_form_and_successive_revisions(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = editor(scenario)
     press(page, "Calculate")
     assert not list_scenarios(database_url)
@@ -295,7 +295,7 @@ def test_main_saves_current_form_and_successive_revisions(
 def test_main_duplicate_gets_new_identity(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = editor(scenario)
     press(page, "Save")
     original = list_scenarios(database_url)[0]
@@ -316,7 +316,7 @@ def test_main_duplicate_gets_new_identity(
 def test_main_two_sessions_conflict_keeps_draft(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     saved = create_scenario(
         database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     )
@@ -345,7 +345,7 @@ def test_reopening_updated_scenario_refreshes_only_unchanged_drafts(
     monkeypatch: pytest.MonkeyPatch,
     edit: str | None,
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     saved = create_scenario(
         database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     )
@@ -394,12 +394,12 @@ def test_reopening_updated_scenario_refreshes_only_unchanged_drafts(
 def test_main_failed_save_preserves_result(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = editor(scenario)
 
     def unavailable(*args, **kwargs):
         message = "private connection details"
-        raise psycopg.OperationalError(message)
+        raise sqlite3.OperationalError(message)
 
     monkeypatch.setattr(app, "create_scenario", unavailable)
     press(page, "Save")
@@ -414,7 +414,7 @@ def test_main_failed_save_preserves_result(
 def test_main_old_result_is_labeled_and_recalculated(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     result = evaluate_scenario(scenario).model_copy(update={"model_revision": "old"})
     saved = create_scenario(database_url, SavedScenario(inputs=scenario, result=result))
     page = editor()
@@ -499,7 +499,7 @@ def test_editor_preserves_unsubmitted_inputs_across_pages(scenario: Scenario) ->
 def test_compare_saved_scenarios_without_opening_editor(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     first = create_scenario(
         database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     )
@@ -550,7 +550,7 @@ def test_compare_does_not_duplicate_saved_calculations(
             }
         )
     current = saved.model_copy(update={"revision": saved.revision + 1})
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (current,))
     page = AppTest.from_string(
         "from financial_model.app import compare_page\ncompare_page()"
@@ -578,7 +578,7 @@ def test_compare_does_not_reintroduce_old_loaded_plans(
         result=evaluate_scenario(inputs),
         **({} if deleted else {"id": saved.id, "revision": saved.revision + 1}),
     )
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (current,))
     page = AppTest.from_string(
         "from financial_model.app import compare_page\ncompare_page()"
@@ -599,12 +599,12 @@ def test_compare_does_not_reintroduce_old_loaded_plans(
     assert page.session_state["draft_ages"] == "unfinished child age"
 
 
-@pytest.mark.parametrize("error", [psycopg.OperationalError, ValueError])
+@pytest.mark.parametrize("error", [sqlite3.OperationalError, ValueError])
 def test_compare_read_failure_does_not_offer_cached_plans(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
 ) -> None:
     saved = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (saved,))
     page = AppTest.from_string(
         "from financial_model.app import compare_page\ncompare_page()"
@@ -629,7 +629,7 @@ def test_compare_read_failure_does_not_offer_cached_plans(
     assert not any("private database" in item.value for item in page.error)
 
 
-@pytest.mark.parametrize("error", [psycopg.OperationalError, ValueError])
+@pytest.mark.parametrize("error", [sqlite3.OperationalError, ValueError])
 def test_goal_read_failure_removes_cached_choices_without_changing_allocations(
     scenario: Scenario, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
 ) -> None:
@@ -648,7 +648,7 @@ def test_goal_read_failure_removes_cached_choices_without_changing_allocations(
         message = "private database details"
         raise error(message)
 
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: ())
     monkeypatch.setattr(app, "list_goals", unavailable)
     page.run()
@@ -662,7 +662,7 @@ def test_goal_read_failure_removes_cached_choices_without_changing_allocations(
 def test_editor_keeps_separate_drafts_for_saved_scenarios(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     first = create_scenario(
         database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     )
@@ -688,7 +688,7 @@ def test_editor_keeps_separate_drafts_for_saved_scenarios(
 def test_delete_requires_confirmation_and_cleans_session(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = editor(scenario)
     press(page, "Save")
     saved = list_scenarios(database_url)[0]
@@ -715,7 +715,7 @@ def test_delete_conflict_and_database_failure_preserve_record(
 ) -> None:
     from financial_model.storage import update_scenario
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     saved = create_scenario(
         database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     )
@@ -730,7 +730,7 @@ def test_delete_conflict_and_database_failure_preserve_record(
 
     def unavailable(*args, **kwargs):
         message = "private connection details"
-        raise psycopg.OperationalError(message)
+        raise sqlite3.OperationalError(message)
 
     monkeypatch.setattr(app, "delete_scenario", unavailable)
     press(page, "Delete annual plan")
@@ -743,7 +743,7 @@ def test_delete_conflict_and_database_failure_preserve_record(
 def test_deleted_scenario_cannot_be_saved_back_by_another_session(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = editor(scenario)
     press(page, "Save")
     saved = list_scenarios(database_url)[0]
@@ -775,7 +775,7 @@ def test_compare_multiple_scenarios_retains_selection(
         )
         for index in range(5)
     )
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: records)
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     go(page, "compare")
@@ -849,7 +849,7 @@ def test_compare_pending_scenario_respects_order_and_limit(
         SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
         for _ in range(5)
     ]
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: tuple(documents))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     ids = [str(document.id) for document in documents]
@@ -890,7 +890,7 @@ def test_option_award_save_preserves_taxes_and_survives_reload(
 ) -> None:
     from financial_model.storage import import_backup
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     baseline = evaluate_scenario(scenario)
     page = editor(scenario)
     widget(page, "checkbox", "adult_0_award_enabled").check().run()
@@ -923,7 +923,7 @@ def test_cash_shortfall_visible_in_library_results_and_comparison(
     inputs = Scenario.model_validate(data)
     shortfall = SavedScenario(inputs=inputs, result=evaluate_scenario(inputs))
     other = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: (shortfall, other))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     shown = [t.value for t in page.text]
@@ -958,7 +958,7 @@ def test_employer_metadata_survives_navigation_save_reload_and_copy(
 ) -> None:
     from financial_model.storage import import_backup
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     baseline = evaluate_scenario(scenario)
     page = editor(scenario)
     widget(page, "text_input", "adult_0_employer").set_value("  Example & Co  ").run()
@@ -1007,7 +1007,7 @@ def test_employer_changes_refresh_labels_without_changing_selection(
         data["adults"][0]["employer"] = employer
         inputs = Scenario.model_validate(data)
         records.append(SavedScenario(inputs=inputs, result=evaluate_scenario(inputs)))
-    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "_database_path", lambda: "synthetic-store")
     monkeypatch.setattr(app, "list_scenarios", lambda dsn: tuple(records))
     page = AppTest.from_file(str(ENTRY), default_timeout=60).run()
     go(page, "compare")
@@ -1054,7 +1054,7 @@ def test_not_working_can_be_cleared_and_employer_reentered(scenario: Scenario) -
 def test_automatic_title_save_copy_compare_and_clear_label(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     data = scenario.model_dump(mode="json")
     data["name"] = ""
     data["adults"][0]["employer"] = "Acme"
@@ -1132,7 +1132,7 @@ def test_allocation_units_preserve_cents_and_edits_across_navigation(scenario):
 def test_goals_add_rename_save_and_reload(database_url, monkeypatch, scenario):
     from financial_model.storage import list_goals
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = editor(scenario)
     widget(page, "number_input", "adult_0_cash_pay").set_value(120000).run()
     go(page, "goals")
@@ -1194,7 +1194,7 @@ def test_household_defaults_apply_only_to_new_scenarios(
     from financial_model.schemas import Household
     from financial_model.storage import load_household, save_household
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     original = create_scenario(
         database_url, SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
     )
@@ -1246,7 +1246,7 @@ def test_removing_allocation_does_not_delete_shared_goal(
     from financial_model.schemas import Goal
     from financial_model.storage import create_goal, list_goals
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     goal = create_goal(database_url, Goal(name="Travel"))
     page = editor(scenario)
     press(page, "Add goal to plan")
@@ -1328,7 +1328,7 @@ def test_cash_priority_saves_and_loads_in_another_session(
     from financial_model.allocations import fund_cash_goals
     from financial_model.schemas import Goal, GoalAllocation
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     base = scenario.allocation_plan
     travel = Goal(name="Travel")
     rows = (

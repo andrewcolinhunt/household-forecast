@@ -2,6 +2,12 @@
 .env
 .streamlit/secrets.toml
 *.scenario.json
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-*
+*.sqlite3-*
+*.db-*
 
 # macOS system files
 .DS_Store

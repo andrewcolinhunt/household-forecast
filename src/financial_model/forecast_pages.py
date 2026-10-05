@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
-import psycopg
 import streamlit as st
 
 from financial_model import input_forms as forms
@@ -83,15 +83,10 @@ def _saved_runs(dsn: str | None) -> None:
         if dsn:
             try:
                 records = list_forecasts(dsn)
-            except psycopg.errors.UndefinedTable:
-                st.info(
-                    "Forecast storage needs the updated scripts/schema.sql. JSON downloads still work."
-                )
-                records = ()
             except ValueError as error:
                 st.error(str(error))
                 records = ()
-            except psycopg.Error:
+            except sqlite3.Error:
                 st.error(
                     "Saved forecasts could not be read. Try again or open a downloaded JSON file."
                 )
@@ -121,7 +116,7 @@ def _plans(dsn: str | None) -> dict[str, PlanningScenario]:
     if dsn:
         try:
             records = list_planning_documents(dsn, "plan")
-        except (psycopg.Error, ValueError):
+        except (sqlite3.Error, ValueError):
             st.error(
                 "Saved Plans could not be read. An opened forecast remains available."
             )
@@ -537,29 +532,17 @@ def _results(document: SavedForecast, dsn: str | None) -> None:
     ):
         try:
             create_forecast(dsn, document)
-        except psycopg.errors.UniqueViolation:
-            st.info("This exact run is already saved.")
-            saved_ids.add(str(document.id))
-        except psycopg.errors.UndefinedTable:
-            st.error(
-                "Apply the updated scripts/schema.sql before saving forecasts. Download the JSON to keep this run now."
-            )
-        except psycopg.Error as error:
-            outdated_schema = isinstance(error, psycopg.errors.CheckViolation) and (
-                error.diag.constraint_name
-                in {
-                    "forecast_runs_document_check",
-                    "forecast_runs_document_check1",
-                    "forecast_runs_schema_version",
-                }
-            )
-            st.error(
-                "The database needs an update before it can save this forecast. "
-                "Your calculated run is still here. Apply the latest scripts/schema.sql, "
-                "then try Save forecast again."
-                if outdated_schema
-                else "This forecast could not be saved. Your calculated run is still here; download a JSON copy or try again."
-            )
+        except sqlite3.Error as error:
+            if getattr(error, "sqlite_errorcode", None) in {
+                sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY,
+                sqlite3.SQLITE_CONSTRAINT_UNIQUE,
+            }:
+                st.info("This exact run is already saved.")
+                saved_ids.add(str(document.id))
+            else:
+                st.error(
+                    "This forecast could not be saved. Your calculated run is still here; download a JSON copy or try again."
+                )
         else:
             saved_ids.add(str(document.id))
             st.success("Forecast saved with its exact inputs and results.")
@@ -567,14 +550,14 @@ def _results(document: SavedForecast, dsn: str | None) -> None:
 
 def forecast_page() -> None:
     """Set up, run, compare, inspect, and retain household forecasts."""
-    from financial_model.app import _database_url
+    from financial_model.app import _database_path
     from financial_model.forecast import forecast_issues
 
     st.title("Forecast")
     st.caption(
         "See how saved Plans affect wealth and the ability to pay expenses through retirement."
     )
-    dsn = _database_url()
+    dsn = _database_path()
     _saved_runs(dsn)
     with st.expander(
         "Set up forecast", expanded="forecast_document" not in st.session_state

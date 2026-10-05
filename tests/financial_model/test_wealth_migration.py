@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-import importlib.util
-import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from decimal import Decimal
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from psycopg.types.json import Jsonb
 
 from financial_model.planning import (
     InvestmentAssumptions,
     PlanningScenario,
     SavedPlanningDocument,
 )
-from financial_model.storage import _connect
 from financial_model.wealth import SavedWealthSnapshot
 from financial_model.wealth_migration import (
     convert_wealth_and_planning,
@@ -197,89 +192,6 @@ def test_migration_rejects_missing_classification_targets_and_orphan_reserves():
     plan["inputs"]["reserved_cash"] = "10"
     with pytest.raises(ValueError, match="Investment scenario"):
         convert_wealth_and_planning([], [plan])
-
-
-@pytest.mark.integration
-def test_wealth_migration_is_atomic_rejects_stale_or_edited_preview(
-    database_url, tmp_path
-):
-    spec = importlib.util.spec_from_file_location(
-        "migrate_wealth", Path(__file__).parents[2] / "scripts/migrate_wealth.py"
-    )
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    old = legacy_wealth()
-    plan = legacy_planning(PlanningScenario(name="Plan"))
-    plan["inputs"]["wealth"] = deepcopy(old)
-    with _connect(database_url) as connection:
-        for table, version in (("wealth_snapshots", "1"), ("planning_documents", "2")):
-            from psycopg import sql
-
-            constraints = connection.execute(
-                "SELECT conname FROM pg_constraint WHERE conrelid=%s::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%%schema_version%%'",
-                (table,),
-            ).fetchall()
-            for constraint in constraints:
-                connection.execute(
-                    sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(
-                        sql.Identifier(table), sql.Identifier(constraint["conname"])
-                    )
-                )
-            connection.execute(
-                sql.SQL(
-                    "ALTER TABLE {} ADD CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM {})"
-                ).format(sql.Identifier(table), sql.Literal(version))
-            )
-        for table, document in (
-            ("wealth_snapshots", old),
-            ("planning_documents", plan),
-        ):
-            connection.execute(
-                sql.SQL("INSERT INTO {} VALUES (%s,%s,%s,%s)").format(
-                    sql.Identifier(table)
-                ),
-                (
-                    document["id"],
-                    document["revision"],
-                    Jsonb(document),
-                    document["updated_at"],
-                ),
-            )
-    directory = tmp_path / "preview"
-    script.preview(database_url, directory, {})
-    assert (directory / "originals.json").stat().st_mode & 0o777 == 0o600
-    proposed = json.loads((directory / "proposals.json").read_text())
-    tampered = deepcopy(proposed)
-    tampered["wealth_snapshots"][0]["snapshot"]["accounts"][0]["balance"] = "999"
-    (directory / "proposals.json").write_text(json.dumps(tampered))
-    with pytest.raises(ValueError, match="Proposals differ"):
-        script.apply(database_url, directory)
-    (directory / "proposals.json").write_text(json.dumps(proposed))
-    with _connect(database_url) as connection:
-        edited = deepcopy(old)
-        edited["snapshot"]["name"] = "Changed"
-        connection.execute("UPDATE wealth_snapshots SET document=%s", (Jsonb(edited),))
-    with pytest.raises(ValueError, match="changed since preview"):
-        script.apply(database_url, directory)
-    with _connect(database_url) as connection:
-        assert (
-            connection.execute("SELECT document FROM planning_documents").fetchone()[
-                "document"
-            ]
-            == plan
-        )
-        connection.execute("UPDATE wealth_snapshots SET document=%s", (Jsonb(old),))
-    script.apply(database_url, directory)
-    from financial_model.planning_storage import list_planning_documents
-    from financial_model.storage import list_wealth_snapshots
-
-    assert list_wealth_snapshots(database_url)[0].snapshot.assets == Decimal("1234.56")
-    assert (
-        list_planning_documents(database_url, "plan")[0].inputs.wealth.schema_version
-        == 2
-    )
-    with pytest.raises(ValueError, match="changed since preview"):
-        script.apply(database_url, directory)
 
 
 def test_wealth_migration_preserves_plans_already_upgraded_by_retirement_migration():

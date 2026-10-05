@@ -482,7 +482,7 @@ class ScenarioResult(ValueModel):
 
 
 class SavedScenario(ValueModel):
-    """Versioned document used by PostgreSQL and JSON backups."""
+    """Versioned document used by SQLite and JSON backups."""
 
     schema_version: Literal[2] = 2
     id: UUID = Field(default_factory=uuid4)

@@ -1,11 +1,11 @@
-"""Wealth documents in real isolated PostgreSQL schemas and portable backups."""
+"""Wealth documents in real isolated SQLite schemas and portable backups."""
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date
 from uuid import uuid4
 
-import psycopg
 import pytest
 from pydantic import ValidationError
 
@@ -95,7 +95,7 @@ def test_wealth_storage_create_delete_conflicts(
     database_url: str, wealth_document: SavedWealthSnapshot
 ) -> None:
     create_wealth_snapshot(database_url, wealth_document)
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with pytest.raises(sqlite3.IntegrityError):
         create_wealth_snapshot(database_url, wealth_document)
     with pytest.raises(ValueError, match="revision 1"):
         create_wealth_snapshot(

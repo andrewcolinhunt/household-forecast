@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
-import psycopg
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -28,7 +28,7 @@ PAGES = "src/financial_model/pages/"
 
 @pytest.fixture(autouse=True)
 def local_preview(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: None)
+    monkeypatch.setattr(app, "_database_path", lambda: None)
 
 
 def go(page: AppTest, target: str) -> AppTest:
@@ -211,7 +211,10 @@ def test_wealth_forecast_details_survive_navigation_and_validation():
     press(page, "Add debt")
     field(page, "text_input", "Annual payment ($)").set_value("1200.02").run()
     field(page, "text_input", "Interest rate (%)").set_value("5.75").run()
-    assert {section.label for section in page.expander} == {"Wealth backups"}
+    assert {section.label for section in page.expander} == {
+        "Wealth backups",
+        "Database",
+    }
     go(page, "scenarios")
     go(page, "wealth")
     press(page, next(b.label for b in page.button if b.label.startswith("Resume")))
@@ -247,7 +250,7 @@ def test_wealth_owner_labels_show_household_names_with_slot_numbers():
 
 @pytest.mark.integration
 def test_wealth_forecast_details_save_and_reload(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = press(library(), "New snapshot")
     press(page, "Add account")
     field(page, "selectbox", "Tax treatment").select("hsa").run()
@@ -310,7 +313,7 @@ def test_wealth_backup_import_is_new_draft_and_invalid_upload_keeps_edits(
 def test_wealth_saves_incomplete_inputs_and_rejects_invalid_mixed_allocation(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = press(library(), "New snapshot")
     press(page, "Add account")
     field(page, "text_input", "Balance ($)").set_value("100").run()
@@ -336,7 +339,7 @@ def test_wealth_saves_incomplete_inputs_and_rejects_invalid_mixed_allocation(
 def test_wealth_duplicate_new_date_keeps_original(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     original = saved_example(database_url)
     page = press(library(), "Duplicate")
     assert len(list_wealth_snapshots(database_url)) == 1
@@ -355,7 +358,7 @@ def test_wealth_duplicate_new_date_keeps_original(
 def test_wealth_concurrent_save_preserves_edits_and_allows_copy(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     saved = saved_example(database_url)
     first, second = press(library(), "Edit"), press(library(), "Edit")
     field(first, "text_input", "Balance ($)").set_value("110").run()
@@ -374,7 +377,7 @@ def test_wealth_concurrent_save_preserves_edits_and_allows_copy(
 def test_wealth_reopen_refreshes_only_unchanged_drafts(
     database_url: str, monkeypatch: pytest.MonkeyPatch, edited: bool
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     saved = saved_example(database_url)
     page = press(library(), "Edit")
     if edited:
@@ -400,13 +403,13 @@ def test_wealth_reopen_refreshes_only_unchanged_drafts(
 def test_wealth_failed_save_keeps_draft_and_hides_credentials(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = press(library(), "New snapshot")
     field(page, "text_input", "Snapshot name (optional)").set_value("Keep this").run()
 
     def unavailable(*args, **kwargs):
         message = "private connection details"
-        raise psycopg.OperationalError(message)
+        raise sqlite3.OperationalError(message)
 
     monkeypatch.setattr(wealth_pages, "create_wealth_snapshot", unavailable)
     press(page, "Save snapshot")
@@ -424,7 +427,7 @@ def _read_wealth_library_app():
     st.session_state["read_records"] = _read("unused-test-dsn")
 
 
-@pytest.mark.parametrize("error_type", [psycopg.OperationalError, ValueError])
+@pytest.mark.parametrize("error_type", [sqlite3.OperationalError, ValueError])
 def test_wealth_read_failure_does_not_offer_cached_snapshots(monkeypatch, error_type):
     cached = SavedWealthSnapshot(snapshot=WealthSnapshot(as_of=date(2026, 1, 1)))
     draft = {"data": {"name": "Keep edits"}, "loaded": None}
@@ -502,7 +505,7 @@ def test_wealth_resume_omits_untouched_saved_copies_but_keeps_unsaved_edits(
 def test_wealth_delete_confirmation_and_stale_revision(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     original = saved_example(database_url)
     page = press(library(), "Edit")
     go(page, "wealth")
@@ -526,7 +529,7 @@ def test_wealth_delete_confirmation_and_stale_revision(
 def test_wealth_deleted_open_record_can_only_be_saved_as_new(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     saved = saved_example(database_url)
     page = press(library(), "Edit")
     delete_wealth_snapshot(database_url, saved.id, saved.revision)

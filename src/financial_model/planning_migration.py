@@ -8,8 +8,6 @@ from decimal import Decimal
 from typing import Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from psycopg import Connection
-
 from financial_model.planning import (
     INPUT_ADAPTER,
     Exploration,
@@ -23,21 +21,6 @@ from financial_model.wealth_migration import (
     convert_investment_inputs,
     convert_plan_inputs,
 )
-
-
-def upgrade_forecast_constraint(connection: Connection) -> None:
-    """Discard obsolete results and allow only the current forecast format."""
-    connection.execute(
-        "DO $$ BEGIN IF to_regclass('forecast_runs') IS NOT NULL THEN "
-        "DELETE FROM forecast_runs WHERE (document ->> 'schema_version')::integer < 5; "
-        "ALTER TABLE forecast_runs "
-        "DROP CONSTRAINT IF EXISTS forecast_runs_document_check, "
-        "DROP CONSTRAINT IF EXISTS forecast_runs_document_check1, "
-        "DROP CONSTRAINT IF EXISTS forecast_runs_schema_version, "
-        "ADD CONSTRAINT forecast_runs_schema_version "
-        "CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '5'); "
-        "END IF; END $$;"
-    )
 
 
 def _retirement_defaults(name: str, money_year: int | None) -> dict[str, Any]:

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from functools import partial
 from typing import Any, cast
 from uuid import uuid4
 
-import psycopg
 import streamlit as st
 
 from financial_model import input_forms as forms
@@ -136,7 +136,7 @@ def _read(dsn: str | None, kind: Kind) -> tuple[SavedPlanningDocument, ...]:
         available[kind] = False
         _setup_error(error)
         return ()
-    except psycopg.Error:
+    except sqlite3.Error:
         available[kind] = False
         st.error(
             f"Saved {LABELS[kind]} could not be read. Your drafts are still here; check database setup or try Refresh."
@@ -189,7 +189,7 @@ def _initial(kind: Kind, dsn: str | None) -> PlanningInputs:
         household = (
             load_household(dsn) if dsn else st.session_state.get("local_household")
         )
-    except (ValueError, psycopg.Error):
+    except (ValueError, sqlite3.Error):
         st.warning(
             "Household defaults could not be loaded; this draft keeps generic adult labels."
         )
@@ -422,7 +422,7 @@ def _save(kind: Kind, dsn: str, inputs: PlanningInputs, *, new: bool) -> None:
             if loaded and not new
             else create_planning_document(dsn, document)
         )
-    except (ValueError, RevisionConflictError, psycopg.Error) as error:
+    except (ValueError, RevisionConflictError, sqlite3.Error) as error:
         _setup_error(error)
         return
     if not loaded or not new:
@@ -508,7 +508,7 @@ def _confirm_delete(dsn: str | None, record: SavedPlanningDocument) -> None:
     if st.button("Delete inputs", type="primary", disabled=not dsn) and dsn:
         try:
             delete_planning_document(dsn, record.id, record.revision)
-        except (RevisionConflictError, psycopg.Error) as error:
+        except (RevisionConflictError, sqlite3.Error) as error:
             _setup_error(error)
             return
         st.session_state.get("planning_drafts", {}).pop(str(record.id), None)
@@ -696,7 +696,7 @@ def _preserve_legacy_draft(
         key=f"preserved_draft_{kind}",
     )
     st.caption(
-        "This recovery file contains raw unsaved inputs, not a current-format import. Export it before reloading. Preview and review the explicit conversion with scripts/migrate_household_timeline.py, then reload the migrated saved inputs. Recreate unsaved changes from the recovery file after migration."
+        "This recovery file contains raw unsaved inputs, not a current-format import. Export it before reloading. Use the original app version to convert and export current-format saved inputs, then reopen them here. Recreate unsaved changes from the recovery file after migration."
     )
     latest = next(
         (

@@ -1,15 +1,14 @@
-"""Isolated PostgreSQL persistence and portable planning document boundaries."""
+"""Isolated SQLite persistence and portable planning document boundaries."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import datetime
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
-import psycopg
 import pytest
-from psycopg import sql
-from psycopg.types.json import Jsonb
 
 from financial_model.planning import (
     EconomicAssumptions,
@@ -57,7 +56,7 @@ def test_planning_round_trip_and_concurrency(database_url, model):
     saved = create_planning_document(database_url, record)
     assert load_planning_document(database_url, saved.id) == saved
     assert list_planning_documents(database_url, record.inputs.kind) == (saved,)
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with pytest.raises(sqlite3.IntegrityError):
         create_planning_document(database_url, saved)
     updated = update_planning_document(database_url, saved)
     assert updated.revision == 2
@@ -113,6 +112,26 @@ def test_profile_listing_retains_recency_order_after_edit(database_url: str) -> 
 
 
 @pytest.mark.integration
+def test_profile_listing_orders_timestamps_with_different_offsets(
+    database_url: str,
+) -> None:
+    first, second = (
+        create_planning_document(
+            database_url,
+            SavedPlanningDocument(
+                inputs=SpendingAssumptions(name=name),
+                updated_at=datetime.fromisoformat(timestamp),
+            ),
+        )
+        for name, timestamp in (
+            ("Earlier", "2026-10-05T12:00:00+09:00"),
+            ("Later", "2026-10-05T05:00:00+00:00"),
+        )
+    )
+    assert list_planning_documents(database_url, "spending") == (second, first)
+
+
+@pytest.mark.integration
 def test_kind_cannot_change_and_source_deletion_does_not_mutate_plan(database_url):
     source = create_planning_document(
         database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
@@ -161,36 +180,6 @@ def test_household_source_deletion_preserves_plan_copy(database_url):
     assert import_planning_backup(plan.model_dump_json().encode()) == plan.inputs
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "constraint_name", ["planning_kind", "planning_documents_document_check4"]
-)
-def test_schema_expands_existing_library_constraint_idempotently(
-    database_url, constraint_name
-):
-    existing = create_planning_document(
-        database_url, SavedPlanningDocument(inputs=PlanningScenario(name="Existing"))
-    )
-    schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
-    with psycopg.connect(database_url) as connection:
-        connection.execute(
-            "ALTER TABLE planning_documents DROP CONSTRAINT planning_kind"
-        )
-        connection.execute(
-            sql.SQL(
-                "ALTER TABLE planning_documents ADD CONSTRAINT {} CHECK ((document -> 'inputs' ->> 'kind' IN ('work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE)"
-            ).format(sql.Identifier(constraint_name))
-        )
-        connection.execute(schema)
-        connection.execute(schema)
-    assert load_planning_document(database_url, existing.id) == existing
-    saved = create_planning_document(
-        database_url,
-        SavedPlanningDocument(inputs=HouseholdAssumptions(name="New family")),
-    )
-    assert load_planning_document(database_url, saved.id) == saved
-
-
 @pytest.mark.parametrize(
     "change",
     [{"schema_version": 1}, {"document_type": "wealth_snapshot"}, {"extra": True}],
@@ -220,52 +209,53 @@ def test_import_old_planning_version_requires_explicit_conversion():
         mode="json"
     )
     raw["schema_version"] = 3
-    with pytest.raises(ValueError, match=r"migrate_household_timeline\.py"):
+    with pytest.raises(ValueError, match="explicit conversion"):
         import_planning_backup(json.dumps(raw).encode())
 
 
 @pytest.mark.integration
-def test_planning_runtime_grants_and_database_constraints(database_url):
-    role = "planning_test_" + uuid4().hex
+def test_schema_reapply_preserves_planning_documents(database_url: str) -> None:
+    existing = create_planning_document(
+        database_url, SavedPlanningDocument(inputs=PlanningScenario(name="Existing"))
+    )
+    schema = (Path(__file__).parents[2] / "src/financial_model/schema.sql").read_text()
+    connection = sqlite3.connect(database_url)
+    try:
+        connection.executescript(schema)
+        connection.executescript(schema)
+    finally:
+        connection.close()
+    assert load_planning_document(database_url, existing.id) == existing
+    household = create_planning_document(
+        database_url, SavedPlanningDocument(inputs=HouseholdAssumptions(name="Family"))
+    )
+    assert load_planning_document(database_url, household.id) == household
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"id": "different"},
+        {"revision": 2},
+        {"revision": "1"},
+        {"schema_version": 3},
+        {"schema_version": "4"},
+        {"document_type": "forecast"},
+        {"inputs": {"kind": "unknown"}},
+        {"inputs": {}},
+    ],
+)
+def test_planning_database_rejects_invalid_envelopes(
+    database_url: str, change: dict
+) -> None:
     document = SavedPlanningDocument(inputs=EconomicAssumptions(name="Synthetic"))
-    with psycopg.connect(database_url) as connection:
-        schema = connection.execute("SELECT current_schema()").fetchone()[0]
+    raw = document.model_dump(mode="json") | change
+    from financial_model.storage import _connect
+
+    with pytest.raises(sqlite3.IntegrityError), _connect(database_url) as connection:
         connection.execute(
-            sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(role))
+            "INSERT INTO planning_documents VALUES (?, 1, ?, ?)",
+            (str(document.id), json.dumps(raw), document.updated_at.isoformat()),
         )
-        connection.execute(
-            sql.SQL("GRANT USAGE ON SCHEMA {} TO {}").format(
-                sql.Identifier(schema), sql.Identifier(role)
-            )
-        )
-        connection.execute(
-            sql.SQL(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON planning_documents TO {}"
-            ).format(sql.Identifier(role))
-        )
-        connection.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
-        connection.execute(
-            "INSERT INTO planning_documents VALUES (%s, 1, %s, %s)",
-            (document.id, Jsonb(document.model_dump(mode="json")), document.updated_at),
-        )
-        assert (
-            connection.execute("SELECT count(*) FROM planning_documents").fetchone()[0]
-            == 1
-        )
-        connection.execute(
-            "UPDATE planning_documents SET updated_at = now() WHERE id = %s",
-            (document.id,),
-        )
-        connection.execute(
-            "DELETE FROM planning_documents WHERE id = %s", (document.id,)
-        )
-        assert (
-            connection.execute("SELECT count(*) FROM planning_documents").fetchone()[0]
-            == 0
-        )
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
-            connection.execute(
-                "INSERT INTO planning_documents VALUES (%s, 1, %s, %s)",
-                (document.id, Jsonb({}), document.updated_at),
-            )
-        connection.rollback()  # Dispose of the test-only role and grants too.
+    assert not list_planning_documents(database_url, "economy")

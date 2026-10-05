@@ -251,7 +251,7 @@ def workspace() -> None:
     category = next(
         name for name, tab in zip(CATEGORIES, tabs, strict=True) if tab.open
     )
-    dsn = app._database_url()
+    dsn = app._database_path()
     target = st.session_state.get("workspace_target", "library")
     with tabs[CATEGORIES.index(category)]:
         if target == "annual" and category in {

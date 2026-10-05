@@ -1,10 +1,11 @@
-"""Real PostgreSQL transactions, concurrent edits, and portable backups."""
+"""Real SQLite transactions, concurrent edits, and portable backups."""
 
 from __future__ import annotations
 
+import sqlite3
+from pathlib import Path
 from uuid import UUID, uuid4
 
-import psycopg
 import pytest
 from pydantic import ValidationError
 
@@ -87,7 +88,7 @@ def test_create_scenario_duplicate_id_does_not_overwrite(
     database_url: str, document: SavedScenario
 ) -> None:
     create_scenario(database_url, document)
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with pytest.raises(sqlite3.IntegrityError):
         create_scenario(database_url, document)
     assert list_scenarios(database_url) == (document,)
 
@@ -247,3 +248,86 @@ def test_household_revision_checks_and_scenario_isolation(database_url, document
     assert load_scenario(database_url, document.id) == document
     assert "revision" not in changed.scenario_defaults()
     assert "allocation_plan" not in changed.scenario_defaults()
+
+
+def test_connect_requires_existing_database_and_closes_connection(
+    tmp_path: Path,
+) -> None:
+    from financial_model.storage import _connect
+
+    path = tmp_path / "missing.sqlite"
+    with pytest.raises(sqlite3.OperationalError), _connect(str(path)):
+        pytest.fail("A missing database must not be created implicitly.")
+    assert not path.exists()
+
+
+def test_connect_enforces_foreign_keys_and_closes_connection(database_url: str) -> None:
+    from financial_model.storage import _connect
+
+    with _connect(database_url) as connection:
+        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert connection.execute("PRAGMA trusted_schema").fetchone()[0] == 0
+        assert connection.execute("PRAGMA application_id").fetchone()[0] == 1179471692
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+
+
+def test_connect_rejects_growth_beyond_upload_limit(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from financial_model import storage
+
+    with storage._connect(database_url) as connection:
+        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+    limit = Path(database_url).stat().st_size + page_size
+    monkeypatch.setattr(storage, "MAX_DATABASE_BYTES", limit)
+    with (
+        pytest.raises(sqlite3.OperationalError, match="full"),
+        storage._connect(database_url) as connection,
+    ):
+        connection.execute("CREATE TABLE growth_test (data BLOB)")
+        connection.execute("INSERT INTO growth_test VALUES (zeroblob(?))", (limit,))
+    assert Path(database_url).stat().st_size <= limit
+    with storage._connect(database_url) as connection:
+        assert connection.execute("SELECT count(*) FROM growth_test").fetchone()[0] == 0
+
+
+@pytest.mark.integration
+def test_failed_scenario_write_rolls_back_goal_registration(
+    database_url: str, document: SavedScenario
+) -> None:
+    from financial_model.schemas import Goal
+    from financial_model.storage import list_goals, resolve_goal_conflicts
+
+    create_scenario(database_url, document)
+    goals = list_goals(database_url)
+    replacement = Goal(name="Different retirement goal")
+    inputs = resolve_goal_conflicts(
+        document.inputs, {document.inputs.allocation_plan.rows[0].goal.id: replacement}
+    )
+    edited = SavedScenario(
+        id=document.id, inputs=inputs, result=evaluate_scenario(inputs)
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        create_scenario(database_url, edited)
+    assert list_goals(database_url) == goals
+    assert load_scenario(database_url, document.id) == document
+    update_scenario(database_url, document)
+    with pytest.raises(RevisionConflictError):
+        update_scenario(database_url, edited)
+    assert list_goals(database_url) == goals
+
+
+@pytest.mark.integration
+def test_deleting_scenario_releases_goal_references(
+    database_url: str, document: SavedScenario
+) -> None:
+    from financial_model.storage import delete_goal, list_goals
+
+    create_scenario(database_url, document)
+    goals = list_goals(database_url)
+    delete_scenario(database_url, document.id, document.revision)
+    for goal in goals:
+        delete_goal(database_url, goal)
+    assert not list_goals(database_url)

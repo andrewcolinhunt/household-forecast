@@ -1,17 +1,13 @@
-"""Portable forecast validation and immutable PostgreSQL run persistence."""
+"""Portable forecast validation and immutable SQLite run persistence."""
 
 from __future__ import annotations
 
-import importlib.util
 import json
+import sqlite3
 from datetime import date
 from pathlib import Path
-from uuid import uuid4
 
-import psycopg
 import pytest
-from psycopg import sql
-from psycopg.types.json import Jsonb
 
 from financial_model.forecast_models import (
     ForecastPoint,
@@ -26,9 +22,7 @@ from financial_model.forecast_storage import (
     list_forecasts,
 )
 from financial_model.planning import (
-    EconomicAssumptions,
     PlanningScenario,
-    SavedPlanningDocument,
 )
 from financial_model.wealth import SavedWealthSnapshot, WealthSnapshot
 
@@ -120,160 +114,61 @@ def test_forecast_storage_round_trip_and_duplicate_cannot_replace(
     assert create_forecast(database_url, saved_forecast) == saved_forecast
     assert list_forecasts(database_url) == (saved_forecast,)
     replacement = saved_forecast.model_copy(update={"numpy_version": "changed"})
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with pytest.raises(sqlite3.IntegrityError):
         create_forecast(database_url, replacement)
     assert list_forecasts(database_url) == (saved_forecast,)
 
 
 @pytest.mark.integration
 def test_forecast_storage_does_not_create_tables(database_url) -> None:
-    with psycopg.connect(database_url) as connection:
+    from financial_model.storage import _connect
+
+    with _connect(database_url) as connection:
         connection.execute("DROP TABLE forecast_runs")
-    with pytest.raises(psycopg.errors.UndefinedTable):
+    with pytest.raises(sqlite3.OperationalError):
         list_forecasts(database_url)
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize(
-    ("version", "constraint"),
-    [
-        (1, "forecast_runs_document_check"),
-        (1, "forecast_runs_document_check1"),
-        (2, "forecast_runs_schema_version"),
-    ],
-)
-def test_forecast_schema_reapply_discards_legacy_runs(
-    database_url, saved_forecast, version, constraint
-):
-    legacy = saved_forecast.model_dump(mode="json") | {
-        "schema_version": version,
-        "model_version": str(version),
-    }
-    current = saved_forecast.model_copy(update={"id": uuid4()})
-    schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
-    with psycopg.connect(database_url) as connection:
-        check = sql.SQL(
-            "(document ->> 'schema_version') IS NOT DISTINCT FROM '1'"
-            if version == 1
-            else "(document ->> 'schema_version' IN ('1', '2')) IS TRUE"
-        )
-        connection.execute(
-            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version"
-        )
-        connection.execute(
-            sql.SQL(
-                "ALTER TABLE forecast_runs DROP CONSTRAINT IF EXISTS {}, "
-                "ADD CONSTRAINT {} CHECK ({})"
-            ).format(sql.Identifier(constraint), sql.Identifier(constraint), check)
-        )
-        connection.execute(
-            "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
-            (saved_forecast.id, Jsonb(legacy), saved_forecast.created_at),
-        )
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
-            connection.execute(
-                "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
-                (
-                    current.id,
-                    Jsonb(current.model_dump(mode="json")),
-                    current.created_at,
-                ),
-            )
-        connection.execute(schema)
-        connection.execute(schema)
-        assert connection.execute("SELECT document FROM forecast_runs").fetchall() == []
-    create_forecast(database_url, current)
-    assert list_forecasts(database_url) == (current,)
-
-
-@pytest.mark.integration
-def test_forecast_schema_cleanup_preserves_current_runs_and_rejects_old_writes(
-    database_url, saved_forecast
-):
+def test_forecast_schema_reapply_preserves_current_runs(
+    database_url: str, saved_forecast: SavedForecast
+) -> None:
     create_forecast(database_url, saved_forecast)
-    schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
-    with psycopg.connect(database_url) as connection:
-        connection.execute(
-            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, "
-            "ADD CONSTRAINT forecast_runs_schema_version "
-            "CHECK ((document ->> 'schema_version' IN ('1', '2', '3', '4', '5')) IS TRUE)"
-        )
-        for version in range(1, 5):
-            raw = saved_forecast.model_dump(mode="json") | {
-                "id": str(uuid4()),
-                "schema_version": version,
-                "model_version": str(version),
-            }
-            connection.execute(
-                "INSERT INTO forecast_runs VALUES (%s, %s, %s)",
-                (raw["id"], Jsonb(raw), saved_forecast.created_at),
-            )
-        connection.execute(schema)
-        connection.execute(schema)
-        assert connection.execute("SELECT document FROM forecast_runs").fetchall() == [
-            (saved_forecast.model_dump(mode="json"),)
-        ]
-        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
-            connection.execute(
-                "INSERT INTO forecast_runs VALUES (%s, %s, %s)",
-                (raw["id"], Jsonb(raw), saved_forecast.created_at),
-            )
+    schema = (Path(__file__).parents[2] / "src/financial_model/schema.sql").read_text()
+    connection = sqlite3.connect(database_url)
+    try:
+        connection.executescript(schema)
+        connection.executescript(schema)
+    finally:
+        connection.close()
     assert list_forecasts(database_url) == (saved_forecast,)
 
 
 @pytest.mark.integration
-def test_planning_migration_allows_current_forecasts_and_discards_old_runs(
-    database_url, tmp_path, saved_forecast
-):
-    spec = importlib.util.spec_from_file_location(
-        "migrate_timeline",
-        Path(__file__).parents[2] / "scripts/migrate_planning_retirement.py",
-    )
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    old_plan = SavedPlanningDocument(
-        inputs=EconomicAssumptions(name="Historical inputs")
-    ).model_dump(mode="json") | {"schema_version": 3}
-    old_run = saved_forecast.model_dump(mode="json") | {
-        "schema_version": 3,
-        "model_version": "3",
-    }
-    with psycopg.connect(database_url) as connection:
-        checks = connection.execute(
-            "SELECT conname FROM pg_constraint WHERE conrelid = 'planning_documents'::regclass AND pg_get_constraintdef(oid) LIKE '%%schema_version%%'"
-        ).fetchall()
-        for (name,) in checks:
-            connection.execute(
-                sql.SQL("ALTER TABLE planning_documents DROP CONSTRAINT {}").format(
-                    sql.Identifier(name)
-                )
-            )
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"id": "different"},
+        {"schema_version": 4},
+        {"schema_version": "5"},
+        {"document_type": "planning_document"},
+        {"created_at": "2000-01-01T00:00:00Z"},
+        {"created_at": None},
+    ],
+)
+def test_forecast_database_rejects_invalid_envelopes(
+    database_url: str, saved_forecast: SavedForecast, change: dict
+) -> None:
+    from financial_model.storage import _connect
+
+    raw = saved_forecast.model_dump(mode="json") | change
+    with pytest.raises(sqlite3.IntegrityError), _connect(database_url) as connection:
         connection.execute(
-            "ALTER TABLE planning_documents ADD CONSTRAINT planning_schema_version CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '3')"
-        )
-        connection.execute(
-            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, ADD CONSTRAINT forecast_runs_schema_version CHECK ((document ->> 'schema_version' IN ('1', '2', '3')) IS TRUE)"
-        )
-        connection.execute(
-            "INSERT INTO planning_documents VALUES (%s, %s, %s, %s)",
+            "INSERT INTO forecast_runs VALUES (?, ?, ?)",
             (
-                old_plan["id"],
-                old_plan["revision"],
-                Jsonb(old_plan),
-                old_plan["updated_at"],
+                str(saved_forecast.id),
+                json.dumps(raw),
+                saved_forecast.created_at.isoformat(),
             ),
         )
-        connection.execute(
-            "INSERT INTO forecast_runs VALUES (%s, %s, %s)",
-            (old_run["id"], Jsonb(old_run), old_run["created_at"]),
-        )
-    directory = tmp_path / "migration"
-    script.preview(database_url, directory, {})
-    script.apply(database_url, directory)
-    current = saved_forecast.model_copy(update={"id": uuid4()})
-    assert create_forecast(database_url, current) == current
-    assert list_forecasts(database_url) == (current,)
-    with psycopg.connect(database_url) as connection:
-        assert connection.execute("SELECT id FROM forecast_runs").fetchall() == [
-            (current.id,)
-        ]
+    assert not list_forecasts(database_url)

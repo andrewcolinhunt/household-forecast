@@ -22,7 +22,7 @@ version-file = "src/financial_model/_version.py"
 packages = ["src/financial_model"]
 
 # =============================================================================
-# PIXI — single env, all tooling in one solve
+# PIXI — app and tooling, with an optional legacy database exporter
 # =============================================================================
 [tool.pixi.workspace]
 channels  = ["conda-forge"]
@@ -57,10 +57,16 @@ policyengine-us = "==2.15.1"
 policyengine-core = "==3.32.7"
 numpy = ">=2.1,<3"
 types-pyyaml = ">=6,<7"
-psycopg = { version = ">=3.2,<4", extras = ["binary"] }
 # Docs
 jupyter-book = ">=2.0.0"
 mystmd       = ">=1.3.0"
+
+[tool.pixi.feature.postgres-export.pypi-dependencies]
+psycopg = { version = ">=3.2,<4", extras = ["binary"] }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+postgres-export = { features = ["postgres-export"], solve-group = "default" }
 
 [tool.pixi.tasks]
 app              = "streamlit run streamlit_app.py --server.address 127.0.0.1"

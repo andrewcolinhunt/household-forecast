@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from typing import Any
-
-from psycopg.types.json import Jsonb
 
 from financial_model.forecast_models import SavedForecast
 from financial_model.storage import _connect
@@ -17,8 +16,12 @@ def create_forecast(dsn: str, document: SavedForecast) -> SavedForecast:
     """Insert a run once; an existing run's inputs and results cannot be replaced."""
     with _connect(dsn) as connection:
         connection.execute(
-            "INSERT INTO forecast_runs (id, document, created_at) VALUES (%s, %s, %s)",
-            (document.id, Jsonb(document.model_dump(mode="json")), document.created_at),
+            "INSERT INTO forecast_runs (id, document, created_at) VALUES (?, ?, ?)",
+            (
+                str(document.id),
+                document.model_dump_json(),
+                document.created_at.astimezone(UTC).isoformat(),
+            ),
         )
     return document
 
@@ -28,10 +31,10 @@ def list_forecasts(dsn: str) -> tuple[SavedForecast, ...]:
     with _connect(dsn) as connection:
         rows = connection.execute(
             "SELECT document FROM forecast_runs "
-            "WHERE document ->> 'schema_version' = %s ORDER BY created_at DESC, id",
-            (str(SavedForecast.model_fields["schema_version"].default),),
+            "WHERE document ->> 'schema_version' = ? ORDER BY created_at DESC, id",
+            (SavedForecast.model_fields["schema_version"].default,),
         ).fetchall()
-    return tuple(_read_document(row["document"]) for row in rows)
+    return tuple(_read_document(json.loads(row["document"])) for row in rows)
 
 
 def _read_document(raw: Any) -> SavedForecast:

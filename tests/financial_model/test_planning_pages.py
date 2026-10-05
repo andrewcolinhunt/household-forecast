@@ -46,7 +46,7 @@ ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
 
 @pytest.fixture(autouse=True)
 def preview(monkeypatch):
-    monkeypatch.setattr(app, "_database_url", lambda: None)
+    monkeypatch.setattr(app, "_database_path", lambda: None)
 
 
 def tab(page, category):
@@ -114,7 +114,11 @@ def test_invalid_text_survives_tab_change_in_same_rerun_and_compare():
     tab(page, "Economy")
     assert field(page, "text_input", "Stock return (%)").value == "not a number"
     assert page.error
-    assert not page.get("download_button")
+    assert not [
+        button
+        for button in page.get("download_button")
+        if button.key != "download_database"
+    ]
     field(page, "text_input", "Stock return (%)").set_value("5.5").run()
     assert raw(page, "economy")["equities"]["central"] == "0.055"
     assert not page.error
@@ -201,7 +205,7 @@ def test_household_children_warn_per_spending_alternative_without_changing_input
 
 @pytest.mark.integration
 def test_household_library_save_duplicate_delete_and_backup(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Household")
     press(page, "New Household assumptions")
@@ -234,7 +238,7 @@ def test_household_library_save_duplicate_delete_and_backup(database_url, monkey
 def test_plan_household_copy_requires_explicit_update_and_preserves_finances(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     source = create_planning_document(
         database_url,
         SavedPlanningDocument(
@@ -461,7 +465,7 @@ def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
 def test_investment_surplus_destination_survives_save_and_reopen(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Investments")
     press(page, "New Investments assumptions")
@@ -499,7 +503,7 @@ def test_investment_surplus_destination_survives_save_and_reopen(
 def test_glide_shape_survives_save_backup_and_plan_selection(
     database_url, monkeypatch, shape
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Investments")
     press(page, "New Investments assumptions")
@@ -528,7 +532,7 @@ def test_glide_shape_survives_save_backup_and_plan_selection(
 def test_all_categories_save_partial_inputs_without_calculation(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     monkeypatch.setattr(
         app, "evaluate_scenario", lambda *args: pytest.fail("No annual evaluation")
     )
@@ -555,7 +559,7 @@ def test_all_categories_save_partial_inputs_without_calculation(
 
 @pytest.mark.integration
 def test_conflicts_reload_duplicate_and_same_name_drafts(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     original = create_planning_document(
         database_url,
         SavedPlanningDocument(inputs=EconomicAssumptions(name="Same name")),
@@ -600,7 +604,7 @@ def test_conflicts_reload_duplicate_and_same_name_drafts(database_url, monkeypat
 
 @pytest.mark.integration
 def test_two_saved_plans_keep_copies_after_source_changes(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     source = create_planning_document(
         database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Shared work"))
     )
@@ -677,7 +681,7 @@ def test_annual_ownership_and_unchanged_round_trip(scenario):
 def test_plan_household_and_wealth_are_copied_without_account_bindings(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     account = AccountPosition(
         label="Synthetic cash", balance=100, invested_in="cash", tax_treatment="taxable"
     )
@@ -943,7 +947,7 @@ def test_refresh_one_profile_preserves_alternatives_and_reviews_person_changes(
 def test_spending_timing_context_is_distinct_from_missing_amounts(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     source = create_planning_document(
         database_url,
         SavedPlanningDocument(
@@ -1104,7 +1108,7 @@ def test_plan_explicit_copy_updates_preserve_other_alternatives(
 ):
     from financial_model.storage import update_wealth_snapshot
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     source = create_planning_document(
         database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
     )
@@ -1181,7 +1185,7 @@ def test_plan_alternatives_save_combinations_and_survive_source_deletion(
 ):
     from financial_model.planning import InvestmentAssumptions, RetirementAssumptions
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     choices = [
         create_planning_document(database_url, SavedPlanningDocument(inputs=m(name=n)))
         for m, n in (
@@ -1237,7 +1241,7 @@ def test_compact_editors_save_populated_profiles_without_changing_values(
 ):
     from financial_model.planning import InvestmentAssumptions, RetirementAssumptions
 
-    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    monkeypatch.setattr(app, "_database_path", lambda: database_url)
     budget = {
         "amount": {"central": "78901.23", "lower": "60000", "upper": "90000"},
         "notes": "Included costs and exclusions",
@@ -1519,7 +1523,7 @@ def _read_library_app():
 def test_library_read_shows_migration_errors_but_hides_database_details(
     monkeypatch, failure
 ):
-    import psycopg
+    import sqlite3
 
     from financial_model import planning_storage
 
@@ -1539,7 +1543,7 @@ def test_library_read_shows_migration_errors_but_hides_database_details(
                 ],
             )
         message = "password=private-connection-detail"
-        raise psycopg.OperationalError(message)
+        raise sqlite3.OperationalError(message)
 
     monkeypatch.setattr(planning_pages, "list_planning_documents", fail)
     cached = SavedPlanningDocument(inputs=SpendingAssumptions(name="Old spending"))
@@ -1558,7 +1562,7 @@ def test_library_read_shows_migration_errors_but_hides_database_details(
     assert page.session_state["planning_available"]["spending"] is False
     if failure == "schema":
         assert "Unsupported planning schema version 3" in messages
-        assert "scripts/migrate_household_timeline.py" in messages
+        assert "explicit conversion" in messages
         assert "check database setup" not in messages
     elif failure == "database":
         assert "check database setup" in messages
@@ -1650,7 +1654,9 @@ def test_old_format_draft_is_preserved_and_exported_without_rendering_editor(
     assert not page.exception
     assert raw(page, kind) == before
     assert any("older planning format" in error.value for error in page.error)
-    assert any("Preview and review" in caption.value for caption in page.caption)
+    assert any(
+        "Export it before reloading" in caption.value for caption in page.caption
+    )
     assert not any(
         button.label in {"Save inputs", "Save plan"} for button in page.button
     )
