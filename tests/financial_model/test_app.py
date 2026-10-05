@@ -42,6 +42,7 @@ def go(page: AppTest, target: str) -> AppTest:
         page.session_state["workspace_target"] = "annual"
     elif target == "household":
         page.session_state["workspace_target"] = "library"
+        page.session_state["workspace_views"] = {"Household": "annual_defaults"}
     return page.switch_page("src/financial_model/pages/scenarios.py").run()
 
 

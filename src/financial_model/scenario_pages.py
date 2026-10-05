@@ -266,8 +266,23 @@ def workspace() -> None:
         elif target == "plan" and category == "Household":
             planning_pages.plan_context(category, dsn)
         elif category == "Household":
-            st.session_state["records"] = app._read_store(dsn)
-            setup_pages.household_page(dsn, tuple(st.session_state["records"]))
+            if (
+                st.session_state.get("workspace_views", {}).get("Household")
+                == "annual_defaults"
+            ):
+                category_link(
+                    "Household library", "Household", target="library", view="library"
+                )
+                st.session_state["records"] = app._read_store(dsn)
+                setup_pages.household_page(dsn, tuple(st.session_state["records"]))
+            else:
+                category_link(
+                    "Annual defaults",
+                    "Household",
+                    target="library",
+                    view="annual_defaults",
+                )
+                planning_pages.category_page("household", dsn)
         elif category == "Goals":
             app._read_goal_catalogue(dsn)
             st.session_state["records"] = app._read_store(dsn)

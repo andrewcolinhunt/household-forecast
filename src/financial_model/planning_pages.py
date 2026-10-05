@@ -20,6 +20,7 @@ from financial_model.planning import (
     EconomicAssumptions,
     ExpenseLevel,
     ExpenseSchedule,
+    HouseholdAssumptions,
     InvestmentAssumptions,
     Kind,
     PlanningChild,
@@ -37,6 +38,7 @@ from financial_model.planning import (
     household_from_defaults,
     missing_details,
     plan_years,
+    replace_household,
     replace_profile,
     replace_wealth,
     select_profile,
@@ -58,6 +60,7 @@ from financial_model.storage import (
 )
 
 MODELS = {
+    "household": HouseholdAssumptions,
     "work": WorkAssumptions,
     "spending": SpendingAssumptions,
     "investments": InvestmentAssumptions,
@@ -66,6 +69,7 @@ MODELS = {
     "plan": PlanningScenario,
 }
 LABELS = {
+    "household": "Household",
     "work": "Work",
     "spending": "Spending",
     "investments": "Investments",
@@ -167,7 +171,7 @@ def _open(record: SavedPlanningDocument, *, duplicate: bool = False) -> None:
 def _initial(kind: Kind, dsn: str | None) -> PlanningInputs:
     """Copy shared family labels when available, without inventing financial inputs."""
     inputs: PlanningInputs = MODELS[kind](name=f"New {kind}")
-    if kind not in {"work", "retirement", "plan"}:
+    if kind not in {"household", "work", "retirement", "plan"}:
         return inputs
     try:
         household = (
@@ -184,6 +188,12 @@ def _initial(kind: Kind, dsn: str | None) -> PlanningInputs:
             raw["household"] = household_from_defaults(household).model_dump(
                 mode="json"
             )
+        elif kind == "household":
+            raw.update(
+                household_from_defaults(household).model_dump(
+                    mode="json", exclude={"residence"}
+                )
+            )
         else:
             for adult, source in zip(raw["adults"], household.adults, strict=True):
                 adult["name"] = source.name
@@ -191,11 +201,22 @@ def _initial(kind: Kind, dsn: str | None) -> PlanningInputs:
     return inputs
 
 
+def _timing_needs_plan(inputs: PlanningInputs, details: tuple[str, ...]) -> bool:
+    """Identify Spending whose remaining review concerns its timing context."""
+    return (
+        isinstance(inputs, SpendingAssumptions)
+        and bool(details)
+        and all(detail.startswith("Spending timing unresolved:") for detail in details)
+    )
+
+
 def _status(inputs: PlanningInputs) -> None:
     """Show missing capture inputs and bounded Plan forecast readiness."""
     details = missing_details(inputs)
     st.caption(
-        (
+        "Review timing in Plan"
+        if _timing_needs_plan(inputs, details)
+        else (
             f"{len(details)} items need input"
             if len(details) != 1
             else "1 item needs input"
@@ -254,6 +275,8 @@ def _forecast_readiness(plan: PlanningScenario) -> None:
 
 def _summary(inputs: PlanningInputs) -> str:
     """Show the values that distinguish saved choices."""
+    if isinstance(inputs, HouseholdAssumptions):
+        return f"{' · '.join(a.name for a in inputs.adults)} · {len(inputs.children)} {'child' if len(inputs.children) == 1 else 'children'}"
     if isinstance(inputs, WorkAssumptions):
         return " · ".join(
             f"{a.name}: {_money_label(a.phases[0].cash_pay) if a.phases else 'pay not entered'}"
@@ -502,6 +525,7 @@ def category_page(kind: Kind, dsn: str | None) -> None:
     st.subheader("Combined plans" if kind == "plan" else f"{LABELS[kind]} assumptions")
     st.caption(
         {
+            "household": "Reusable family details, including planned children. Choose a Household in a Plan, then select Spending for its costs. Residence belongs to each Plan.",
             "plan": "Combine saved Work, Spending, Retirement, Investments, and Economy assumptions with starting Wealth. Save a plan, then open Forecast to project it through retirement.",
             "work": "Pay, salary growth, contributions, and equity compensation. Retirement dates belong in Retirement.",
             "spending": "Household expenses through every stage of life, including retirement.",
@@ -540,7 +564,9 @@ def category_page(kind: Kind, dsn: str | None) -> None:
         summary.caption(_summary(record.inputs).replace("$", r"\$"))
         details = missing_details(record.inputs)
         with status:
-            if details:
+            if _timing_needs_plan(record.inputs, details):
+                st.caption("Review timing in Plan")
+            elif details:
                 st.caption(f"{len(details)} missing · Edit to complete")
             else:
                 st.caption("Selections made" if kind == "plan" else "Inputs entered")
@@ -691,7 +717,9 @@ def _editor(
     st.caption("Combined plan" if kind == "plan" else f"{LABELS[kind]} assumptions")
     scope = _scope(kind)
     _metadata(data, scope)
-    if kind == "work":
+    if kind == "household":
+        _household_demographics(data, scope)
+    elif kind == "work":
         _work(data, scope)
     elif kind == "spending":
         _spending(data, scope)
@@ -2067,10 +2095,9 @@ def _assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
     st.caption(
         "This plan keeps copies of your selections. After editing a source, update its copy here and save the plan."
     )
-    with st.container(border=True):
-        st.markdown("**Household**")
-        st.text(" · ".join(a["name"] for a in data["household"]["adults"]))
-        category_link("Edit plan Household", "Household", target="plan")
+    _household_selection(data, scope, dsn)
+    category_link("Edit plan Household", "Household", target="plan")
+    _child_expense_warning(data)
     for kind in PROFILE_KINDS:
         records = _read(dsn, kind)
         selected = [c for c in data["components"] if c["inputs"]["kind"] == kind]
@@ -2321,6 +2348,101 @@ def _apply_wealth(data: dict[str, Any], document: Any) -> None:
     _changed_rows()
 
 
+def _apply_household(data: dict[str, Any], document: SavedPlanningDocument) -> None:
+    """Replace family facts without changing the Plan's other inputs."""
+    try:
+        updated = replace_household(PlanningScenario.model_validate(data), document)
+    except ValueError as error:
+        _setup_error(error)
+        return
+    copied = updated.model_dump(mode="json")
+    for field in ("household", "household_source"):
+        data[field] = copied[field]
+    _changed_rows()
+
+
+def _household_selection(data: dict[str, Any], scope: str, dsn: str | None) -> None:
+    """Choose a reusable family and explicitly refresh its self-contained copy."""
+    records = _read(dsn, "household")
+    source = data.get("household_source")
+    choices = {str(record.id): record for record in records}
+    current = choices.get(source["source_id"]) if source else None
+    with st.container(border=True):
+        st.subheader("Household")
+        household = data["household"]
+        count = len(household["children"])
+        st.text(" · ".join(a["name"] for a in household["adults"]))
+        st.caption(f"{count} {'child' if count == 1 else 'children'} in this Plan")
+        if source:
+            st.caption(f"Copied from: {source['source_name']}")
+            if st.session_state["planning_available"]["household"]:
+                if current is None:
+                    st.caption("Source no longer in library. This Plan keeps its copy.")
+                elif current.revision != source["source_revision"]:
+                    st.warning(
+                        "Saved Household has changed. Update its copy to use it."
+                    )
+                    if st.button(
+                        "Update household copy", key=f"household_update_{scope}"
+                    ):
+                        _apply_household(data, current)
+            if current and st.button("Edit source", key=f"household_source_{scope}"):
+                _open(current)
+        else:
+            st.caption(
+                "Family details entered in this Plan; no Household source selected."
+            )
+        if choices:
+            chosen = st.selectbox(
+                "Choose Household from library",
+                list(choices),
+                index=list(choices).index(str(current.id)) if current else 0,
+                format_func=partial(_profile_label, choices),
+                key=f"select_household_{scope}",
+            )
+            st.caption(_summary(choices[chosen].inputs))
+            if st.button(
+                "Use this Household",
+                key=f"choose_household_{scope}",
+                disabled=not st.session_state["planning_available"]["household"],
+            ):
+                _apply_household(data, choices[chosen])
+        else:
+            st.caption(
+                "Save Household assumptions in the library to reuse family details."
+            )
+        st.caption(
+            "Choosing a Household preserves this Plan's residence and financial inputs."
+        )
+
+
+def _child_expense_warning(data: dict[str, Any]) -> None:
+    """Flag children without age-linked spending while allowing aggregate budgets."""
+    for selection in data["components"]:
+        spending = selection["inputs"]
+        if spending["kind"] != "spending":
+            continue
+        anchors = [
+            anchor
+            for expense in spending["expenses"]
+            for anchor in [
+                *(level["when"] for level in expense["levels"]),
+                expense.get("end"),
+            ]
+            if anchor and anchor["kind"] == "age"
+        ]
+        referenced = {anchor.get("person") for anchor in anchors}
+        missing = [
+            child["name"]
+            for child in data["household"]["children"]
+            if child["id"] not in referenced
+        ]
+        if missing:
+            st.warning(
+                f"{spending['name']}: No age-linked expense refers to {', '.join(missing)}. Confirm their costs are included in this budget, or add child expenses."
+            )
+
+
 def plan_context(category: str, dsn: str | None) -> None:
     """Edit family facts and person mappings in the selected Plan."""
     if "plan" not in st.session_state.get("planning_active", {}):
@@ -2331,17 +2453,18 @@ def plan_context(category: str, dsn: str | None) -> None:
     with st.container(horizontal=True):
         category_link("Return to Plans", "Plans", target="plan", view="editor")
         category_link(
-            "Shared Household defaults", "Household", target="library", view="library"
+            "Household library", "Household", target="library", view="library"
         )
+    _household_selection(data, scope, dsn)
     _household_context(data, scope)
+    _child_expense_warning(data)
     st.caption(
         "These edits belong to this combined plan. Return to Plans to save them."
     )
 
 
-def _household_context(data: dict[str, Any], scope: str) -> None:
-    """Edit copied demographics and explicitly align person-specific profiles."""
-    household = data["household"]
+def _household_demographics(household: dict[str, Any], scope: str) -> None:
+    """Edit the family details shared by library sources and Plan copies."""
     forms.number(
         household,
         "reference_year",
@@ -2423,6 +2546,12 @@ def _household_context(data: dict[str, Any], scope: str) -> None:
     st.caption(
         "Children's costs belong in Spending; adding a child does not create expenses."
     )
+
+
+def _household_context(data: dict[str, Any], scope: str) -> None:
+    """Edit copied demographics, residence and person-specific profile mappings."""
+    household = data["household"]
+    _household_demographics(household, scope)
     st.subheader("Residence")
     if household["residence"]:
         forms.table_header(("Starting year", "Location", ""), (2, 3, 0.4))

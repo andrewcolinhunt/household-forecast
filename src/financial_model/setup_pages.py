@@ -36,9 +36,9 @@ def _setup_error(error: Exception) -> None:
 
 def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     """Edit the family defaults that new scenarios copy, retaining an editing buffer."""
-    st.title("Shared household defaults")
+    st.title("Annual household defaults")
     st.caption(
-        "Starting household details for new annual and combined plans. Each plan keeps its own copy; edits here apply only to new plans."
+        "Starting details for new annual plans and planning drafts. Saved Household assumptions and existing Plans keep their own copies."
     )
     if "household_draft" not in st.session_state:
         try:

@@ -15,6 +15,9 @@ from financial_model import app, planning_pages
 from financial_model.planning import (
     EconomicAssumptions,
     ExpenseSchedule,
+    HouseholdAssumptions,
+    PlanningChild,
+    PlanningHousehold,
     PlanningScenario,
     SavedPlanningDocument,
     SpendingAssumptions,
@@ -76,7 +79,14 @@ def test_active_categories_and_new_inputs_never_calculate(monkeypatch):
     monkeypatch.setattr(app, "evaluate_scenario", forbidden)
     page = AppTest.from_file(str(ENTRY)).run()
     assert [t.label for t in page.tabs] == list(CATEGORIES)
-    for category in ("Work", "Spending", "Investments", "Economy", "Retirement"):
+    for category in (
+        "Household",
+        "Work",
+        "Spending",
+        "Investments",
+        "Economy",
+        "Retirement",
+    ):
         tab(page, category)
         press(page, f"New {category} assumptions")
         assert page.get("download_button")
@@ -108,6 +118,198 @@ def test_invalid_text_survives_tab_change_in_same_rerun_and_compare():
     field(page, "text_input", "Stock return (%)").set_value("5.5").run()
     assert raw(page, "economy")["equities"]["central"] == "0.055"
     assert not page.error
+
+
+def test_household_library_retains_drafts_and_keeps_annual_defaults_separate():
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Household")
+    press(page, "New Household assumptions")
+    press(page, "Add child")
+    field(page, "text_input", "Child label").set_value("").run()
+    assert page.error
+    tab(page, "Spending")
+    tab(page, "Household")
+    assert field(page, "text_input", "Child label").value == ""
+    field(page, "text_input", "Child label").set_value("Future child").run()
+    field(page, "number_input", "Birth year (actual or expected)").set_value(2028).run()
+    before = deepcopy(raw(page, "household"))
+    assert "residence" not in before
+    assert not any(b.label == "Add residence" for b in page.button)
+    press(page, "Annual defaults")
+    assert page.title[0].value == "Annual household defaults"
+    field(page, "text_input", "Name").set_value("Annual only").run()
+    press(page, "Household library")
+    assert any(b.label == "New Household assumptions" for b in page.button)
+    press(
+        page,
+        next(
+            b.label for b in page.button if b.label.startswith("Resume New household")
+        ),
+    )
+    assert raw(page, "household") == before
+    assert field(page, "text_input", "Child label").value == "Future child"
+
+
+def _household_plan_app(plan_json):
+    import json
+
+    import streamlit as st
+
+    from financial_model.planning_pages import _assembly
+
+    data = st.session_state.setdefault("household_test_plan", json.loads(plan_json))
+    _assembly(data, "household_test_0", None)
+
+
+def test_household_children_warn_per_spending_alternative_without_changing_inputs():
+    first = PlanningChild(name="First", birth_year=2027)
+    second = PlanningChild(name="Second", birth_year=2029)
+    linked = SavedPlanningDocument(
+        inputs=SpendingAssumptions(
+            name="One child's costs",
+            expenses=[
+                ExpenseSchedule(
+                    label="Child costs",
+                    levels=[
+                        {
+                            "when": {"kind": "age", "person": str(first.id), "age": 0},
+                            "amount": {"central": "10000"},
+                        }
+                    ],
+                    end={"kind": "age", "person": str(second.id), "age": 18},
+                )
+            ],
+        )
+    )
+    aggregate = SavedPlanningDocument(inputs=SpendingAssumptions(name="Family budget"))
+    plan = PlanningScenario(
+        name="Family",
+        household=PlanningHousehold(children=[first, second]),
+        components=[select_profile(linked), select_profile(aggregate)],
+    )
+    page = AppTest.from_function(
+        _household_plan_app, args=(plan.model_dump_json(),)
+    ).run()
+    assert not page.exception
+    assert not page.error
+    warnings = [w.value for w in page.warning if "No age-linked expense" in w.value]
+    assert len(warnings) == 1
+    assert "Family budget" in warnings[0]
+    assert "First, Second" in warnings[0]
+    assert page.session_state["household_test_plan"] == plan.model_dump(mode="json")
+
+
+@pytest.mark.integration
+def test_household_library_save_duplicate_delete_and_backup(database_url, monkeypatch):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Household")
+    press(page, "New Household assumptions")
+    field(page, "text_input", "Name").set_value("Two children").run()
+    press(page, "Add child")
+    press(page, "Add child")
+    press(page, "Save inputs")
+    (original,) = list_planning_documents(database_url, "household")
+    assert len(original.inputs.children) == 2
+    assert (
+        import_planning_backup(original.model_dump_json().encode()) == original.inputs
+    )
+    assert page.get("download_button")
+    press(page, "All Household inputs")
+    press(page, "Duplicate")
+    field(page, "text_input", "Name").set_value("One child").run()
+    press(page, "Remove child")
+    press(page, "Save inputs")
+    copies = list_planning_documents(database_url, "household")
+    duplicate = next(record for record in copies if record.id != original.id)
+    assert len(duplicate.inputs.children) == 1
+    assert load_planning_document(database_url, original.id) == original
+    press(page, "All Household inputs")
+    page.button(key=f"planning_delete_{duplicate.id}").click().run()
+    press(page, "Delete inputs")
+    assert list_planning_documents(database_url, "household") == (original,)
+
+
+@pytest.mark.integration
+def test_plan_household_copy_requires_explicit_update_and_preserves_finances(
+    database_url, monkeypatch
+):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    source = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=HouseholdAssumptions(
+                name="One child",
+                reference_year=2026,
+                children=[PlanningChild(name="Child", birth_year=2028)],
+            )
+        ),
+    )
+    spending = SavedPlanningDocument(inputs=SpendingAssumptions(name="Family costs"))
+    original = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=PlanningScenario(
+                name="Location choice",
+                household=PlanningHousehold(
+                    residence=[{"year": 2026, "location": "CA"}]
+                ),
+                components=[select_profile(spending)],
+            )
+        ),
+    )
+    page = AppTest.from_file(str(ENTRY)).run()
+    press(page, "Edit")
+    before = deepcopy(raw(page, "plan"))
+    press(page, "Use this Household")
+    copied = raw(page, "plan")
+    assert copied["household_source"]["source_id"] == str(source.id)
+    assert len(copied["household"]["children"]) == 1
+    assert copied["household"]["residence"] == before["household"]["residence"]
+    assert {
+        k: v for k, v in copied.items() if k not in {"household", "household_source"}
+    } == {k: v for k, v in before.items() if k not in {"household", "household_source"}}
+    press(page, "Save plan")
+    saved = load_planning_document(database_url, original.id)
+    press(page, "Edit source")
+    assert page.session_state["workspace_target"] == "library"
+    assert raw(page, "household")["name"] == "One child"
+    field(page, "text_input", "Name").set_value("Two children").run()
+    press(page, "Add child")
+    press(page, "Save inputs")
+    updated = load_planning_document(database_url, source.id)
+    assert len(updated.inputs.children) == 2
+    tab(page, "Plans")
+    assert raw(page, "plan")["household"] == saved.inputs.household.model_dump(
+        mode="json"
+    )
+    assert any("Saved Household has changed" in w.value for w in page.warning)
+    press(page, "Update household copy")
+    press(page, "Save plan")
+    saved = load_planning_document(database_url, original.id)
+    assert len(saved.inputs.household.children) == 2
+    assert saved.inputs.household_source.source_revision == updated.revision
+    delete_planning_document(database_url, updated.id, updated.revision)
+    page.run()
+    assert any("keeps its copy" in c.value for c in page.caption)
+    assert raw(page, "plan")["household"] == saved.inputs.household.model_dump(
+        mode="json"
+    )
+
+    create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=HouseholdAssumptions(
+                name="Different adult order",
+                adults=[{"name": "Adult 2"}, {"name": "Adult 1"}],
+            )
+        ),
+    )
+    page.run()
+    before = deepcopy(raw(page, "plan"))
+    press(page, "Use this Household")
+    assert any("adults must match" in error.value for error in page.error)
+    assert raw(page, "plan") == before
 
 
 def test_work_shares_compensation_without_demographics_and_collects_dates():
@@ -735,6 +937,49 @@ def test_refresh_one_profile_preserves_alternatives_and_reviews_person_changes(
     assert data["components"][0]["inputs"]["notes"] == "Updated assumptions"
     assert data["components"][0]["adult_mapping"] == (None if rename_person else [2, 1])
     assert data["components"][1] == plan.model_dump(mode="json")["components"][1]
+
+
+@pytest.mark.integration
+def test_spending_timing_context_is_distinct_from_missing_amounts(
+    database_url, monkeypatch
+):
+    monkeypatch.setattr(app, "_database_url", lambda: database_url)
+    source = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=SpendingAssumptions(
+                name="Later costs",
+                money_year=2026,
+                expenses=[
+                    ExpenseSchedule(
+                        label="Retirement living",
+                        levels=[
+                            {"when": {"kind": "both"}, "amount": {"central": "60000"}}
+                        ],
+                    )
+                ],
+            )
+        ),
+    )
+    page = AppTest.from_file(str(ENTRY)).run()
+    tab(page, "Spending")
+    assert any(c.value == "Review timing in Plan" for c in page.caption)
+    press(page, "Edit")
+    assert any(c.value == "Review timing in Plan" for c in page.caption)
+    assert any(t.value.startswith("Spending timing unresolved:") for t in page.text)
+    field(page, "text_input", "Amount ($/year)").set_value("").run()
+    assert not any(c.value == "Review timing in Plan" for c in page.caption)
+    assert any("need input" in c.value for c in page.caption)
+    press(page, "Save inputs")
+    press(page, "All Spending inputs")
+    assert any("missing · Edit to complete" in c.value for c in page.caption)
+    assert (
+        load_planning_document(database_url, source.id)
+        .inputs.expenses[0]
+        .levels[0]
+        .amount.central
+        is None
+    )
 
 
 def _readiness_app(plan_json):
