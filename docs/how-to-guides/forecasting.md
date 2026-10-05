@@ -67,6 +67,20 @@ recurring activity. One-time expenses listed for that opening year are planned
 expenses at year end. Remove expenses that have already happened from the Plan;
 there is no separate opening-year setting.
 
+## Keep related Plans in order
+
+Combined and annual Plan lists sort by name, ignoring capitalization. Use prefixes
+such as `01.`, `02.`, and `03.` to keep a baseline and its alternatives together.
+Saving an edit preserves that order; renaming a Plan can change its position.
+
+This order organizes comparisons. Each forecast starts from its selected Wealth
+snapshot; one Plan's results do not become the next Plan's starting balances.
+Enter future job or residence changes in the Plan's dated assumptions.
+
+Keep annual comparisons specific to their tax year. A child expected after that
+year belongs in the combined Plan's future Household and Spending assumptions;
+it does not require another copy of an otherwise identical annual case.
+
 ## Choose a household and spending budget
 
 In **Household**, create, duplicate, or edit a named family configuration. Keep

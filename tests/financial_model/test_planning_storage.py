@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -70,6 +70,46 @@ def test_planning_round_trip_and_concurrency(database_url, model):
     with pytest.raises(RevisionConflictError):
         update_planning_document(database_url, updated)
     assert not list_scenarios(database_url)
+
+
+@pytest.mark.integration
+def test_plan_listing_keeps_name_and_identity_order_after_edit(
+    database_url: str,
+) -> None:
+    records = [
+        create_planning_document(
+            database_url,
+            SavedPlanningDocument(
+                id=UUID(int=identity), inputs=PlanningScenario(name=name)
+            ),
+        )
+        for identity, name in (
+            (2, "01 ALPHA"),
+            (1, "01 alpha"),
+            (3, "03 Charlie"),
+            (4, "02 Bravo"),
+        )
+    ]
+    expected = (records[1], records[0], records[3], records[2])
+    assert list_planning_documents(database_url, "plan") == expected
+    edited = records[2].model_copy(
+        update={"inputs": records[2].inputs.model_copy(update={"notes": "Reviewed"})}
+    )
+    updated = update_planning_document(database_url, edited)
+    assert list_planning_documents(database_url, "plan") == (*expected[:3], updated)
+
+
+@pytest.mark.integration
+def test_profile_listing_retains_recency_order_after_edit(database_url: str) -> None:
+    first, second = (
+        create_planning_document(
+            database_url, SavedPlanningDocument(inputs=SpendingAssumptions(name=name))
+        )
+        for name in ("01 First", "02 Second")
+    )
+    assert list_planning_documents(database_url, "spending") == (second, first)
+    updated = update_planning_document(database_url, first)
+    assert list_planning_documents(database_url, "spending") == (updated, second)
 
 
 @pytest.mark.integration

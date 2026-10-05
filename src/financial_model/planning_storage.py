@@ -13,10 +13,15 @@ from financial_model.storage import MAX_BACKUP_BYTES, RevisionConflictError, _co
 
 
 def list_planning_documents(dsn: str, kind: Kind) -> tuple[SavedPlanningDocument, ...]:
-    """Load one category without reading unrelated financial stores."""
+    """Load Plans by name and other categories by latest update."""
+    order = (
+        "lower(document -> 'inputs' ->> 'name'), id"
+        if kind == "plan"
+        else "updated_at DESC, id"
+    )
     with _connect(dsn) as connection:
         rows = connection.execute(
-            "SELECT document FROM planning_documents WHERE document -> 'inputs' ->> 'kind' = %s ORDER BY updated_at DESC, id",
+            f"SELECT document FROM planning_documents WHERE document -> 'inputs' ->> 'kind' = %s ORDER BY {order}",
             (kind,),
         ).fetchall()
     return tuple(_read_document(row["document"]) for row in rows)

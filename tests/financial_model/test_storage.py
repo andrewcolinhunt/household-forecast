@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -34,6 +34,38 @@ def test_create_scenario_persists_across_connections(
     assert load_scenario(database_url, document.id) == document
     assert list_scenarios(database_url) == (document,)
     assert load_scenario(database_url, uuid4()) is None
+
+
+@pytest.mark.integration
+def test_annual_listing_keeps_name_and_identity_order_after_edit(
+    database_url: str, scenario: Scenario
+) -> None:
+    records = []
+    for identity, name in (
+        (2, "01 ALPHA"),
+        (1, "01 alpha"),
+        (3, "03 Charlie"),
+        (4, "02 Bravo"),
+    ):
+        inputs = scenario.model_copy(update={"name": name})
+        records.append(
+            create_scenario(
+                database_url,
+                SavedScenario(
+                    id=UUID(int=identity),
+                    inputs=inputs,
+                    result=evaluate_scenario(inputs),
+                ),
+            )
+        )
+    expected = (records[1], records[0], records[3], records[2])
+    assert list_scenarios(database_url) == expected
+    inputs = records[2].inputs.model_copy(update={"notes": "Reviewed"})
+    edited = records[2].model_copy(
+        update={"inputs": inputs, "result": evaluate_scenario(inputs)}
+    )
+    updated = update_scenario(database_url, edited)
+    assert list_scenarios(database_url) == (*expected[:3], updated)
 
 
 @pytest.mark.integration

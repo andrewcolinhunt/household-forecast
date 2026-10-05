@@ -42,10 +42,10 @@ def _connect(dsn: str) -> psycopg.Connection[dict[str, Any]]:
 
 
 def list_scenarios(dsn: str) -> tuple[SavedScenario, ...]:
-    """Load the latest validated shared documents without a stale query cache."""
+    """Load annual plans in stable, case-insensitive name order."""
     with _connect(dsn) as connection:
         rows = connection.execute(
-            "SELECT document FROM scenarios ORDER BY updated_at DESC, id"
+            "SELECT document FROM scenarios ORDER BY lower(document -> 'inputs' ->> 'name'), id"
         ).fetchall()
     return tuple(SavedScenario.model_validate(row["document"]) for row in rows)
 
