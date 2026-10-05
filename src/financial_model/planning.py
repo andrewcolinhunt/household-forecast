@@ -32,7 +32,9 @@ Nonnegative = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
 Slot = Literal[1, 2]
 ExpenseCategory = Literal["ordinary", "children", "healthcare", "care", "other"]
 ExpenseFrequency = Literal["recurring", "once"]
-Kind = Literal["work", "spending", "retirement", "investments", "economy", "plan"]
+Kind = Literal[
+    "household", "work", "spending", "retirement", "investments", "economy", "plan"
+]
 PROFILE_KINDS: tuple[
     Literal["work", "spending", "retirement", "investments", "economy"], ...
 ] = (
@@ -516,8 +518,8 @@ class Residence(ValueModel):
     location: Label | None = None
 
 
-class PlanningHousehold(ValueModel):
-    """Plan-local demographics, kept independent from shared annual defaults."""
+class HouseholdDemographics(ValueModel):
+    """People and dated family facts reusable across locations."""
 
     reference_year: PlanningYear | None = None
     adults: tuple[PlanningAdult, PlanningAdult] = (
@@ -525,8 +527,21 @@ class PlanningHousehold(ValueModel):
         PlanningAdult(name="Adult 2"),
     )
     children: tuple[PlanningChild, ...] = ()
-    residence: tuple[Residence, ...] = ()
     filing_status: Literal["married_filing_jointly"] | None = None
+
+    @model_validator(mode="after")
+    def validate_children(self) -> Self:
+        """Keep child age references unambiguous within a household."""
+        if len({c.id for c in self.children}) != len(self.children):
+            msg = "Child identities must be unique."
+            raise ValueError(msg)
+        return self
+
+
+class PlanningHousehold(HouseholdDemographics):
+    """Plan-local people and residence, independent from shared annual defaults."""
+
+    residence: tuple[Residence, ...] = ()
 
     @model_validator(mode="after")
     def validate_residence(self) -> Self:
@@ -535,10 +550,13 @@ class PlanningHousehold(ValueModel):
         if len(set(years)) != len(years):
             msg = "Enter one residence per effective year."
             raise ValueError(msg)
-        if len({c.id for c in self.children}) != len(self.children):
-            msg = "Child identities must be unique."
-            raise ValueError(msg)
         return self
+
+
+class HouseholdAssumptions(Assumptions, HouseholdDemographics):
+    """A named family configuration without a location or spending assumptions."""
+
+    kind: Literal["household"] = "household"
 
 
 Profile = Annotated[
@@ -551,12 +569,17 @@ Profile = Annotated[
 ]
 
 
-class ProfileSelection(ValueModel):
-    """An exact reviewed copy with provenance, not a live database dependency."""
+class ProfileSource(ValueModel):
+    """The library identity and revision from which a Plan copied inputs."""
 
     source_id: UUID
     source_revision: Annotated[int, Field(strict=True, ge=1)]
     source_name: Label
+
+
+class ProfileSelection(ProfileSource):
+    """An exact reviewed copy with provenance, not a live database dependency."""
+
     inputs: Profile
     adult_mapping: tuple[Slot, Slot] | None = None
 
@@ -577,6 +600,7 @@ class PlanningScenario(Assumptions):
 
     kind: Literal["plan"] = "plan"
     household: PlanningHousehold = Field(default_factory=PlanningHousehold)
+    household_source: ProfileSource | None = None
     wealth: SavedWealthSnapshot | None = None
     components: tuple[ProfileSelection, ...] = ()
 
@@ -608,7 +632,8 @@ class PlanningScenario(Assumptions):
 
 
 PlanningInputs = Annotated[
-    WorkAssumptions
+    HouseholdAssumptions
+    | WorkAssumptions
     | SpendingAssumptions
     | InvestmentAssumptions
     | EconomicAssumptions
@@ -658,6 +683,32 @@ def replace_wealth(
 ) -> PlanningScenario:
     """Replace the starting balances without changing future investment choices."""
     return PlanningScenario.model_validate(plan.model_dump() | {"wealth": document})
+
+
+def replace_household(
+    plan: PlanningScenario, document: SavedPlanningDocument
+) -> PlanningScenario:
+    """Copy family facts explicitly while preserving residence and financial inputs."""
+    if not isinstance(document.inputs, HouseholdAssumptions):
+        msg = "Choose a saved Household."
+        raise ValueError(msg)
+    old_names = tuple(a.name for a in plan.household.adults)
+    new_names = tuple(a.name for a in document.inputs.adults)
+    if (plan.wealth is not None or plan.components) and old_names != new_names:
+        msg = "Household adults must match this Plan's order; use a new Plan to change its adults."
+        raise ValueError(msg)
+    people = document.inputs.model_dump(include=set(HouseholdDemographics.model_fields))
+    return PlanningScenario.model_validate(
+        plan.model_dump()
+        | {
+            "household": people | {"residence": plan.household.residence},
+            "household_source": ProfileSource(
+                source_id=document.id,
+                source_revision=document.revision,
+                source_name=document.inputs.name,
+            ),
+        }
+    )
 
 
 def household_from_defaults(household: Household) -> PlanningHousehold:
@@ -777,7 +828,9 @@ def missing_details(inputs: PlanningInputs) -> tuple[str, ...]:
     details: list[str] = []
     if isinstance(inputs, MonetaryAssumptions) and inputs.money_year is None:
         details.append("Money reference year is unknown.")
-    if isinstance(inputs, WorkAssumptions):
+    if isinstance(inputs, HouseholdAssumptions):
+        details.extend(_household_details(inputs))
+    elif isinstance(inputs, WorkAssumptions):
         if inputs.rsu_taxes_from_shares is None:
             details.append("Choose how RSU taxes are funded.")
         for adult in inputs.adults:
@@ -971,6 +1024,20 @@ def plan_years(
     return (retirements[0], retirements[1]), (ends[0], ends[1])
 
 
+def _household_details(household: HouseholdDemographics) -> list[str]:
+    """Check family facts without requiring a Plan's residence or finances."""
+    details = []
+    if household.reference_year is None or any(a.age is None for a in household.adults):
+        details.append("Household ages and reference year need input.")
+    if household.filing_status is None or any(
+        a.wa_cares_exempt is None for a in household.adults
+    ):
+        details.append("Household filing facts or personal tax elections need input.")
+    if any(c.birth_year is None for c in household.children):
+        details.append("Children's birth years need input.")
+    return details
+
+
 def _plan_details(plan: PlanningScenario) -> list[str]:
     """Check copied inputs together without consulting mutable source libraries."""
     details = []
@@ -985,18 +1052,11 @@ def _plan_details(plan: PlanningScenario) -> list[str]:
                 if "timing unresolved" not in d.lower()
             )
     household = plan.household
-    if household.reference_year is None or any(a.age is None for a in household.adults):
-        details.append("Household ages and reference year need input.")
+    details.extend(_household_details(household))
     if not household.residence or any(
         r.year is None or not r.location for r in household.residence
     ):
         details.append("Household residence needs input.")
-    if household.filing_status is None or any(
-        a.wa_cares_exempt is None for a in household.adults
-    ):
-        details.append("Household filing facts or personal tax elections need input.")
-    if any(c.birth_year is None for c in household.children):
-        details.append("Children's birth years need input.")
     years = {
         p.money_year
         for p in profiles.values()

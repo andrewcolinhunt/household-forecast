@@ -52,10 +52,27 @@ CREATE TABLE IF NOT EXISTS planning_documents (
     CHECK ((document ->> 'id') IS NOT DISTINCT FROM id::text),
     CHECK (((document ->> 'revision')::integer) IS NOT DISTINCT FROM revision),
     CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '4'),
-    CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'planning_document'),
-    CHECK ((document -> 'inputs' ->> 'kind'
-           IN ('work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE)
+    CHECK ((document ->> 'document_type') IS NOT DISTINCT FROM 'planning_document')
 );
+
+-- Expand the library without rewriting existing documents or frozen forecasts.
+-- Earlier installs used both generated and explicit names for this constraint.
+DO $$
+DECLARE kind_constraint RECORD;
+BEGIN
+    FOR kind_constraint IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'planning_documents'::regclass AND contype = 'c'
+          AND pg_get_constraintdef(oid) LIKE '%''kind''%'
+    LOOP
+        EXECUTE format('ALTER TABLE planning_documents DROP CONSTRAINT %I',
+                       kind_constraint.conname);
+    END LOOP;
+    ALTER TABLE planning_documents ADD CONSTRAINT planning_kind CHECK (
+        (document -> 'inputs' ->> 'kind' IN
+            ('household', 'work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE
+    );
+END $$;
 
 
 -- Forecasts are inserted once; the runtime role only needs SELECT and INSERT.

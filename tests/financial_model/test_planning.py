@@ -18,6 +18,7 @@ from financial_model.planning import (
     ExpenseSchedule,
     Exploration,
     Growth,
+    HouseholdAssumptions,
     InvestmentAssumptions,
     PlanningChild,
     PlanningHousehold,
@@ -30,6 +31,7 @@ from financial_model.planning import (
     WorkPhase,
     copy_annual_inputs,
     missing_details,
+    replace_household,
     replace_profile,
     replace_wealth,
     select_profile,
@@ -46,6 +48,7 @@ from financial_model.wealth import (
 @pytest.mark.parametrize(
     "model",
     [
+        HouseholdAssumptions,
         WorkAssumptions,
         SpendingAssumptions,
         InvestmentAssumptions,
@@ -388,6 +391,101 @@ def test_plan_copies_are_stable_and_replacement_clears_alignment():
         )
     with pytest.raises(ValidationError):
         select_profile(SavedPlanningDocument(inputs=plan))
+
+
+def test_household_library_copies_people_preserving_plan_finances_and_residence():
+    household = PlanningHousehold(
+        reference_year=2026,
+        adults=[
+            {"name": "A", "age": 40, "wa_cares_exempt": False},
+            {"name": "B", "age": 38, "wa_cares_exempt": False},
+        ],
+        filing_status="married_filing_jointly",
+        residence=[{"year": 2026, "location": "WA"}],
+    )
+    source = SavedPlanningDocument(
+        inputs=HouseholdAssumptions(
+            name="Two children",
+            **household.model_dump(exclude={"residence", "children"}),
+            children=[
+                {"name": "First child", "birth_year": 2027},
+                {"name": "Second child", "birth_year": 2029},
+            ],
+        )
+    )
+    wealth = SavedWealthSnapshot(snapshot=WealthSnapshot(as_of=date(2026, 1, 1)))
+    work = select_profile(SavedPlanningDocument(inputs=WorkAssumptions(name="Work")))
+    original = PlanningScenario(
+        name="Plan", household=household, wealth=wealth, components=[work]
+    )
+    selected = replace_household(original, source)
+    assert selected.household.children == source.inputs.children
+    assert selected.household.residence == original.household.residence
+    assert selected.components == original.components
+    assert selected.wealth == original.wealth
+    assert selected.household_source.source_id == source.id
+    assert selected.household_source.source_revision == 1
+    assert not missing_details(source.inputs)
+    assert not original.household.children
+    newer = source.model_copy(
+        update={
+            "revision": 2,
+            "inputs": source.inputs.model_copy(
+                update={"name": "No children", "children": ()}
+            ),
+        }
+    )
+    assert len(selected.household.children) == 2
+    updated = replace_household(selected, newer)
+    assert not updated.household.children
+    assert updated.household_source.source_revision == 2
+    assert updated.household_source.source_name == "No children"
+    with pytest.raises(ValidationError):
+        HouseholdAssumptions.model_validate(
+            source.inputs.model_dump() | {"residence": []}
+        )
+    with pytest.raises(ValidationError):
+        select_profile(source)
+
+
+@pytest.mark.parametrize("has_wealth", [False, True])
+def test_household_selection_protects_existing_adult_slot_ownership(has_wealth):
+    source = SavedPlanningDocument(
+        inputs=HouseholdAssumptions(
+            name="Family", adults=[{"name": "B"}, {"name": "A"}]
+        )
+    )
+    empty = PlanningScenario(name="New")
+    assert replace_household(empty, source).household.adults == source.inputs.adults
+    populated = empty.model_copy(
+        update={
+            "wealth": SavedWealthSnapshot(
+                snapshot=WealthSnapshot(as_of=date(2026, 1, 1))
+            )
+            if has_wealth
+            else None,
+            "components": ()
+            if has_wealth
+            else (
+                select_profile(
+                    SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
+                ),
+            ),
+        }
+    )
+    with pytest.raises(ValueError, match="adults must match"):
+        replace_household(populated, source)
+    with pytest.raises(ValueError, match="saved Household"):
+        replace_household(
+            empty, SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
+        )
+
+
+def test_existing_plan_without_household_source_still_loads():
+    document = SavedPlanningDocument(inputs=PlanningScenario(name="Existing"))
+    payload = document.model_dump(mode="json")
+    del payload["inputs"]["household_source"]
+    assert SavedPlanningDocument.model_validate(payload) == document
 
 
 def test_wealth_replacement_keeps_investment_choices_and_reserve():

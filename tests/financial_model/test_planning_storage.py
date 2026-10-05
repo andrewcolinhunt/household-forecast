@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -12,12 +13,14 @@ from psycopg.types.json import Jsonb
 
 from financial_model.planning import (
     EconomicAssumptions,
+    HouseholdAssumptions,
     InvestmentAssumptions,
     PlanningScenario,
     RetirementAssumptions,
     SavedPlanningDocument,
     SpendingAssumptions,
     WorkAssumptions,
+    replace_household,
     select_profile,
 )
 from financial_model.planning_storage import (
@@ -40,6 +43,7 @@ from financial_model.storage import (
 @pytest.mark.parametrize(
     "model",
     [
+        HouseholdAssumptions,
         WorkAssumptions,
         SpendingAssumptions,
         InvestmentAssumptions,
@@ -94,6 +98,57 @@ def test_kind_cannot_change_and_source_deletion_does_not_mutate_plan(database_ur
     assert new.inputs.components[0].source_id == source.id
     assert not list_goals(database_url)
     assert not list_planning_documents(database_url, "work")
+
+
+@pytest.mark.integration
+def test_household_source_deletion_preserves_plan_copy(database_url):
+    source = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=HouseholdAssumptions(
+                name="Family", children=[{"name": "Child", "birth_year": 2029}]
+            )
+        ),
+    )
+    plan = create_planning_document(
+        database_url,
+        SavedPlanningDocument(
+            inputs=replace_household(PlanningScenario(name="Plan"), source)
+        ),
+    )
+    delete_planning_document(database_url, source.id, source.revision)
+    assert load_planning_document(database_url, plan.id) == plan
+    assert import_planning_backup(plan.model_dump_json().encode()) == plan.inputs
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "constraint_name", ["planning_kind", "planning_documents_document_check4"]
+)
+def test_schema_expands_existing_library_constraint_idempotently(
+    database_url, constraint_name
+):
+    existing = create_planning_document(
+        database_url, SavedPlanningDocument(inputs=PlanningScenario(name="Existing"))
+    )
+    schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
+    with psycopg.connect(database_url) as connection:
+        connection.execute(
+            "ALTER TABLE planning_documents DROP CONSTRAINT planning_kind"
+        )
+        connection.execute(
+            sql.SQL(
+                "ALTER TABLE planning_documents ADD CONSTRAINT {} CHECK ((document -> 'inputs' ->> 'kind' IN ('work', 'spending', 'investments', 'economy', 'retirement', 'plan')) IS TRUE)"
+            ).format(sql.Identifier(constraint_name))
+        )
+        connection.execute(schema)
+        connection.execute(schema)
+    assert load_planning_document(database_url, existing.id) == existing
+    saved = create_planning_document(
+        database_url,
+        SavedPlanningDocument(inputs=HouseholdAssumptions(name="New family")),
+    )
+    assert load_planning_document(database_url, saved.id) == saved
 
 
 @pytest.mark.parametrize(
