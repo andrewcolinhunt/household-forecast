@@ -26,11 +26,14 @@ Return to **Plans**, read **Supported household and calculation assumptions**,
 confirm the facts, and select **Calculate**. Results describe the last calculated
 inputs. Choose **Save** to keep those inputs and results in the shared store.
 
-To collect longer-term assumptions, create reusable profiles in **Work**, **Spending**,
-**Retirement**, **Investments**, and **Economy**. Use **All Work assumptions** or the
+To collect longer-term assumptions, create reusable profiles in **Household**,
+**Work**, **Spending**, **Retirement**, **Investments**, and **Economy**. Household
+profiles save family configurations separately from annual calculation defaults;
+residence belongs to each combined Plan. Use **All Work assumptions** or the
 corresponding action to leave an annual editing context. Then choose **Plans → New
-combined plan** and select a Wealth snapshot. Choose one scenario per category to
-hold it fixed, or **Add alternative** to vary it. Save the Plan, then open
+combined plan** and select a Household and Wealth snapshot. Choose one scenario
+per financial category to hold it fixed, or **Add alternative** to vary it. All
+alternatives share the Plan's Household copy. Save the Plan, then open
 **Forecast** to select combinations and enter the additional account and benefit
 details needed to [project future wealth](#run-forecast).
 

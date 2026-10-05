@@ -2,10 +2,10 @@
 # Forecast Methodology
 
 A forecast applies a household's saved decisions to many possible economic
-futures. Employment, retirement dates, spending rules, and planning lifetimes
-stay fixed within a scenario. Markets and inflation vary. The forecast evaluates
-those decisions; it does not search for an optimal retirement age or anticipate
-future market returns when making withdrawals.
+futures. Household composition, employment, retirement dates, spending rules,
+and planning lifetimes stay fixed within a scenario. Markets and inflation vary.
+The forecast evaluates those decisions; it does not search for an optimal
+retirement age or anticipate future market returns when making withdrawals.
 
 ## Annual accounting
 
@@ -42,9 +42,10 @@ Retirement saving above payroll contribution limits goes to taxable investments.
 Regular 2026 contribution caps rise with the model's price level; catch-up
 contributions and new IRA/HSA contributions are outside the current scope.
 
-Separate health-expense modeling is deferred. Household living budgets provide
-all recurring spending; the model adds no separate health costs. HSA balances
-remain invested and count toward total wealth, but are unavailable for spending.
+Named Spending schedules provide household expenses, including any entered
+child, healthcare, and care costs. The model does not generate these costs from
+household facts or insurance coverage. HSA balances remain invested and count
+toward total wealth, but are unavailable for spending.
 Retirement benefits follow the Plan's reviewed person mapping. Each Plan supplies
 its own benefit and yield assumptions.
 
@@ -98,6 +99,12 @@ differ, each transforms those shocks using its own growth, volatility, and
 correlation inputs. The same run retains failed paths. Each path is converted
 to reference-year purchasing power using its own inflation before calculating
 percentiles or paired scenario differences.
+
+Compared Plans share the same dated accounts and debts, adults in the same
+order, adult ages and tax facts, and reference year. Children, their birth years,
+and residence may differ. Each Plan resolves child-age expenses and dependent
+tax treatment from its own Household copy. Children aged zero through 17 enter
+the tax calculation; college spending does not extend that dependency period.
 
 The 10th–90th percentile band contains the middle 80% of simulated balances
 at each date. Its edges are not complete individual lives or worst cases.

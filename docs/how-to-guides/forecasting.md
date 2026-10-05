@@ -8,6 +8,8 @@ snapshot and matching economic futures.
 ## Prepare and run a comparison
 
 1. Complete financial inputs in **Scenarios**:
+   - **Household** saves reusable adults, reference-year ages, children and birth
+     years, and tax facts. Annual calculation defaults remain separate.
    - **Wealth** owns account balances, retirement-account owners, taxable cost
      basis, and debt payment terms.
    - **Spending** owns all household expense schedules, including children,
@@ -19,15 +21,19 @@ snapshot and matching economic futures.
      simulation defaults; review or edit them under **Advanced simulation settings**.
    Use zero for a known zero and leave unknown facts blank. Choose **No pension**
    when appropriate; pension timing is then unnecessary.
-2. Select these saved assumptions, plus Work, Spending, and Investments, in a combined Plan
-   under **Scenarios → Plans**. Review its forecast readiness. When a source
-   changes, choose **Update this copy** or **Update Wealth copy**, then save the
-   Plan. Other Plans retain their own copies. Use **Plan view → Timeline** to
+2. Select a saved Household, Wealth snapshot, and financial assumptions in a
+   combined Plan under **Scenarios → Plans**. Enter residence in the Plan and
+   review its forecast readiness. When a source changes, explicitly update its
+   copy, then save the Plan. Other Plans retain their own copies. A Household
+   change preserves residence and financial inputs; adults must match the
+   existing Plan's order. Use **Plan view → Timeline** to
    review dated changes together and edit this Plan's inputs. A category filter
    changes the view; it does not create another copy of the expense.
 3. Open **Forecast → Set up forecast** and select up to four combinations.
-   Categories with saved alternatives produce separate choices. Compared choices must share their
-   dated accounts, debts, and household demographics; residence may differ.
+   Financial categories with saved alternatives produce separate choices.
+   Compared choices must share their dated accounts, debts, adult identities,
+   ages, tax facts, and reference year. Children, birth years, and residence
+   may differ; pair each Plan's Household with the appropriate Spending budget.
 4. Start with **Fixed assumptions** to check your cash flows. Then choose
    **Simulated returns** (Monte Carlo) for uncertainty bands. The default is 10,000 simulated
    futures. Select **Run forecast** and allow the annual tax calculations to
@@ -60,6 +66,29 @@ Forecasting currently starts from a 2026 snapshot with amounts expressed in
 recurring activity. One-time expenses listed for that opening year are planned
 expenses at year end. Remove expenses that have already happened from the Plan;
 there is no separate opening-year setting.
+
+## Choose a household and spending budget
+
+In **Household**, create, duplicate, or edit a named family configuration. Keep
+the same adults in the same order across choices such as no children, one child,
+and two children. Enter a birth year for each planned child. Select the matching
+Household in the combined Plan. After editing the library source, choose
+**Update household copy** in each Plan that should use the change. Duplicate the
+one-child Household when adding a second child to preserve existing child-age
+links. Deleting a library Household leaves copies
+already saved in Plans and forecasts intact.
+
+In **Spending**, save a complete budget for each location and family size you
+want to explore. For example, two locations and three family sizes need six
+independent budgets. They do not reference one another or update automatically
+from an annual plan. Keep shared ordinary and medical costs consistent when
+the intended difference is child spending.
+
+You can keep these choices in the libraries without creating a combined Plan
+for each one. A Plan uses one Household for all its financial alternatives.
+To compare different family sizes, save separate Plan choices with matching
+Household and Spending copies. Check child-age links after switching Household:
+a missing child reference or birth year blocks the forecast.
 
 ## Set up changing expenses
 

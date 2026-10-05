@@ -59,7 +59,7 @@ income, expense, tax, or asset assumption.
 | Planning question | Status |
 | --- | --- |
 | How do supported job and full-year CA/WA alternatives change annual cash, taxes, saving, and equity? | Implemented in the annual model. |
-| Can we save and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as saved combinations, selectable in Forecast. |
+| Can we reuse household facts and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as saved copies in combined Plans, selectable in Forecast. |
 | How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Implemented with annual account balances and an explicit future-tax assumption. |
 | How do expenses change as children grow up, work ends, or care is needed? | Implemented as named annual expenses with dated amounts and optional end dates. |
 | Can each scenario fund a specified retirement lifestyle, and for how long? | Implemented with retirement income, eligible withdrawals, taxes, and visible shortfalls. |
@@ -71,6 +71,28 @@ coverage. In particular, an annual full-year state comparison does not calculate
 the transition year of a move. Forecasts also assume full-year residence and
 apply a documented planning policy for future taxes. See
 [forecast methodology and limits](#forecast-method).
+
+## Reuse household assumptions
+
+Save Household scenarios for family choices such as no children, one child, or
+two children. Each holds the adults, their ages in a reference year, children
+and birth years, and tax facts. Residence belongs to the combined Plan, so the
+same Household can be used for different locations. Shared defaults for annual
+calculations remain separate from these saved Household scenarios.
+
+A Plan keeps a copy of its selected Household. Later changes to the source take
+effect only when you update that copy and save the Plan. Selecting another
+Household preserves the Plan's residence and financial inputs. Its adults must
+match the order already used by a Plan with financial inputs or starting Wealth.
+
+Spending scenarios are complete, independent budgets. They do not inherit from
+another Spending scenario or follow changes to an annual plan. For two locations
+and three family sizes, keep six budgets and three Household scenarios in the
+libraries, selecting matching pairs in Plans. Saving those budgets does not
+create combined Plans.
+Match each Plan's children to its budget: selecting a no-child budget does not
+remove tax dependents, and adding a child does not create expenses. Child-age
+expense links must refer to children present in that Plan's Household copy.
 
 ## Plan expenses through household changes
 
@@ -123,8 +145,10 @@ retire.
 
 A combined Plan can hold categories fixed while varying others: two Work choices
 and three Spending choices create six combinations under the same retirement and
-economic assumptions. Save these combinations and select up to four in Forecast
-to compare wealth over time and whether funds last through both lifetimes.
+economic assumptions. Every combination also shares that Plan's Household copy.
+Compare different family sizes using separate Plans with matching Household and
+Spending choices. Select up to four combinations in Forecast to compare wealth
+over time and whether funds last through both lifetimes.
 
 A combined Plan embeds its selected inputs. A later library edit does not change
 that plan; replacing a selection is explicit. The Plan timeline and its category
