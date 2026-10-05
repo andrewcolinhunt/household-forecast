@@ -26,6 +26,7 @@ from financial_model.wealth import (
     AccountPosition,
     DebtPosition,
     InvestmentType,
+    PropertyPosition,
     SavedWealthSnapshot,
     TaxTreatment,
     WealthSnapshot,
@@ -98,20 +99,29 @@ def _open(
 
 
 def _read(dsn: str | None) -> tuple[SavedWealthSnapshot, ...]:
-    """Retain the last library on connection failure while disabling shared writes."""
+    """Read current snapshots without offering cached choices after failure."""
     st.session_state["wealth_store_available"] = bool(dsn)
     if not dsn:
         return ()
     try:
-        records = list_wealth_snapshots(dsn)
-        st.session_state["wealth_last_records"] = records
-        return records
+        return list_wealth_snapshots(dsn)
     except (psycopg.Error, ValueError):
         st.session_state["wealth_store_available"] = False
         st.error(
             "Saved wealth could not be read. Your drafts are still available. Check database setup or try Refresh."
         )
-        return tuple(st.session_state.get("wealth_last_records", ()))
+        return ()
+
+
+def _has_unsaved_edits(draft: dict[str, Any]) -> bool:
+    """Keep new and edited drafts visible without duplicating saved snapshots."""
+    loaded: SavedWealthSnapshot | None = draft["loaded"]
+    if loaded is None:
+        return True
+    try:
+        return WealthSnapshot.model_validate(draft["data"]) != loaded.snapshot
+    except ValueError:
+        return True
 
 
 def _text(
@@ -308,6 +318,7 @@ def _contents(data: dict[str, Any], owner_labels: dict[int | None, str]) -> bool
     )
     debt_removed = []
     for row in data["debts"]:
+        row.setdefault("payment_frequency", "annual")
         with st.container(border=True):
             name, amount, remove = st.columns([3, 2, 0.5], vertical_alignment="bottom")
             with name:
@@ -339,11 +350,83 @@ def _contents(data: dict[str, Any], owner_labels: dict[int | None, str]) -> bool
                     "Interest rate (%)",
                     _key(row, "interest_rate"),
                 )
+            forms.choice(
+                row,
+                "payment_frequency",
+                "Payment frequency",
+                ("annual", "monthly"),
+                _key(row, "payment_frequency"),
+                labels={"annual": "Annual", "monthly": "Monthly"},
+                help_text="Monthly loans use one twelfth of the annual principal-and-interest payment each month. Exclude escrow; enter it under the property's monthly expenses.",
+            )
     data["debts"] = [row for row in data["debts"] if row["id"] not in debt_removed]
+    for property in data.setdefault("properties", []):
+        if property["mortgage_id"] in debt_removed:
+            property["mortgage_id"] = None
+            st.session_state.pop(_key(property, "mortgage_id"), None)
     debt_added = st.button("Add debt", key=_key(data, "add_debt"))
     if debt_added:
         data["debts"].append(DebtPosition(label="New debt").model_dump(mode="json"))
-    return bool(removed or added or debt_removed or debt_added)
+    property_changed = _properties(data)
+    return bool(removed or added or debt_removed or debt_added or property_changed)
+
+
+def _properties(data: dict[str, Any]) -> bool:
+    """Keep homes separate from accounts available to fund household spending."""
+    st.subheader("Real estate")
+    st.caption(
+        "Property value contributes to net wealth but cannot fund spending. Rent, property costs, and taxable rental income stay fixed in nominal dollars, including after mortgage payoff. No sale or vacancy is assumed."
+    )
+    removed = []
+    mortgages = {None: "No mortgage", **{d["id"]: d["label"] for d in data["debts"]}}
+    for row in data["properties"]:
+        with st.container(border=True):
+            _text(row, "label", "Property name")
+            _amount(row, "market_value", "Property market value ($)")
+            forms.percent(
+                row,
+                "annual_appreciation",
+                "Annual nominal appreciation (%)",
+                _key(row, "annual_appreciation"),
+            )
+            st.caption(
+                "Zero appreciation holds the property value fixed in nominal dollars."
+            )
+            forms.choice(
+                row,
+                "mortgage_id",
+                "Mortgage debt",
+                tuple(mortgages),
+                _key(row, "mortgage_id"),
+                labels=mortgages,
+                help_text="Add the mortgage under Debts and enter its principal-and-interest payment there.",
+            )
+            _amount(row, "monthly_rent", "Monthly rental income ($)")
+            forms.money(
+                row,
+                "monthly_expenses",
+                "Monthly property expenses ($)",
+                _key(row, "monthly_expenses"),
+                help_text="Escrow, property tax, insurance, HOA, and other operating costs; exclude principal and interest already entered under Debts. Exclude these costs from Spending to avoid counting them twice.",
+            )
+            forms.money(
+                row,
+                "annual_taxable_rental_income",
+                "Annual taxable rental income ($)",
+                _key(row, "annual_taxable_rental_income"),
+                help_text="Enter your reviewed nonnegative taxable rental profit after allowable deductions, including an explicit zero when appropriate. Rent covering the mortgage does not imply zero taxable profit: principal is not deductible. This fixed nominal assumption does not calculate depreciation or passive losses; no qualified business income deduction is assumed.",
+            )
+            if st.button(
+                f"Remove {row['label'] or 'property'}", key=_key(row, "remove")
+            ):
+                removed.append(row["id"])
+    data["properties"] = [p for p in data["properties"] if p["id"] not in removed]
+    added = st.button("Add property", key=_key(data, "add_property"))
+    if added:
+        data["properties"].append(
+            PropertyPosition(label="New property").model_dump(mode="json")
+        )
+    return bool(removed or added)
 
 
 def _metadata(data: dict[str, Any], *, saved: bool) -> None:
@@ -546,11 +629,6 @@ def _confirm_delete(dsn: str | None, record: SavedWealthSnapshot) -> None:
             _setup_error(error)
             return
         st.session_state.get("wealth_drafts", {}).pop(str(record.id), None)
-        st.session_state["wealth_last_records"] = tuple(
-            r
-            for r in st.session_state.get("wealth_last_records", ())
-            if r.id != record.id
-        )
         if st.session_state.get("wealth_active") == str(record.id):
             st.session_state.pop("wealth_active", None)
         st.session_state.pop("wealth_pending_delete", None)
@@ -573,7 +651,11 @@ def wealth_page(dsn: str | None) -> None:
         st.info("No saved wealth snapshots yet.")
     for record in records:
         _card(record)
-    drafts = st.session_state.get("wealth_drafts", {})
+    drafts = {
+        key: draft
+        for key, draft in st.session_state.get("wealth_drafts", {}).items()
+        if _has_unsaved_edits(draft)
+    }
     if drafts:
         with st.container():
             st.subheader("Continue editing")

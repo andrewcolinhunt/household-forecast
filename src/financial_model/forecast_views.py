@@ -163,6 +163,7 @@ def _breakdown_specs(
 
 
 def _expense_rows(
+    plan: PlanningScenario,
     summary: ForecastSummary,
     ledger: list[dict[str, float | int]],
     year: int,
@@ -171,8 +172,9 @@ def _expense_rows(
     """Read actual planned item costs, using the same flow prices as the charts."""
     index = next(i for i, row in enumerate(ledger) if row["year"] == year)
     row = ledger[index]
-    price = float(ledger[index - 1]["price_index"]) if real and index else 1.0
-    return [
+    opening_price = float(ledger[index - 1]["price_index"]) if index else 1.0
+    price = opening_price if real else 1.0
+    rows: list[dict[str, Any]] = [
         {
             "Expense": item.label,
             "Category": item.category.capitalize(),
@@ -185,26 +187,42 @@ def _expense_rows(
         for item in summary.expenses
         if item.year == year
     ]
+    if plan.wealth is not None:
+        rows.extend(
+            {
+                "Expense": f"{property.label} — property costs",
+                "Category": "Property",
+                "Frequency": "Annual",
+                "Base amount": float(property.monthly_expenses) * 12,
+                "Real growth": None,
+                "Annual real amount": float(property.monthly_expenses)
+                * 12
+                / opening_price,
+                "Planned amount": float(row[f"expense_property_{property.id}"]) / price,
+            }
+            for property in plan.wealth.snapshot.properties
+            if property.monthly_expenses
+        )
+    return rows
 
 
 def _expense_breakdown(
+    plan: PlanningScenario,
     summary: ForecastSummary,
     ledger: list[dict[str, float | int]],
     year: int,
     real: bool,
 ) -> None:
     """Expose named planned consumption without inventing category funding priorities."""
-    if not summary.expenses:
-        return
-    st.markdown("#### Planned expenses")
     try:
-        rows = _expense_rows(summary, ledger, year, real)
+        rows = _expense_rows(plan, summary, ledger, year, real)
     except (KeyError, StopIteration):
         st.info("Expense detail is incomplete. Rerun these inputs to reconstruct it.")
         return
     if not rows:
         st.caption("No expense items are active this year.")
         return
+    st.markdown("#### Planned expenses")
     category = st.selectbox(
         "Expense category", ["All categories", *sorted({r["Category"] for r in rows})]
     )
@@ -222,13 +240,19 @@ def _expense_breakdown(
         | {"Real growth": st.column_config.NumberColumn(format="percent")},
     )
     st.caption(
-        f"Selected planned costs: ${sum(r['Planned amount'] for r in selected):,.0f}; "
-        f"all expense items: ${sum(r['Planned amount'] for r in rows):,.0f}. "
+        f"Selected planned costs: \\${sum(r['Planned amount'] for r in selected):,.0f}; "
+        f"all expense items: \\${sum(r['Planned amount'] for r in rows):,.0f}. "
         f"Base and annual real amounts use {summary.money_year} purchasing power. "
         "Planned amounts use the selected dollar display and include opening-year "
         "proration for annual items. Payments and shortfalls are household totals; "
         "the model does not decide which items go unpaid."
     )
+    if any(row["Category"] == "Property" for row in rows):
+        st.caption(
+            "Property costs stay fixed in nominal dollars; their real growth column "
+            "is blank. Opening-year property costs follow the remaining calendar "
+            "months. Mortgage payments are separate from these costs."
+        )
 
 
 def forecast_breakdown(document: SavedForecast, view: str) -> None:
@@ -271,7 +295,7 @@ def forecast_breakdown(document: SavedForecast, view: str) -> None:
         st.vega_lite_chart(spec, width="stretch")
     if view == "Cash flow":
         year = _select_year(document, state)
-        _expense_breakdown(summary, ledger, year, state["real"])
+        _expense_breakdown(plan, summary, ledger, year, state["real"])
         st.markdown("#### Annual asset waterfall")
         try:
             row = next(row for row in ledger if row["year"] == year)
@@ -352,13 +376,52 @@ def _sensitivity_rows(result: SensitivityResult, year: int) -> list[dict[str, An
 def _sensitivity_spec(rows: list[dict[str, Any]], money_year: int) -> dict[str, Any]:
     """Compare low and high tested inputs on a common change-in-wealth scale."""
     values = [
-        row | {"Label": f"{row['Driver']}|{row['Assumption']}|{row['Tested range']}"}
+        row
+        | {
+            "Label": f"{row['Driver']}|{row['Assumption']}|{row['Tested range']}",
+            "change_label": charts.format_money(row["Change"]),
+            "wealth_label": charts.format_money(row["Net wealth"]),
+        }
         for row in rows
     ]
     order = list(dict.fromkeys(row["Label"] for row in values))
     return {
         "data": {"values": values},
-        "mark": {"type": "bar"},
+        "layer": [
+            {"mark": {"type": "bar"}},
+            {
+                "mark": {"type": "rule"},
+                "encoding": {
+                    "x": {"value": 0},
+                    "x2": {"value": "width"},
+                    "color": {"value": "#808080"},
+                    "opacity": {
+                        "condition": {
+                            "param": "hover_input",
+                            "empty": False,
+                            "value": 0.5,
+                        },
+                        "value": 0,
+                    },
+                },
+            },
+            {
+                "params": [
+                    {
+                        "name": "hover_input",
+                        "select": {
+                            "type": "point",
+                            "fields": ["Label", "Input"],
+                            "on": "pointerover",
+                            "clear": "pointerout",
+                            "toggle": False,
+                        },
+                    }
+                ],
+                "mark": {"type": "rect", "fillOpacity": 0},
+                "encoding": {"x": {"value": 0}, "x2": {"value": "width"}},
+            },
+        ],
         "height": {"step": 64},
         "encoding": {
             "y": {
@@ -377,7 +440,7 @@ def _sensitivity_spec(rows: list[dict[str, Any]], money_year: int) -> dict[str, 
                 "field": "Change",
                 "type": "quantitative",
                 "title": f"Change in net wealth ({money_year} dollars)",
-                "axis": {"format": "~s"},
+                "axis": charts.money_axis(),
             },
             "color": {
                 "field": "Input",
@@ -388,7 +451,10 @@ def _sensitivity_spec(rows: list[dict[str, Any]], money_year: int) -> dict[str, 
             "tooltip": [
                 {"field": name} for name in ("Assumption", "Tested range", "Setting")
             ]
-            + [{"field": name, "format": "$,.0f"} for name in ("Change", "Net wealth")],
+            + [
+                {"field": "change_label", "title": "Change"},
+                {"field": "wealth_label", "title": "Net wealth"},
+            ],
         },
         "autosize": {"type": "fit-x", "contains": "padding", "resize": True},
     }

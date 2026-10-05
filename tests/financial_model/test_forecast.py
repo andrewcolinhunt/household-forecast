@@ -323,6 +323,157 @@ def test_forecast_debt_payment_nets_principal_and_accounts_interest(zero_tax):
     assert rows[2]["debt_payment"] == pytest.approx(60.5)
 
 
+def _rental_property(data, **changes):
+    """Add synthetic property whose rent pays its costs and mortgage installment."""
+    snapshot = data["plans"][0]["wealth"]["snapshot"]
+    mortgage_id, property_id = str(uuid4()), str(uuid4())
+    snapshot["debts"] = [
+        {
+            "id": mortgage_id,
+            "label": "Mortgage",
+            "amount_owed": 100000,
+            "annual_payment": 12000,
+            "interest_rate": ".06",
+            "payment_frequency": "monthly",
+        }
+    ]
+    snapshot["properties"] = [
+        {
+            "id": property_id,
+            "label": "Rental home",
+            "market_value": 250000,
+            "annual_appreciation": 0,
+            "monthly_rent": 1200,
+            "monthly_expenses": 200,
+            "annual_taxable_rental_income": 0,
+            "mortgage_id": mortgage_id,
+            **changes,
+        }
+    ]
+
+
+def test_forecast_rent_covers_mortgage_and_costs_without_spendable_equity(zero_tax):
+    request = _edit(forecast_request(), _rental_property)
+    row = calculate_forecast(request).inspect(0, 0)[0]
+    mortgage = 100000 * 1.005**12 - 1000 * (1.005**12 - 1) / 0.005
+    assert row["debt"] == pytest.approx(mortgage)
+    assert row["debt_interest"] == pytest.approx(mortgage - 100000 + 12000)
+    assert row["debt_payment"] == 12000
+    assert row["rental_income"] == row["income"] == 14400
+    assert row["property_expenses"] == 2400
+    assert row["spending_paid"] == 3400
+    assert row["accessible"] == 9000
+    assert row["withdrawals"] == 1000
+    assert row["property_value"] == 250000
+    assert row["assets"] == 259000
+    assert row["net_worth"] == pytest.approx(259000 - mortgage)
+    property_id = request.plans[0].wealth.snapshot.properties[0].id
+    assert row[f"expense_property_{property_id}"] == 2400
+
+
+def test_forecast_property_appreciation_reconciles_assets_without_liquidity(zero_tax):
+    def edit(data):
+        _rental_property(
+            data, annual_appreciation=".05", monthly_rent=0, monthly_expenses=0
+        )
+        snapshot = data["plans"][0]["wealth"]["snapshot"]
+        snapshot["debts"] = []
+        snapshot["properties"][0]["mortgage_id"] = None
+        snapshot["accounts"][0]["balance"] = 0
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["property_gain"] == pytest.approx(12500)
+    assert row["assets"] == pytest.approx(262500)
+    assert row["assets"] == pytest.approx(row["opening_assets"] + row["property_gain"])
+    assert row["accessible"] == row["cash"] == row["withdrawals"] == 0
+    assert row["unfunded_living"] == 1000
+
+
+def test_forecast_monthly_mortgage_payoff_and_rent_continue_after_payoff(zero_tax):
+    def edit(data):
+        _rental_property(data, monthly_rent=150, monthly_expenses=50)
+        snapshot = data["plans"][0]["wealth"]["snapshot"]
+        snapshot["as_of"] = "2026-07-01"
+        snapshot["debts"][0].update(
+            amount_owed=500, annual_payment=1200, interest_rate=0
+        )
+
+    rows = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)
+    assert rows[0]["rental_income"] == 900
+    assert rows[0]["property_expenses"] == 300
+    assert rows[0]["debt_payment"] == 500
+    assert rows[0]["debt"] == 0
+    assert rows[1]["rental_income"] == 1800
+    assert rows[1]["property_expenses"] == 600
+    assert rows[1]["debt_payment"] == 0
+
+
+def test_forecast_monthly_opening_period_prorates_rent_expenses_and_mortgage(zero_tax):
+    def edit(data):
+        _rental_property(data)
+        data["plans"][0]["wealth"]["snapshot"]["as_of"] = "2026-10-16"
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    months = 2 + 16 / 31
+    assert row["rental_income"] == pytest.approx(1200 * months)
+    assert row["property_expenses"] == pytest.approx(200 * months)
+    assert row["debt_payment"] == pytest.approx(1000 * months)
+
+
+def test_forecast_unfunded_monthly_mortgage_retains_unpaid_principal_and_interest(
+    zero_tax,
+):
+    def edit(data):
+        _rental_property(data, monthly_rent=0, monthly_expenses=0)
+        data["plans"][0]["wealth"]["snapshot"]["accounts"][0]["balance"] = 0
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["debt_payment"] == 0
+    assert row["debt"] == pytest.approx(100000 * 1.005**12)
+    assert row["debt_interest"] == pytest.approx(100000 * (1.005**12 - 1))
+    assert row["unfunded_debt_payment"] == 12000
+    assert row["net_worth"] == pytest.approx(250000 - row["debt"])
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("market_value", "market value needs input"),
+        ("annual_taxable_rental_income", "taxable rental income"),
+    ],
+)
+def test_forecast_property_requires_value_and_reviewed_tax_profit(field, message):
+    def edit(data):
+        _rental_property(data, **{field: None})
+
+    request = _edit(forecast_request(), edit)
+    assert any(message in issue for issue in forecast_issues(request))
+    with pytest.raises(ValueError, match=message):
+        calculate_forecast(request)
+
+
+def test_forecast_rental_tax_profit_enters_taxes_without_duplicate_cash(monkeypatch):
+    seen = []
+
+    def tax(**inputs):
+        seen.append(inputs["rental_income"])
+        income_tax = np.full(len(inputs["wages"]), inputs["rental_income"] * 0.2)
+        return ForecastTaxResult(
+            income_tax, *(np.zeros_like(income_tax) for _ in range(6))
+        )
+
+    monkeypatch.setattr("financial_model.forecast.yearly_tax", tax)
+    request = _edit(
+        forecast_request(),
+        lambda d: _rental_property(d, annual_taxable_rental_income=3000),
+    )
+    row = calculate_forecast(request).inspect(0, 0)[0]
+    assert all(value == 3000 for value in seen)
+    assert row["rental_income"] == row["income"] == 14400
+    assert row["tax_paid"] == 600
+    assert row["accessible"] == 8400
+
+
 @pytest.mark.parametrize("age", [60, 75])
 def test_forecast_preserves_hsa_without_funding_general_expenses(zero_tax, age):
     def edit(data):

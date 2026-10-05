@@ -11,8 +11,10 @@ and assume the five-year qualification requirement has been met.
 
 from __future__ import annotations
 
+from calendar import monthrange
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from importlib.metadata import version
 from typing import cast
 
@@ -46,6 +48,7 @@ from financial_model.planning import (
     RetirementAssumptions,
     WorkAssumptions,
 )
+from financial_model.wealth import DebtPosition
 
 FloatArray = NDArray[np.float64]
 Trace = list[dict[str, FloatArray | int]]
@@ -653,6 +656,17 @@ def _tax(
         wages=wages / fraction,
         contributions=contributions / fraction,
         ordinary_income=ordinary / fraction,
+        rental_income=(
+            sum(
+                float(p.annual_taxable_rental_income or 0)
+                for p in plan.wealth.snapshot.properties
+            )
+            * sum(_monthly_fractions(plan.wealth.snapshot.as_of, annual.year))
+            / 12
+            / fraction
+            if plan.wealth is not None
+            else 0
+        ),
         investment_income=interest / fraction,
         gains=gains / fraction,
         qualified_dividends=dividend / fraction,
@@ -672,6 +686,51 @@ def _tax(
         ca_hsa_income=ca_hsa_income / fraction,
         ca_hsa_gains=ca_hsa_gains / fraction,
     )
+
+
+def _monthly_fractions(as_of: date, year: int) -> tuple[float, ...]:
+    """Prorate the opening calendar month, then use whole monthly periods."""
+    if year != as_of.year:
+        return (1.0,) * 12
+    days = monthrange(year, as_of.month)[1]
+    return ((days - as_of.day + 1) / days,) + (1.0,) * (12 - as_of.month)
+
+
+def _debt_schedule(
+    debt: DebtPosition,
+    opening: FloatArray,
+    annual: AnnualInputs,
+    as_of: date,
+    budget: FloatArray | None = None,
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Apply available cash to earliest installments; unpaid balances earn interest."""
+    monthly = debt.payment_frequency == "monthly"
+    periods = (
+        _monthly_fractions(as_of, annual.year) if monthly else (annual.year_fraction,)
+    )
+    rate = float(debt.interest_rate or 0)
+    payment = float(debt.annual_payment or 0) / (12 if monthly else 1)
+    remaining = (
+        np.full_like(opening, np.inf)
+        if budget is None
+        else np.maximum(budget, 0).copy()
+    )
+    balance, paid, interest = (
+        opening.copy(),
+        np.zeros_like(opening),
+        np.zeros_like(opening),
+    )
+    for fraction in periods:
+        accrued = balance * (
+            rate / 12 * fraction if monthly else (1 + rate) ** fraction - 1
+        )
+        balance += accrued
+        installment = np.minimum(np.minimum(balance, payment * fraction), remaining)
+        balance -= installment
+        remaining -= installment
+        paid += installment
+        interest += accrued
+    return balance, paid, interest
 
 
 def _surplus(
@@ -735,17 +794,13 @@ def _forecast(
         [float(d.amount_owed or 0) for d in plan.wealth.snapshot.debts],
         (count, len(plan.wealth.snapshot.debts)),
     ).copy()
-    payments = np.asarray(
-        [
-            float(d.annual_payment or 0) if d.amount_owed else 0
-            for d in plan.wealth.snapshot.debts
-        ]
-    )
-    debt_rates = np.asarray(
-        [
-            float(d.interest_rate or 0) if d.amount_owed else 0
-            for d in plan.wealth.snapshot.debts
-        ]
+    snapshot = plan.wealth.snapshot
+    properties = np.broadcast_to(
+        [float(p.market_value or 0) for p in snapshot.properties],
+        (count, len(snapshot.properties)),
+    ).copy()
+    property_rates = np.asarray(
+        [float(p.annual_appreciation) for p in snapshot.properties]
     )
     investment = cast(InvestmentAssumptions, _profile(plan, "investments"))
     work = cast(WorkAssumptions, _profile(plan, "work"))
@@ -771,7 +826,7 @@ def _forecast(
         accounts.ca_hsa_income.fill(0)
         accounts.ca_hsa_gains.fill(0)
         opening_accounts = accounts.holdings.sum(axis=2).copy()
-        opening_assets = accounts.total()
+        opening_assets = accounts.total() + properties.sum(axis=1)
         reserve = float(investment.reserved_cash or 0) * price
         gains = (
             _rebalance(accounts, annual.allocation, reserve)
@@ -781,6 +836,18 @@ def _forecast(
         growth, dividend, interest = _growth(
             accounts, paths[:, index], annual.year_fraction, economy
         )
+        property_gain = properties * ((1 + property_rates) ** annual.year_fraction - 1)
+        properties += property_gain
+        months = sum(_monthly_fractions(snapshot.as_of, annual.year))
+        rental_income = np.full(
+            count, sum(float(p.monthly_rent) for p in snapshot.properties) * months
+        )
+        property_expenses = {
+            f"expense_property_{p.id}": np.full(
+                count, float(p.monthly_expenses) * months
+            )
+            for p in snapshot.properties
+        }
         pensions, social = _benefits(incomes, annual, price)
         cash_pay, rsu, contributions, employer = _pay(annual, price)
         for owner, target in enumerate(accounts.retirement):
@@ -798,6 +865,7 @@ def _forecast(
             + pensions
             + social
             + mandatory
+            + rental_income
         )
         expenses = {
             f"expense_{item.item_id}": float(item.amount)
@@ -805,10 +873,13 @@ def _forecast(
             * price
             for item in annual.expenses
         }
+        expenses.update(property_expenses)
         spending = sum(expenses.values(), np.zeros(count))
-        debt_interest = debts * ((1 + debt_rates) ** annual.year_fraction - 1)
-        debts += debt_interest
-        due_debt = np.minimum(debts, payments * annual.year_fraction)
+        due_debt = np.zeros_like(debts)
+        for debt_index, debt in enumerate(snapshot.debts):
+            _, due_debt[:, debt_index], _ = _debt_schedule(
+                debt, debts[:, debt_index], annual, snapshot.as_of
+            )
         wage_total = cash_pay + rsu
         tax = _tax(
             plan,
@@ -887,11 +958,14 @@ def _forecast(
         )
         unpaid_tax = np.maximum(total_tax - tax_paid, 0)
         actual_debt = np.zeros(count)
-        for debt_index in range(debts.shape[1]):
-            paid = np.minimum(np.maximum(cash, 0), due_debt[:, debt_index])
+        debt_interest = np.zeros(count)
+        for debt_index, debt in enumerate(snapshot.debts):
+            debts[:, debt_index], paid, accrued = _debt_schedule(
+                debt, debts[:, debt_index], annual, snapshot.as_of, budget=cash
+            )
             cash -= paid
-            debts[:, debt_index] -= paid
             actual_debt += paid
+            debt_interest += accrued
         spent = np.minimum(np.maximum(cash, 0), spending)
         cash -= spent
         shortfall = (
@@ -899,15 +973,24 @@ def _forecast(
         )
         _surplus(accounts, np.maximum(cash, 0), reserve, investment, annual, price)
         end_price = price * (1 + paths[:, index, 3]) ** annual.year_fraction
-        ending_assets = accounts.total()
+        ending_assets = accounts.total() + properties.sum(axis=1)
         income = (
             cash_pay.sum(axis=1)
             + rsu.sum(axis=1)
             + pensions
             + social
             + employer.sum(axis=1)
+            + rental_income
         )
-        expected = opening_assets + income + growth - spent - tax_paid - actual_debt
+        expected = (
+            opening_assets
+            + income
+            + growth
+            + property_gain.sum(axis=1)
+            - spent
+            - tax_paid
+            - actual_debt
+        )
         if not np.allclose(ending_assets, expected, atol=0.02, rtol=1e-10):
             msg = f"Account reconciliation failed in {annual.year}."
             raise RuntimeError(msg)
@@ -919,6 +1002,10 @@ def _forecast(
             "rsu_income": rsu.sum(axis=1),
             "rsu_tax_withholding": withholding,
             "investment_gain": growth,
+            "property_value": properties.sum(axis=1),
+            "property_gain": property_gain.sum(axis=1),
+            "rental_income": rental_income,
+            "property_expenses": sum(property_expenses.values(), np.zeros(count)),
             "spending_planned": spending,
             "spending_paid": spent,
             "taxes": tax_due,
@@ -927,7 +1014,7 @@ def _forecast(
             "employee_payroll_tax": tax.employee_payroll_tax * annual.year_fraction,
             "tax_paid": tax_paid,
             "unpaid_tax_liability": unpaid_tax.copy(),
-            "debt_interest": debt_interest.sum(axis=1),
+            "debt_interest": debt_interest,
             "debt_payment": actual_debt,
             "employee_contributions": contributions.sum(axis=1),
             "employer_contributions": employer.sum(axis=1),

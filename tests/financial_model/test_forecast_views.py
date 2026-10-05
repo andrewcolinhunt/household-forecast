@@ -17,6 +17,7 @@ from financial_model.forecast_sensitivity import (
     SensitivityPoint,
     SensitivityResult,
 )
+from financial_model.planning import PlanningScenario
 
 
 @pytest.mark.parametrize(("real", "expected"), [(True, 500), (False, 550)])
@@ -50,13 +51,64 @@ def test_expense_rows_preserve_item_identity_and_flow_dollars(real, expected):
             f"expense_{second}": 110,
         },
     ]
-    rows = views._expense_rows(summary, ledger, 2027, real)
+    rows = views._expense_rows(
+        PlanningScenario(name="Household"), summary, ledger, 2027, real
+    )
     assert [row["Category"] for row in rows] == ["Healthcare", "Care"]
     assert [row["Planned amount"] for row in rows] == pytest.approx(
         [expected, expected / 5]
     )
     assert [row["Base amount"] for row in rows] == [500, 100]
     assert [row["Annual real amount"] for row in rows] == [510, 102]
+
+
+@pytest.mark.parametrize("real", [False, True])
+@pytest.mark.parametrize("year", [2026, 2027])
+def test_expense_rows_include_property_costs_in_planned_total(
+    real: bool, year: int
+) -> None:
+    property_id = uuid4()
+    plan = PlanningScenario(
+        name="Household with property",
+        wealth={
+            "snapshot": {
+                "as_of": "2026-07-01",
+                "properties": [
+                    {
+                        "id": property_id,
+                        "label": "Rental property",
+                        "monthly_expenses": 500,
+                    }
+                ],
+            }
+        },
+    )
+    summary = ForecastSummary.model_construct(expenses=())
+    ledger = [
+        {
+            "year": 2026,
+            "price_index": 1.1,
+            "spending_planned": 3000,
+            f"expense_property_{property_id}": 3000,
+        },
+        {
+            "year": 2027,
+            "price_index": 1.21,
+            "spending_planned": 6000,
+            f"expense_property_{property_id}": 6000,
+        },
+    ]
+    rows = views._expense_rows(plan, summary, ledger, year, real)
+    index = year - 2026
+    price = 1.1 if real and index else 1
+    assert rows[0]["Expense"] == "Rental property — property costs"
+    assert rows[0]["Category"] == "Property"
+    assert rows[0]["Base amount"] == 6000
+    assert rows[0]["Real growth"] is None
+    assert rows[0]["Annual real amount"] == pytest.approx(6000 / (1.1 if index else 1))
+    assert sum(row["Planned amount"] for row in rows) == pytest.approx(
+        ledger[index]["spending_planned"] / price
+    )
 
 
 def case(label: str, first: float, later: float) -> SensitivityCase:
@@ -157,7 +209,7 @@ def test_sensitivity_spec_validates_and_displays_assumptions_with_tested_ranges(
     rows = views._sensitivity_rows(sensitivity, 2040)
     original = deepcopy(rows)
     spec = views._sensitivity_spec(rows, sensitivity.money_year)
-    alt.Chart.from_dict(spec, validate=True)
+    alt.LayerChart.from_dict(spec, validate=True)
     label_field = spec["encoding"]["y"]["field"]
     values = spec["data"]["values"]
     for row in values:

@@ -36,8 +36,9 @@ constraints. Saving them does not run a projection or tax calculation.
 | --- | --- |
 | `AssetMix` | Equities, fixed-income, and cash fractions totaling exactly 1; shared with future allocation targets |
 | `AccountPosition` | Local UUID, label, nullable balance, tax treatment, `invested_in`, optional mixed allocation, owner slot, and cost basis |
-| `DebtPosition` | Local UUID, label, nullable amount owed, annual payment, and interest rate |
-| `WealthSnapshot` | Name, one `as_of` date, USD currency, optional note, accounts, debts |
+| `DebtPosition` | Local UUID, label, nullable amount owed, annual principal-and-interest payment, interest rate, and annual or monthly payment frequency |
+| `PropertyPosition` | Local UUID, label, nullable market value, nominal appreciation rate, monthly rent and expenses, nullable annual taxable rental income, and optional mortgage ID |
+| `WealthSnapshot` | Name, one `as_of` date, USD currency, optional note, accounts, debts, properties |
 | `SavedWealthSnapshot` | `document_type="wealth_snapshot"`, schema version 2, UUID, revision, save timestamp, and snapshot |
 
 Tax treatment is `unknown`, `taxable`, `tax_deferred`, `roth`, or `hsa`.
@@ -52,7 +53,8 @@ amounts from explicit zeros. `missing_details` asks for balances, tax treatment,
 and investment mix; known zero balances need no classification.
 
 Amounts serialize as decimal strings; unknown is `null`. IDs must be distinct
-across accounts and debts. Saved copies retain independent contents. Account
+across accounts, debts, and properties. A linked mortgage must exist in the same
+snapshot. Saved copies retain independent contents. Account
 `owner` is household slot 1 or 2; `cost_basis`, debt `annual_payment`, and debt
 `interest_rate` remain unknown until entered. Existing schema 2 records load
 with these optional fields blank. Forecast readiness checks require them only
@@ -366,7 +368,7 @@ and stress modes produce one path. Historical replay produces all full windows;
 Monte Carlo and bootstrap use `count`. `parse_history_csv(text)` validates jointly
 observed rates in consecutive calendar years.
 
-`SavedForecast` schema and model version 4 stores the frozen request, model and
+`SavedForecast` schema and model version 5 stores the frozen request, model and
 dependency versions, per-scenario percentile curves, funding statistics, an
 example ledger, and annual expense metadata. Each `ForecastExpense` records the
 year, item UUID, label, category, frequency, base amount, real growth rate, and
@@ -376,10 +378,10 @@ spending remain household totals; the model does not allocate shortfalls to item
 Difference percentiles are absent outside the baseline's planning horizon.
 `create_forecast(dsn, document)` inserts an immutable run into `forecast_runs`;
 `list_forecasts(dsn)` reads current-format runs in reverse creation order.
-`list_historical_forecasts(dsn)` returns older original JSON for inspection and
-download, without upgrading or executing its embedded inputs.
 `import_forecast_backup(bytes)` validates an exported document up to 10 MB and
-preserves its identity. There are no update or delete APIs for saved runs.
+preserves its identity. Only the current format can be saved or imported.
+Applying the database schema or planning migration deletes older-format results
+and preserves current-format runs. Runtime reads do not delete or migrate results.
 
 See [forecast methodology](#forecast-method) for conventions, limitations, and
 the distinction between simulated outcome bands and guarantees.

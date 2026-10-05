@@ -11,7 +11,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from financial_model.planning import ExpenseCategory, ExpenseFrequency, PlanningScenario
 from financial_model.schemas import ValueModel
 
-FORECAST_VERSION: Final = "4"
+FORECAST_VERSION: Final = "5"
 Finite = Annotated[float, Field(allow_inf_nan=False)]
 Probability = Annotated[Finite, Field(ge=0, le=1)]
 AnnualRate = Annotated[Finite, Field(gt=-1)]
@@ -151,8 +151,8 @@ class SavedForecast(ValueModel):
     """An immutable run with inputs sufficient to regenerate every simulated path."""
 
     document_type: Literal["forecast"] = "forecast"
-    schema_version: Literal[4] = 4
-    model_version: Literal["4"] = FORECAST_VERSION
+    schema_version: Literal[5] = 5
+    model_version: Literal["5"] = FORECAST_VERSION
     id: UUID = Field(default_factory=uuid4)
     created_at: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     numpy_version: str

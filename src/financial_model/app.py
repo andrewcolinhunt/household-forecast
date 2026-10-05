@@ -81,15 +81,13 @@ def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
     if not dsn:
         return ()
     try:
-        records = list_scenarios(dsn)
-        st.session_state["last_records"] = records
-        return records
+        return list_scenarios(dsn)
     except (psycopg.Error, ValidationError, ValueError):
         st.session_state["store_available"] = False
         st.error(
             "Saved annual plans could not be read. Your draft is still available; try Refresh annual plans."
         )
-        return tuple(st.session_state.get("last_records", ()))
+        return ()
 
 
 def _set_editor(inputs: Scenario | None, record: SavedScenario | None = None) -> None:
@@ -170,8 +168,8 @@ def _read_goal_catalogue(dsn: str | None) -> None:
     if dsn:
         try:
             st.session_state["goals"] = list_goals(dsn)
-        except psycopg.Error:
-            st.session_state.setdefault("goals", ())
+        except (psycopg.Error, ValueError):
+            st.session_state["goals"] = ()
     else:
         st.session_state.setdefault("goals", ())
 
@@ -292,13 +290,8 @@ def _results(document: SavedScenario) -> None:
     period = _financial_views((document,), displays)
     with st.container(horizontal=True):
         if st.button("Compare results", disabled=not _current(result)):
-            st.session_state["pending_comparison"] = next(
-                (
-                    str(record.id)
-                    for record in st.session_state["records"]
-                    if record == document
-                ),
-                "draft",
+            st.session_state["pending_comparison"] = (
+                _matching_saved_key(document, st.session_state["records"]) or "draft"
             )
             st.switch_page(str(COMPARE_PAGE))
         if st.button("Keep snapshot", disabled=not _current(result)):
@@ -353,18 +346,59 @@ def _tax_detail(result: ScenarioResult, period: Period) -> None:
     )
 
 
+def _matching_saved_key(
+    document: SavedScenario, records: tuple[SavedScenario, ...]
+) -> str | None:
+    """Match financial inputs and results without treating timestamps as changes."""
+    ignored = {"calculated_at", "app_version"}
+    result = document.result.model_dump(exclude=ignored)
+    return next(
+        (
+            str(record.id)
+            for record in sorted(records, key=lambda item: item.id != document.id)
+            if record.inputs == document.inputs
+            and record.result.model_dump(exclude=ignored) == result
+        ),
+        None,
+    )
+
+
+def _comparison_choices(
+    records: tuple[SavedScenario, ...],
+) -> dict[str, SavedScenario]:
+    """Offer current saved plans and distinct, explicitly calculated local results."""
+    choices = {str(record.id): record for record in records}
+    document = st.session_state.get("document")
+    if (
+        document
+        and document != st.session_state.get("loaded_record")
+        and not _matching_saved_key(document, records)
+    ):
+        choices["draft"] = document
+    if snapshot := st.session_state.get("session_snapshot"):
+        saved_origins = {
+            draft["loaded_record"].id
+            for draft in st.session_state.get("drafts", {}).values()
+            if draft.get("loaded_record")
+        }
+        if loaded := st.session_state.get("loaded_record"):
+            saved_origins.add(loaded.id)
+        if (
+            snapshot.id not in saved_origins or str(snapshot.id) in choices
+        ) and not _matching_saved_key(snapshot, records):
+            choices["snapshot"] = snapshot
+    return choices
+
+
 def compare_page() -> None:
     """Compare two to four saved scenarios or explicitly calculated session results."""
     st.title("Compare annual plans")
+    st.caption(
+        "Annual plans compare a single year. The combined plans used in Forecast are a separate list."
+    )
     st.session_state["records"] = _read_store(_database_url())
     _read_goal_catalogue(_database_url())
-    records = st.session_state["records"]
-    choices = {str(record.id): record for record in records}
-    document = st.session_state.get("document")
-    if document and document not in records:
-        choices["draft"] = document
-    if snapshot := st.session_state.get("session_snapshot"):
-        choices["snapshot"] = snapshot
+    choices = _comparison_choices(st.session_state["records"])
     status_labels = {"draft": "Last calculated draft", "snapshot": "Kept snapshot"}
     displays = dict(
         zip(
@@ -678,11 +712,6 @@ def _confirm_delete(record: SavedScenario) -> None:
 def _forget_scenario(record: SavedScenario) -> None:
     """Remove references to a deleted record from this browser session."""
     st.session_state.get("drafts", {}).pop(str(record.id), None)
-    st.session_state["last_records"] = tuple(
-        item
-        for item in st.session_state.get("last_records", ())
-        if item.id != record.id
-    )
     if st.session_state.get("draft_id") == record.id:
         for key in (*DRAFT_FIELDS, "editor_epoch"):
             st.session_state.pop(key, None)

@@ -88,6 +88,7 @@ def ledger(plan: PlanningScenario) -> list[charts.LedgerRow]:
         "opening_assets": 600,
         "income": 120,
         "investment_gain": 30,
+        "property_gain": 0,
         "spending_paid": 25,
         "spending_planned": 30,
         "tax_paid": 15,
@@ -99,6 +100,8 @@ def ledger(plan: PlanningScenario) -> list[charts.LedgerRow]:
         "debt": 100,
         "unpaid_tax_liability": 10,
         "cash_pay": 100,
+        "rental_income": 0,
+        "property_value": 0,
         "social_security": 15,
         "pensions": 5,
         "employee_contributions": 200,
@@ -185,7 +188,7 @@ def test_waterfall_spec_uses_paid_costs_and_one_common_price(
     bars = spec["data"]["values"]
     divisor = 1.1 if real else 1
     assert [bar["amount"] for bar in bars] == pytest.approx(
-        [value / divisor for value in [600, 120, 30, -25, -15, -10, 700]]
+        [value / divisor for value in [600, 120, 30, 0, -25, -15, -10, 700]]
     )
     assert bars[-2]["end"] == pytest.approx(bars[-1]["end"])
     assert charts.waterfall_residual(row, real) == pytest.approx(0)
@@ -199,9 +202,41 @@ def test_waterfall_spec_preserves_losses_refunds_and_unexplained_difference(
     row = ledger[0] | {"investment_gain": -30, "tax_paid": -5, "assets": 671}
     bars = charts.waterfall_spec(row, True, money_year=2030)["data"]["values"]
     assert bars[2]["amount"] == pytest.approx(-30 / 1.1)
-    assert bars[4]["amount"] == pytest.approx(5 / 1.1)
+    assert bars[5]["amount"] == pytest.approx(5 / 1.1)
     assert charts.waterfall_residual(row, False) == 11
     assert charts.waterfall_residual(row, True) == pytest.approx(10)
+
+
+def test_waterfall_spec_keeps_zero_steps_inspectable_and_labels_losses(
+    ledger: list[charts.LedgerRow],
+) -> None:
+    row = ledger[0] | {"debt_payment": 0, "investment_gain": -30, "assets": 650}
+    spec = charts.waterfall_spec(row, False, money_year=2030)
+    bars = {bar["step"]: bar for bar in spec["data"]["values"]}
+    assert bars["Debt payments"]["amount_label"] == "$0.00"
+    assert bars["Investment return"]["amount_label"] == "-$30.00"
+    assert bars["Investment return"]["start"] == 720
+    assert bars["Investment return"]["end"] == 690
+    assert bars["Debt payments"]["next_step"] == "Closing assets"
+    hover = spec["layer"][-1]
+    assert hover["params"][0]["select"]["fields"] == ["step"]
+    assert hover["mark"] == {"type": "rect", "opacity": 0}
+    assert hover["encoding"]["x"] == {"value": 0}
+    assert hover["encoding"]["x2"] == {"value": "width"}
+    assert charts.waterfall_residual(row, False) == 0
+
+
+@pytest.mark.parametrize("real", [False, True])
+def test_waterfall_spec_reconciles_property_appreciation(
+    ledger: list[charts.LedgerRow], real: bool
+) -> None:
+    row = ledger[0] | {"property_gain": 20, "assets": 720}
+    spec = charts.waterfall_spec(row, real, money_year=2030)
+    bars = spec["data"]["values"]
+    appreciation = next(bar for bar in bars if bar["step"] == "Property appreciation")
+    assert appreciation["amount"] == pytest.approx(20 / (1.1 if real else 1))
+    assert bars[-2]["end"] == pytest.approx(bars[-1]["end"])
+    assert charts.waterfall_residual(row, real) == pytest.approx(0)
 
 
 def test_balances_spec_counts_each_account_and_generated_balance_once(
@@ -218,6 +253,7 @@ def test_balances_spec_counts_each_account_and_generated_balance_once(
             "Pretax accounts": 220 / 1.1,
             "Roth accounts": 300 / 1.1,
             "HSA": 50 / 1.1,
+            "Real estate": 0,
         }
     )
     assert sum(
@@ -226,6 +262,17 @@ def test_balances_spec_counts_each_account_and_generated_balance_once(
     ) == pytest.approx(balances["Total assets"])
     assert "Unpaid living expenses" not in balances
     assert "New unpaid taxes" not in balances
+
+
+def test_property_charts_show_rent_and_illiquid_value_separately(
+    plan: PlanningScenario, ledger: list[charts.LedgerRow]
+) -> None:
+    ledger[0].update(rental_income=15000, property_value=800000)
+    income = values(charts.income_spec(plan, ledger, True), 2030)
+    balances = values(charts.balances_spec(plan, ledger, True), 2030)
+    assert income["Rental income"] == 15000
+    assert balances["Real estate"] == pytest.approx(800000 / 1.1)
+    assert balances["Accessible, before tax"] == pytest.approx(130 / 1.1)
 
 
 def test_specs_use_one_ledger_and_distinct_flow_balance_units(
@@ -267,7 +314,7 @@ def test_specs_validate_and_do_not_mutate_saved_or_live_ledgers(
     ]
     for spec in specs:
         alt.LayerChart.from_dict(spec, validate=True)
-    alt.Chart.from_dict(
+    alt.LayerChart.from_dict(
         charts.waterfall_spec(ledger[0], True, money_year=2030), validate=True
     )
     assert charts.income_spec(plan, tuple(ledger), True) == specs[0]

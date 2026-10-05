@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
@@ -134,6 +135,39 @@ def test_wealth_account_debt_totals_and_removal():
     next(b for b in page.button if b.label == "Remove New debt").click().run()
     assert not raw(page)["debts"]
     assert any("No balances entered" in v.value for v in page.info)
+
+
+def test_wealth_property_and_monthly_mortgage_survive_navigation_and_removal():
+    page = press(library(), "New snapshot")
+    press(page, "Add debt")
+    field(page, "text_input", "Debt name").set_value("Mortgage").run()
+    field(page, "text_input", "Amount owed ($)").set_value("100000").run()
+    field(page, "text_input", "Annual payment ($)").set_value("12000").run()
+    field(page, "selectbox", "Payment frequency").select("monthly").run()
+    mortgage_id = raw(page)["debts"][0]["id"]
+    press(page, "Add property")
+    field(page, "text_input", "Property name").set_value("Rental home").run()
+    field(page, "text_input", "Property market value ($)").set_value("250000").run()
+    field(page, "selectbox", "Mortgage debt").select(mortgage_id).run()
+    field(page, "text_input", "Monthly rental income ($)").set_value("1200").run()
+    field(page, "text_input", "Monthly property expenses ($)").set_value("200").run()
+    field(page, "text_input", "Annual taxable rental income ($)").set_value(
+        "3000"
+    ).run()
+    assert (
+        next(m.value for m in page.metric if m.label == "Net recorded wealth")
+        == "$150,000.00"
+    )
+    go(page, "scenarios")
+    go(page, "wealth")
+    press(page, next(b.label for b in page.button if b.label.startswith("Resume")))
+    assert field(page, "text_input", "Monthly rental income ($)").value == "1200"
+    assert raw(page)["properties"][0]["mortgage_id"] == mortgage_id
+    assert raw(page)["debts"][0]["payment_frequency"] == "monthly"
+    press(page, "Remove Mortgage")
+    assert raw(page)["properties"][0]["mortgage_id"] is None
+    press(page, "Remove Rental home")
+    assert not raw(page)["properties"]
 
 
 def test_wealth_has_only_snapshot_and_projection_fields():
@@ -380,6 +414,88 @@ def test_wealth_failed_save_keeps_draft_and_hides_credentials(
     assert page.error
     assert all("private connection" not in e.value for e in page.error)
     assert not list_wealth_snapshots(database_url)
+
+
+def _read_wealth_library_app():
+    import streamlit as st
+
+    from financial_model.wealth_pages import _read
+
+    st.session_state["read_records"] = _read("unused-test-dsn")
+
+
+@pytest.mark.parametrize("error_type", [psycopg.OperationalError, ValueError])
+def test_wealth_read_failure_does_not_offer_cached_snapshots(monkeypatch, error_type):
+    cached = SavedWealthSnapshot(snapshot=WealthSnapshot(as_of=date(2026, 1, 1)))
+    draft = {"data": {"name": "Keep edits"}, "loaded": None}
+
+    def unavailable(*args):
+        message = "private connection details"
+        raise error_type(message)
+
+    monkeypatch.setattr(wealth_pages, "list_wealth_snapshots", unavailable)
+    page = AppTest.from_function(_read_wealth_library_app)
+    page.session_state["wealth_last_records"] = (cached,)
+    page.session_state["wealth_drafts"] = {"unsaved": draft}
+    page.run()
+    assert not page.exception
+    assert page.session_state["read_records"] == ()
+    assert page.session_state["wealth_store_available"] is False
+    assert page.session_state["wealth_drafts"] == {"unsaved": draft}
+    assert page.error
+    assert all("private connection" not in item.value for item in page.error)
+
+
+def _wealth_library_app():
+    from financial_model.wealth_pages import wealth_page
+
+    wealth_page("unused-test-dsn")
+
+
+def test_wealth_resume_omits_untouched_saved_copies_but_keeps_unsaved_edits(
+    monkeypatch,
+):
+    renamed = SavedWealthSnapshot(
+        snapshot=WealthSnapshot(as_of=date(2026, 1, 1), name="Old name")
+    )
+    deleted = SavedWealthSnapshot(
+        snapshot=WealthSnapshot(as_of=date(2026, 1, 1), name="Deleted source")
+    )
+    current = SavedWealthSnapshot(
+        id=renamed.id,
+        revision=2,
+        snapshot=WealthSnapshot(as_of=date(2026, 1, 1), name="Current name"),
+    )
+    edited = WealthSnapshot(as_of=date(2026, 1, 1), name="Keep edits").model_dump(
+        mode="json"
+    )
+    edited["as_of"] = "invalid date"
+    drafts = {
+        str(renamed.id): {
+            "data": renamed.snapshot.model_dump(mode="json"),
+            "loaded": renamed,
+        },
+        str(deleted.id): {
+            "data": deleted.snapshot.model_dump(mode="json"),
+            "loaded": deleted,
+        },
+        "edited": {"data": edited, "loaded": deleted},
+        "new": {
+            "data": WealthSnapshot(as_of=date(2026, 1, 1), name="New draft").model_dump(
+                mode="json"
+            ),
+            "loaded": None,
+        },
+    }
+    monkeypatch.setattr(wealth_pages, "list_wealth_snapshots", lambda *_: (current,))
+    page = AppTest.from_function(_wealth_library_app)
+    page.session_state["wealth_drafts"] = deepcopy(drafts)
+    page.run()
+    assert not page.exception
+    resumes = [b.label for b in page.button if b.label.startswith("Resume ")]
+    assert resumes == ["Resume Keep edits · edited", "Resume New draft · new"]
+    assert any(item.value == "Current name" for item in page.subheader)
+    assert page.session_state["wealth_drafts"] == drafts
 
 
 @pytest.mark.integration

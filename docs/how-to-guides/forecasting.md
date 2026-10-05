@@ -11,7 +11,7 @@ snapshot and matching economic futures.
    - **Household** saves reusable adults, reference-year ages, children and birth
      years, and tax facts. Annual calculation defaults remain separate.
    - **Wealth** owns account balances, retirement-account owners, taxable cost
-     basis, and debt payment terms.
+     basis, real estate, rental cash flows and taxable profit, and debt payment terms.
    - **Spending** owns all household expense schedules, including children,
      healthcare, care, retirement, and survivor spending.
    - **Retirement** owns retirement dates, planning ages, Social Security,
@@ -59,7 +59,10 @@ still need a state cost basis in Wealth.
 
 Dividend and interest yields are parts of total returns, not additional growth.
 Debt payments are modeled separately from living costs; exclude them from your
-spending budgets.
+spending budgets. Enter rental-property expenses in Wealth and exclude those
+from Spending too. Real estate increases total wealth but is not available for
+withdrawals. Review the fixed nominal rent, costs, and taxable-profit assumption
+before running a property forecast.
 
 Forecasting currently starts from a 2026 snapshot with amounts expressed in
 2026 purchasing power. A part-year snapshot receives only the remaining year's
@@ -146,7 +149,7 @@ Use the four result tabs:
   chart for accessible funds, cash, debt, and shortfalls.
 - **Cash flow** shows income above zero and planned spending and paid taxes below
   zero. Use **Inspect year** beside the asset waterfall to reconcile that year's
-  opening assets, income, investment returns, and paid costs with closing assets.
+  opening assets, income, investment returns, property appreciation, and paid costs with closing assets.
   The unexplained difference should be near zero. Transfers and employee
   contributions remain inside assets.
 - **Simulated future** follows one actual future across net wealth, total and
@@ -164,9 +167,14 @@ These selections carry between the two tabs, whose charts follow the same comple
 future. Open **Annual ledger** for the nominal amounts. The saved example is
 **Future 1**, not a path through each year's median.
 
+Move the cursor across a time-series chart to see a vertical guide and the
+values for that year. Chart amounts use two decimal places at the relevant
+scale, such as `$1.25M`. The waterfall labels every step, including zero amounts;
+hover over a row to see its change and the balance after that step.
+
 Positive total wealth can coexist with a spending shortfall when money remains
 in inaccessible accounts. Accessible balances are before withdrawal taxes and
-exclude HSA funds. Cash means taxable cash available to the household. The
+exclude HSA funds and real estate. Cash means taxable cash available to the household. The
 Overview band is neither a worst-case boundary nor a lifetime guarantee.
 
 In purchasing-power mode, annual flows use start-of-year prices and balances use
@@ -188,9 +196,9 @@ database saving is unavailable; imports are limited to 10 MB.
 Previously saved runs in the current format remain viewable. Rerunning an older
 method starts a new setup with **Fixed assumptions**.
 
-New Plans and forecasts use format version 4. Older forecasts remain stored in
-the historical inventory for download; they cannot be rerun by the changed model.
-Do not overwrite a historical result to make its inputs fit the new format.
+New Plans use format version 4; new forecasts use version 5. Applying the current
+database schema or planning migration deletes forecasts in older formats. Only
+current-format results can be saved or imported.
 
 For version 3 Plans, the database owner should create and review a migration
 preview with `pixi run --locked python scripts/migrate_household_timeline.py preview DIRECTORY`,

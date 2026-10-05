@@ -88,11 +88,13 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
         CHECK (((document ->> 'created_at')::timestamptz) IS NOT DISTINCT FROM created_at)
 );
 
--- Keep original immutable runs intact while allowing the current format.
+-- Discard obsolete results when explicitly upgrading the database schema.
+DELETE FROM forecast_runs WHERE (document ->> 'schema_version')::integer < 5;
+
 -- Replace either auto-generated name used by the original version-1 schema.
 ALTER TABLE forecast_runs
     DROP CONSTRAINT IF EXISTS forecast_runs_document_check,
     DROP CONSTRAINT IF EXISTS forecast_runs_document_check1,
     DROP CONSTRAINT IF EXISTS forecast_runs_schema_version,
     ADD CONSTRAINT forecast_runs_schema_version
-        CHECK ((document ->> 'schema_version' IN ('1', '2', '3', '4')) IS TRUE);
+        CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '5');

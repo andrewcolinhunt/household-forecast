@@ -170,12 +170,24 @@ refer to the two people in the Plan's household. Cost basis appears directly
 where needed for forecasting. California HSA investments
 need a separate state cost basis.
 
-Under **Debts**, enter a name, positive amount owed, annual payment, and interest
-rate together. Debt payments are separate from
+Under **Debts**, enter a name, positive amount owed, annual principal-and-interest
+payment, interest rate, and payment frequency. For a monthly mortgage, enter
+twelve times the monthly principal and interest, excluding escrow, and choose
+monthly payments. Debt payments are separate from
 living costs, so exclude them from spending budgets. Debt is subtracted once.
 **Net recorded wealth** is the recorded assets less debts; it does not certify
 that every household asset has been included. Use the optional snapshot note for
 anything left out.
+
+Under **Real estate**, add the property's market value and nominal annual
+appreciation assumption. Enter monthly rent and property expenses, including
+escrow for taxes and insurance, and link its mortgage debt. Do not repeat these
+expenses in Spending. Enter the annual taxable rental-profit estimate separately;
+rent covering the mortgage does not establish zero taxable profit. Leave unknown
+values blank. They can be saved, but must be completed before forecasting.
+Property value counts toward wealth and cannot be withdrawn for spending.
+Rent, property expenses, and the taxable-profit estimate remain fixed in nominal
+dollars through the forecast; there are no automatic sales or vacancies.
 
 All balances are pooled for household planning. Wealth describes the starting
 position; future allocation changes and cash reserves belong in **Investments**.
@@ -469,8 +481,9 @@ For an existing version-two database, reapply `scripts/schema.sql` as its owner
 to add missing `wealth_snapshots`, `planning_documents`, and `forecast_runs` tables, then grant those
 four privileges on the new tables to
 the runtime role for Wealth and Plans; forecasts need only `SELECT` and `INSERT`.
-This is an additive setup step; it does not rewrite scenarios,
-household defaults, or goals. If a new table or its permissions are missing, that category reports the read
+This setup step also deletes forecast results in obsolete formats, preserving
+current-format runs. It does not rewrite scenarios, household defaults, or goals.
+If a new table or its permissions are missing, that category reports the read
 failure and retains session drafts; other categories remain available. The app
 does not apply schema changes automatically.
 

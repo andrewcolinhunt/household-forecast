@@ -36,7 +36,8 @@ FORECAST_TAX_ASSUMPTION = (
     "is inferred from general spending. WA-allocated losses are "
     "consumed first when federal losses are used, a conservative allocation "
     "assumption after a move. Carryovers must be reset at death unless ownership "
-    "is known."
+    "is known. Rental profit is an explicit nonnegative input, with no automatic "
+    "depreciation, passive-loss allowance, or qualified business income deduction."
 )
 
 
@@ -103,6 +104,7 @@ def _person_inputs(
     wages: FloatArray,
     contributions: FloatArray,
     ordinary_income: FloatArray,
+    rental_income: FloatArray,
     investment_income: FloatArray,
     gains: FloatArray,
     qualified_dividends: FloatArray,
@@ -130,9 +132,11 @@ def _person_inputs(
         "is_tax_unit_dependent": np.tile(np.arange(members) >= len(live), size),
         "employment_income": people.ravel(),
         "traditional_401k_contributions": saving.ravel(),
+        "rental_income_would_be_qualified": np.zeros(size * members, dtype=bool),
     }
     for name, value in {
         "taxable_private_pension_income": ordinary_income,
+        "rental_income": rental_income,
         "taxable_interest_income": investment_income,
         "long_term_capital_gains": gains,
         "qualified_dividend_income": qualified_dividends,
@@ -268,6 +272,7 @@ def _loss_carryovers(
     ca_income_before_loss = (
         (wages - contributions).sum(axis=1)
         + monetary["ordinary_income"]
+        + monetary["rental_income"]
         + monetary["investment_income"]
         + monetary["qualified_dividends"]
         + monetary["ca_hsa_income"]
@@ -293,6 +298,7 @@ def yearly_tax(
     wages: ArrayLike,
     contributions: ArrayLike,
     ordinary_income: ArrayLike = 0,
+    rental_income: ArrayLike = 0,
     investment_income: ArrayLike = 0,
     gains: ArrayLike = 0,
     qualified_dividends: ArrayLike = 0,
@@ -318,6 +324,7 @@ def yearly_tax(
         wages: Nominal gross wages, including taxable equity pay, shape (paths, 2).
         contributions: Actual pretax 401(k) contributions with the same shape.
         ordinary_income: Taxable pensions and eligible pretax withdrawals per path.
+        rental_income: Reviewed nonnegative taxable rental profit, without QBI deduction.
         investment_income: Taxable interest and nonqualified dividends per path.
         gains: Net realized long-term capital gains per path, possibly negative.
         qualified_dividends: Qualified dividends per path.
@@ -394,6 +401,7 @@ def yearly_tax(
         name: _vector(value, size, name)
         for name, value in {
             "ordinary_income": ordinary_income,
+            "rental_income": rental_income,
             "investment_income": investment_income,
             "gains": gains,
             "qualified_dividends": qualified_dividends,
@@ -433,6 +441,7 @@ def yearly_tax(
                 else monetary[key]
                 for key in (
                     "ordinary_income",
+                    "rental_income",
                     "investment_income",
                     "gains",
                     "qualified_dividends",

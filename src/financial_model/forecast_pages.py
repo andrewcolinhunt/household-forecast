@@ -8,6 +8,12 @@ import psycopg
 import streamlit as st
 
 from financial_model import input_forms as forms
+from financial_model.forecast_charts import (
+    ChartRow,
+    format_money,
+    money_axis,
+    year_hover_layer,
+)
 from financial_model.forecast_models import (
     ForecastRequest,
     ForecastSettings,
@@ -17,7 +23,6 @@ from financial_model.forecast_storage import (
     create_forecast,
     import_forecast_backup,
     list_forecasts,
-    list_historical_forecasts,
 )
 from financial_model.forecast_tax import FORECAST_TAX_ASSUMPTION
 from financial_model.planning import PlanningScenario, SavedPlanningDocument
@@ -64,17 +69,10 @@ def plan_options(
 def _open_run(document: SavedForecast) -> None:
     """Open exactly the saved assumptions without resolving current Plan revisions."""
     st.session_state["forecast_document"] = document
-    st.session_state["forecast_loaded_request"] = document.request
     st.session_state["forecast_settings"] = document.request.settings.model_dump(
         mode="json"
     )
     st.session_state["forecast_name"] = {"name": document.request.name}
-    st.session_state["forecast_selected"] = [
-        f"loaded:{i}" for i in range(len(document.request.plans))
-    ]
-    st.session_state["forecast_selection_buffer"] = {
-        "selected": st.session_state["forecast_selected"]
-    }
     st.session_state["forecast_epoch"] = st.session_state.get("forecast_epoch", 0) + 1
     st.session_state.pop("forecast_calculation", None)
 
@@ -85,23 +83,19 @@ def _saved_runs(dsn: str | None) -> None:
         if dsn:
             try:
                 records = list_forecasts(dsn)
-                historical = list_historical_forecasts(dsn)
             except psycopg.errors.UndefinedTable:
                 st.info(
                     "Forecast storage needs the updated scripts/schema.sql. JSON downloads still work."
                 )
                 records = ()
-                historical = ()
             except ValueError as error:
                 st.error(str(error))
                 records = ()
-                historical = ()
             except psycopg.Error:
                 st.error(
                     "Saved forecasts could not be read. Try again or open a downloaded JSON file."
                 )
                 records = ()
-                historical = ()
             if records:
                 selected = st.selectbox(
                     "Saved run",
@@ -111,22 +105,6 @@ def _saved_runs(dsn: str | None) -> None:
                 if st.button("Open saved run"):
                     _open_run(selected)
                     st.rerun()
-            if historical:
-                st.caption(
-                    "Earlier model versions remain available as frozen JSON. "
-                    "Their inputs and results are preserved and cannot be rerun with this model."
-                )
-                archived = st.selectbox(
-                    "Historical run",
-                    historical,
-                    format_func=lambda item: f"{' / '.join(item.names)} · {item.created_at:%Y-%m-%d %H:%M} UTC · model {item.model_version}",
-                )
-                st.download_button(
-                    "Download historical forecast",
-                    archived.to_json(),
-                    file_name=f"forecast-{archived.id}.json",
-                    mime="application/json",
-                )
         uploaded = st.file_uploader("Forecast JSON", type="json", key="forecast_upload")
         if uploaded is not None and st.button("Open forecast JSON"):
             try:
@@ -138,7 +116,7 @@ def _saved_runs(dsn: str | None) -> None:
 
 
 def _plans(dsn: str | None) -> dict[str, PlanningScenario]:
-    """Read saved combinations and any explicitly opened frozen request."""
+    """Read only current saved Plans for new forecasts."""
     records = tuple(st.session_state.get("planning_records", {}).get("plan", ()))
     if dsn:
         try:
@@ -147,10 +125,8 @@ def _plans(dsn: str | None) -> dict[str, PlanningScenario]:
             st.error(
                 "Saved Plans could not be read. An opened forecast remains available."
             )
-    options = plan_options(records)
-    if loaded := st.session_state.get("forecast_loaded_request"):
-        options.update({f"loaded:{i}": plan for i, plan in enumerate(loaded.plans)})
-    return options
+            return {}
+    return plan_options(records)
 
 
 def _selection(
@@ -168,8 +144,7 @@ def _selection(
         list(options),
         default=buffer["selected"],
         max_selections=4,
-        format_func=lambda item: options[item].name
-        + (" · saved run" if item.startswith("loaded:") else ""),
+        format_func=lambda item: options[item].name,
         key=key,
         on_change=forms.capture,
         args=(buffer, "selected", key),
@@ -315,11 +290,57 @@ def _chart(document: SavedForecast) -> None:
         for index, summary in enumerate(document.summaries)
         for point in summary.points
     ]
-    marks = [
-        {"scenario": f"{index + 1}. {summary.name}", "year": year}
+    marks: list[dict[str, Any]] = [
+        {
+            "scenario": f"{index + 1}. {summary.name}",
+            "plan": f"Plan {index + 1}",
+            "year": year,
+        }
         for index, summary in enumerate(document.summaries)
         for year in set(summary.retirement_years)
     ]
+    hover_values: dict[int, ChartRow] = {}
+    hover_tooltip: list[dict[str, Any]] = [
+        {"field": "year", "title": "Year", "format": "d"}
+    ]
+    for index, summary in enumerate(document.summaries):
+        for measure in (
+            ("median",) if summary.paths == 1 else ("median", "lower", "upper")
+        ):
+            field = f"plan_{index}_{measure}"
+            label = {
+                "median": "Median",
+                "lower": "10th percentile",
+                "upper": "90th percentile",
+            }[measure]
+            hover_tooltip.append(
+                {
+                    "field": field,
+                    "type": "nominal",
+                    "title": f"Plan {index + 1} · {label}",
+                }
+            )
+            for point in summary.points:
+                hover_values.setdefault(point.year, {"year": point.year})[field] = (
+                    format_money(getattr(point, measure))
+                )
+    for index, (adult, birth_year) in enumerate(
+        zip(household.adults, birth_years, strict=True)
+    ):
+        if birth_year is not None:
+            field = f"age_{index}"
+            hover_tooltip.insert(
+                index + 1, {"field": field, "title": f"{adult.name} age", "format": "d"}
+            )
+            for year, row in hover_values.items():
+                row[field] = year - birth_year
+    hover_tooltip.append({"field": "retirement", "title": "Retirement"})
+    for mark in marks:
+        if mark["year"] in hover_values:
+            row = hover_values[mark["year"]]
+            row["retirement"] = " · ".join(
+                str(label) for label in (row.get("retirement"), mark["plan"]) if label
+            )
     encoding: dict[str, Any] = {
         "x": {
             "field": "year",
@@ -369,7 +390,7 @@ def _chart(document: SavedForecast) -> None:
                             "field": "lower",
                             "type": "quantitative",
                             "title": "Net wealth ($)",
-                            "axis": {"format": "~s"},
+                            "axis": money_axis(),
                         },
                         "y2": {"field": "upper"},
                     },
@@ -427,6 +448,9 @@ def _chart(document: SavedForecast) -> None:
                         ]
                     },
                 },
+                year_hover_layer(
+                    list(hover_values.values()), encoding["x"], hover_tooltip
+                ),
             ],
             "resolve": {"legend": {"color": "independent"}},
             "params": [{"name": "height", "expr": "max(280, min(420, width * 0.65))"}],

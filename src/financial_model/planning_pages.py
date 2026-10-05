@@ -124,7 +124,7 @@ def _changed_rows() -> None:
 
 
 def _read(dsn: str | None, kind: Kind) -> tuple[SavedPlanningDocument, ...]:
-    """Isolate category store failures and preserve the last readable library."""
+    """Read current library records without offering cached choices after failure."""
     available = st.session_state.setdefault("planning_available", {})
     cache = st.session_state.setdefault("planning_records", {})
     available[kind] = bool(dsn)
@@ -141,7 +141,19 @@ def _read(dsn: str | None, kind: Kind) -> tuple[SavedPlanningDocument, ...]:
         st.error(
             f"Saved {LABELS[kind]} could not be read. Your drafts are still here; check database setup or try Refresh."
         )
+        return ()
     return tuple(cache.get(kind, ()))
+
+
+def _has_unsaved_edits(draft: dict[str, Any]) -> bool:
+    """Keep new and edited drafts visible without duplicating saved library records."""
+    loaded: SavedPlanningDocument | None = draft["loaded"]
+    if loaded is None:
+        return True
+    try:
+        return INPUT_ADAPTER.validate_python(draft["data"]) != loaded.inputs
+    except ValueError:
+        return True
 
 
 def _open(record: SavedPlanningDocument, *, duplicate: bool = False) -> None:
@@ -587,7 +599,7 @@ def category_page(kind: Kind, dsn: str | None) -> None:
     drafts = [
         (key, draft)
         for key, draft in st.session_state.get("planning_drafts", {}).items()
-        if draft["data"]["kind"] == kind
+        if draft["data"]["kind"] == kind and _has_unsaved_edits(draft)
     ]
     if drafts:
         with st.container(border=True):

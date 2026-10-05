@@ -1508,9 +1508,11 @@ def test_plan_selection_view_retains_invalid_timeline_draft():
 
 
 def _read_library_app():
+    import streamlit as st
+
     from financial_model.planning_pages import _read
 
-    _read("unused-test-dsn", "spending")
+    st.session_state["read_records"] = _read("unused-test-dsn", "spending")
 
 
 @pytest.mark.parametrize("failure", ["schema", "validation", "database"])
@@ -1540,8 +1542,15 @@ def test_library_read_shows_migration_errors_but_hides_database_details(
         raise psycopg.OperationalError(message)
 
     monkeypatch.setattr(planning_pages, "list_planning_documents", fail)
-    page = AppTest.from_function(_read_library_app).run()
+    cached = SavedPlanningDocument(inputs=SpendingAssumptions(name="Old spending"))
+    draft = {"data": {"kind": "spending", "name": "Keep edits"}, "loaded": None}
+    page = AppTest.from_function(_read_library_app)
+    page.session_state["planning_records"] = {"spending": (cached,)}
+    page.session_state["planning_drafts"] = {"unsaved": draft}
+    page.run()
     assert not page.exception
+    assert page.session_state["read_records"] == ()
+    assert page.session_state["planning_drafts"] == {"unsaved": draft}
     messages = " ".join(item.value for item in page.error)
     assert messages
     assert "private-invalid-value" not in messages
@@ -1555,6 +1564,50 @@ def test_library_read_shows_migration_errors_but_hides_database_details(
         assert "check database setup" in messages
     else:
         assert "valid decimal" in messages
+
+
+def _economy_library_app():
+    from financial_model.planning_pages import category_page
+
+    category_page("economy", "unused-test-dsn")
+
+
+def test_library_resume_omits_untouched_saved_copies_but_keeps_unsaved_edits(
+    monkeypatch,
+):
+    renamed = SavedPlanningDocument(inputs=EconomicAssumptions(name="Old name"))
+    deleted = SavedPlanningDocument(inputs=EconomicAssumptions(name="Deleted source"))
+    current = SavedPlanningDocument(
+        id=renamed.id, revision=2, inputs=EconomicAssumptions(name="Current name")
+    )
+    edited = EconomicAssumptions(name="Keep edits").model_dump(mode="json")
+    edited["equities"]["central"] = "invalid amount"
+    drafts = {
+        str(renamed.id): {
+            "data": renamed.inputs.model_dump(mode="json"),
+            "loaded": renamed,
+        },
+        str(deleted.id): {
+            "data": deleted.inputs.model_dump(mode="json"),
+            "loaded": deleted,
+        },
+        "edited": {"data": edited, "loaded": deleted},
+        "new": {
+            "data": EconomicAssumptions(name="New draft").model_dump(mode="json"),
+            "loaded": None,
+        },
+    }
+    monkeypatch.setattr(
+        planning_pages, "list_planning_documents", lambda *_: (current,)
+    )
+    page = AppTest.from_function(_economy_library_app)
+    page.session_state["planning_drafts"] = deepcopy(drafts)
+    page.run()
+    assert not page.exception
+    resumes = [b.label for b in page.button if b.label.startswith("Resume ")]
+    assert resumes == ["Resume Keep edits · edited", "Resume New draft · new"]
+    assert any(item.value == "Current name" for item in page.text)
+    assert page.session_state["planning_drafts"] == drafts
 
 
 @pytest.mark.parametrize("kind", ["spending", "retirement", "plan"])

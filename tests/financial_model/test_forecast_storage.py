@@ -24,7 +24,6 @@ from financial_model.forecast_storage import (
     create_forecast,
     import_forecast_backup,
     list_forecasts,
-    list_historical_forecasts,
 )
 from financial_model.planning import (
     EconomicAssumptions,
@@ -105,7 +104,7 @@ def test_forecast_backup_rejects_invalid_json_and_size(data: bytes) -> None:
         import_forecast_backup(data)
 
 
-@pytest.mark.parametrize("version", [1, 2, 3])
+@pytest.mark.parametrize("version", [1, 2, 3, 4])
 def test_forecast_backup_explains_unsupported_version(saved_forecast, version) -> None:
     raw = saved_forecast.model_dump(mode="json") | {"schema_version": version}
     with pytest.raises(
@@ -143,7 +142,7 @@ def test_forecast_storage_does_not_create_tables(database_url) -> None:
         (2, "forecast_runs_schema_version"),
     ],
 )
-def test_forecast_schema_reapply_preserves_legacy_runs(
+def test_forecast_schema_reapply_discards_legacy_runs(
     database_url, saved_forecast, version, constraint
 ):
     legacy = saved_forecast.model_dump(mode="json") | {
@@ -157,6 +156,9 @@ def test_forecast_schema_reapply_preserves_legacy_runs(
             "(document ->> 'schema_version') IS NOT DISTINCT FROM '1'"
             if version == 1
             else "(document ->> 'schema_version' IN ('1', '2')) IS TRUE"
+        )
+        connection.execute(
+            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version"
         )
         connection.execute(
             sql.SQL(
@@ -179,46 +181,48 @@ def test_forecast_schema_reapply_preserves_legacy_runs(
             )
         connection.execute(schema)
         connection.execute(schema)
-        assert (
-            connection.execute("SELECT document FROM forecast_runs").fetchone()[0]
-            == legacy
-        )
+        assert connection.execute("SELECT document FROM forecast_runs").fetchall() == []
     create_forecast(database_url, current)
     assert list_forecasts(database_url) == (current,)
 
 
 @pytest.mark.integration
-def test_historical_forecast_is_exported_without_reinterpreting_old_inputs(
+def test_forecast_schema_cleanup_preserves_current_runs_and_rejects_old_writes(
     database_url, saved_forecast
 ):
-    raw = saved_forecast.model_dump(mode="json") | {
-        "schema_version": 3,
-        "model_version": "3",
-    }
-    raw["request"]["plans"][0]["components"] = [
-        {"inputs": {"kind": "spending", "baseline": {"amount": {"central": "100"}}}}
-    ]
-    before = json.loads(json.dumps(raw))
+    create_forecast(database_url, saved_forecast)
+    schema = (Path(__file__).parents[2] / "scripts/schema.sql").read_text()
     with psycopg.connect(database_url) as connection:
         connection.execute(
-            "INSERT INTO forecast_runs VALUES (%s, %s, %s)",
-            (saved_forecast.id, Jsonb(raw), saved_forecast.created_at),
+            "ALTER TABLE forecast_runs DROP CONSTRAINT forecast_runs_schema_version, "
+            "ADD CONSTRAINT forecast_runs_schema_version "
+            "CHECK ((document ->> 'schema_version' IN ('1', '2', '3', '4', '5')) IS TRUE)"
         )
-    assert list_forecasts(database_url) == ()
-    (record,) = list_historical_forecasts(database_url)
-    assert record.schema_version == 3
-    assert record.model_version == "3"
-    assert record.names == ("Portable example",)
-    assert json.loads(record.to_json()) == before
-    with psycopg.connect(database_url) as connection:
-        assert (
-            connection.execute("SELECT document FROM forecast_runs").fetchone()[0]
-            == before
-        )
+        for version in range(1, 5):
+            raw = saved_forecast.model_dump(mode="json") | {
+                "id": str(uuid4()),
+                "schema_version": version,
+                "model_version": str(version),
+            }
+            connection.execute(
+                "INSERT INTO forecast_runs VALUES (%s, %s, %s)",
+                (raw["id"], Jsonb(raw), saved_forecast.created_at),
+            )
+        connection.execute(schema)
+        connection.execute(schema)
+        assert connection.execute("SELECT document FROM forecast_runs").fetchall() == [
+            (saved_forecast.model_dump(mode="json"),)
+        ]
+        with pytest.raises(psycopg.errors.CheckViolation), connection.transaction():
+            connection.execute(
+                "INSERT INTO forecast_runs VALUES (%s, %s, %s)",
+                (raw["id"], Jsonb(raw), saved_forecast.created_at),
+            )
+    assert list_forecasts(database_url) == (saved_forecast,)
 
 
 @pytest.mark.integration
-def test_planning_migration_allows_current_forecasts_and_retains_old_runs(
+def test_planning_migration_allows_current_forecasts_and_discards_old_runs(
     database_url, tmp_path, saved_forecast
 ):
     spec = importlib.util.spec_from_file_location(
@@ -269,4 +273,7 @@ def test_planning_migration_allows_current_forecasts_and_retains_old_runs(
     current = saved_forecast.model_copy(update={"id": uuid4()})
     assert create_forecast(database_url, current) == current
     assert list_forecasts(database_url) == (current,)
-    assert json.loads(list_historical_forecasts(database_url)[0].to_json()) == old_run
+    with psycopg.connect(database_url) as connection:
+        assert connection.execute("SELECT id FROM forecast_runs").fetchall() == [
+            (current.id,)
+        ]

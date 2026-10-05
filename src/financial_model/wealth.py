@@ -73,10 +73,24 @@ class DebtPosition(ValueModel):
     amount_owed: Money | None = None
     annual_payment: Money | None = None
     interest_rate: Rate | None = None
+    payment_frequency: Literal["annual", "monthly"] = "annual"
+
+
+class PropertyPosition(ValueModel):
+    """Illiquid real estate and fixed nominal rental assumptions."""
+
+    id: UUID = Field(default_factory=uuid4)
+    label: Label
+    market_value: Money | None = None
+    annual_appreciation: Annotated[Decimal, Field(gt=-1, allow_inf_nan=False)] = ZERO
+    monthly_rent: Money = ZERO
+    monthly_expenses: Money = ZERO
+    annual_taxable_rental_income: Money | None = None
+    mortgage_id: UUID | None = None
 
 
 class WealthSnapshot(ValueModel):
-    """Named accounts and debts sharing one financial date."""
+    """Named accounts, properties, and debts sharing one financial date."""
 
     name: Annotated[str, Field(max_length=80)] = ""
     as_of: date
@@ -84,6 +98,7 @@ class WealthSnapshot(ValueModel):
     notes: Notes = ""
     accounts: tuple[AccountPosition, ...] = ()
     debts: tuple[DebtPosition, ...] = ()
+    properties: tuple[PropertyPosition, ...] = ()
 
     @property
     def title(self) -> str:
@@ -93,7 +108,12 @@ class WealthSnapshot(ValueModel):
     @property
     def assets(self) -> Decimal:
         """Sum entered balances, without treating unknown amounts as known zeros."""
-        return sum((a.balance for a in self.accounts if a.balance is not None), ZERO)
+        return sum(
+            (a.balance for a in self.accounts if a.balance is not None), ZERO
+        ) + sum(
+            (p.market_value for p in self.properties if p.market_value is not None),
+            ZERO,
+        )
 
     @property
     def liabilities(self) -> Decimal:
@@ -110,8 +130,10 @@ class WealthSnapshot(ValueModel):
     @property
     def has_balances(self) -> bool:
         """Distinguish an empty snapshot from explicitly entered zero balances."""
-        return any(a.balance is not None for a in self.accounts) or any(
-            d.amount_owed is not None for d in self.debts
+        return (
+            any(a.balance is not None for a in self.accounts)
+            or any(d.amount_owed is not None for d in self.debts)
+            or any(p.market_value is not None for p in self.properties)
         )
 
     @property
@@ -128,11 +150,16 @@ class WealthSnapshot(ValueModel):
                     groups[category] = (
                         groups.get(category, ZERO) + account.balance * fraction
                     )
+        if any(p.market_value is not None for p in self.properties):
+            groups["real_estate"] = sum(
+                (p.market_value for p in self.properties if p.market_value is not None),
+                ZERO,
+            )
         return groups
 
     @property
     def missing_details(self) -> tuple[str, ...]:
-        """Ask only for balances, tax treatment, and projection categories."""
+        """Identify missing balances, investment details, and rental tax assumptions."""
         details: list[str] = []
         for account in self.accounts:
             if account.balance is None:
@@ -148,14 +175,26 @@ class WealthSnapshot(ValueModel):
             for debt in self.debts
             if debt.amount_owed is None
         )
+        for property in self.properties:
+            if property.market_value is None:
+                details.append(f"{property.label}: market value needs input.")
+            if property.monthly_rent and property.annual_taxable_rental_income is None:
+                details.append(
+                    f"{property.label}: enter annual taxable rental income, including an explicit zero."
+                )
         return tuple(details)
 
     @model_validator(mode="after")
     def validate_ids(self) -> Self:
-        """Prevent repeated rows across accounts and debts."""
+        """Require distinct positions and mortgage references within this snapshot."""
         ids = [a.id for a in self.accounts] + [d.id for d in self.debts]
+        ids += [p.id for p in self.properties]
         if len(ids) != len(set(ids)):
-            message = "Every account and debt needs a distinct ID."
+            message = "Every account, debt, and property needs a distinct ID."
+            raise ValueError(message)
+        debt_ids = {d.id for d in self.debts}
+        if any(p.mortgage_id not in debt_ids for p in self.properties if p.mortgage_id):
+            message = "A property's mortgage must refer to a debt in this snapshot."
             raise ValueError(message)
         return self
 

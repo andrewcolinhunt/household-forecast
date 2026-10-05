@@ -12,6 +12,7 @@ type ChartRow = dict[str, float | int | str]
 
 _INCOME = {
     "cash_pay": "Cash pay",
+    "rental_income": "Rental income",
     "social_security": "Social Security",
     "pensions": "Pensions",
     "spending_planned": "Planned spending",
@@ -26,14 +27,124 @@ _BALANCES = {
     "tax_deferred": "Pretax accounts",
     "roth": "Roth accounts",
     "hsa": "HSA",
+    "property_value": "Real estate",
 }
 _CHANGES = (
     ("External income", "income", 1),
     ("Investment return", "investment_gain", 1),
+    ("Property appreciation", "property_gain", 1),
     ("Paid spending", "spending_paid", -1),
     ("Paid taxes", "tax_paid", -1),
     ("Debt payments", "debt_payment", -1),
 )
+_MONEY_UNITS = ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "k"))
+
+
+def format_money(value: float) -> str:
+    """Show dollars with two decimals at a readable magnitude."""
+    sign = "-" if value < 0 else ""
+    for divisor, suffix in _MONEY_UNITS:
+        if abs(value) >= divisor:
+            return f"{sign}${abs(value) / divisor:,.2f}{suffix}"
+    return f"{sign}${abs(value):,.2f}"
+
+
+def money_axis() -> dict[str, str]:
+    """Use the same two-decimal dollar units on Vega-Lite axis ticks."""
+    expression = "format(datum.value, '$,.2f')"
+    for divisor, suffix in reversed(_MONEY_UNITS):
+        expression = (
+            f"abs(datum.value) >= {divisor} ? "
+            f"format(datum.value / {divisor}, '$,.2f') + '{suffix}' : {expression}"
+        )
+    return {"labelExpr": expression}
+
+
+def year_hover_layer(
+    values: list[ChartRow], x: dict[str, Any], tooltip: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Show a shared tooltip and guide anywhere over the nearest forecast year."""
+    ordered = sorted(values, key=lambda row: int(row["year"]))
+    years = [int(row["year"]) for row in ordered]
+    hit_areas = [
+        row
+        | {
+            "hover_start": (years[index - 1] + year) / 2
+            if index
+            else year - (0.5 if len(years) == 1 else 0),
+            "hover_end": (year + years[index + 1]) / 2
+            if index + 1 < len(years)
+            else year + (0.5 if len(years) == 1 else 0),
+        }
+        | {field["field"]: row.get(field["field"], "—") for field in tooltip}
+        for index, (year, row) in enumerate(zip(years, ordered, strict=True))
+    ]
+    return {
+        "data": {"values": hit_areas},
+        "layer": [
+            {
+                "mark": {"type": "rule", "color": "#808080", "strokeWidth": 1.5},
+                "encoding": {
+                    "x": x,
+                    "opacity": {
+                        "condition": {
+                            "param": "hover_year",
+                            "empty": False,
+                            "value": 0.8,
+                        },
+                        "value": 0,
+                    },
+                },
+            },
+            {
+                "params": [
+                    {
+                        "name": "hover_year",
+                        "select": {
+                            "type": "point",
+                            "fields": ["year"],
+                            "on": "pointerover",
+                            "clear": "pointerout",
+                            "toggle": False,
+                        },
+                    }
+                ],
+                "mark": {"type": "rect", "fillOpacity": 0},
+                "encoding": {
+                    "x": x | {"field": "hover_start"},
+                    "x2": {"field": "hover_end"},
+                    "tooltip": tooltip,
+                },
+            },
+        ],
+    }
+
+
+def _series_hover_layer(
+    values: list[ChartRow], x: dict[str, Any], percent: bool, events: Sequence[ChartRow]
+) -> dict[str, Any]:
+    series = list(dict.fromkeys(str(row["series"]) for row in values))
+    fields = {label: f"series_{index}" for index, label in enumerate(series)}
+    years: dict[int, ChartRow] = {}
+    for row in values:
+        year = int(row["year"])
+        value = float(row["value"])
+        years.setdefault(year, {"year": year})[fields[str(row["series"])]] = (
+            f"{value:.2%}" if percent else format_money(value)
+        )
+    for event in events:
+        if int(event["year"]) in years:
+            years[int(event["year"])]["event"] = event["event"]
+    return year_hover_layer(
+        list(years.values()),
+        x,
+        [{"field": "year", "type": "quantitative", "title": "Year", "format": "d"}]
+        + [
+            {"field": field, "type": "nominal", "title": label}
+            for label, field in fields.items()
+        ]
+        + ([{"field": "event", "title": "Milestone"}] if events else []),
+    )
 
 
 def plan_events(plan: PlanningScenario) -> list[ChartRow]:
@@ -127,7 +238,7 @@ def _line_spec(
                         "field": "value",
                         "type": "quantitative",
                         "title": title,
-                        "axis": {"format": ".0%" if percent else "~s"},
+                        "axis": {"format": ".2%"} if percent else money_axis(),
                     },
                     "color": {
                         "field": "series",
@@ -161,6 +272,7 @@ def _line_spec(
                     "tooltip": [{"field": "year", "format": "d"}, {"field": "event"}],
                 },
             },
+            _series_hover_layer(values, year_axis, percent, events),
         ],
     }
 
@@ -238,10 +350,24 @@ def waterfall_spec(row: LedgerRow, real: bool, *, money_year: int) -> dict[str, 
             "kind": "Balance",
         }
     )
+    for index, value in enumerate(values):
+        value["amount_label"] = format_money(float(value["amount"]))
+        value["balance_label"] = format_money(float(value["end"]))
+        value["label_at"] = max(float(value["start"]), float(value["end"]))
+        value["next_step"] = values[min(index + 1, len(values) - 1)]["step"]
+    tooltip = [
+        {"field": "step", "type": "nominal", "title": "Component"},
+        {"field": "amount_label", "type": "nominal", "title": "Amount"},
+        {"field": "balance_label", "type": "nominal", "title": "Balance after"},
+    ]
+    money = {
+        "type": "quantitative",
+        "title": _units(real, money_year) + (" · year-end prices" if real else ""),
+        "axis": money_axis(),
+    }
     return {
         "height": 280,
         "data": {"values": values},
-        "mark": "bar",
         "encoding": {
             "y": {
                 "field": "step",
@@ -249,21 +375,66 @@ def waterfall_spec(row: LedgerRow, real: bool, *, money_year: int) -> dict[str, 
                 "title": None,
                 "sort": [v["step"] for v in values],
             },
-            "x": {
-                "field": "start",
-                "type": "quantitative",
-                "title": _units(real, money_year)
-                + (" · year-end prices" if real else ""),
-                "axis": {"format": "~s"},
-            },
-            "x2": {"field": "end"},
-            "color": {"field": "kind", "type": "nominal", "title": None},
-            "tooltip": [
-                {"field": "step", "title": "Component"},
-                {"field": "amount", "title": "Amount", "format": "$,.2f"},
-                {"field": "end", "title": "Balance after", "format": "$,.2f"},
-            ],
         },
+        "layer": [
+            {
+                "mark": {"type": "rule", "color": "#808080", "strokeDash": [2, 2]},
+                "encoding": {
+                    "x": money | {"field": "end"},
+                    "y2": {"field": "next_step"},
+                },
+            },
+            {
+                "mark": "bar",
+                "encoding": {
+                    "x": money | {"field": "start"},
+                    "x2": {"field": "end"},
+                    "color": {"field": "kind", "type": "nominal", "title": None},
+                    "tooltip": tooltip,
+                },
+            },
+            {
+                "mark": {"type": "text", "align": "left", "dx": 6},
+                "encoding": {
+                    "x": money | {"field": "label_at"},
+                    "text": {"field": "amount_label", "type": "nominal"},
+                    "tooltip": tooltip,
+                },
+            },
+            {
+                "mark": {"type": "rule", "color": "#808080"},
+                "encoding": {
+                    "opacity": {
+                        "condition": {
+                            "param": "hover_step",
+                            "empty": False,
+                            "value": 0.5,
+                        },
+                        "value": 0,
+                    },
+                },
+            },
+            {
+                "params": [
+                    {
+                        "name": "hover_step",
+                        "select": {
+                            "type": "point",
+                            "fields": ["step"],
+                            "on": "pointerover",
+                            "clear": "pointerout",
+                            "toggle": False,
+                        },
+                    }
+                ],
+                "mark": {"type": "rect", "opacity": 0},
+                "encoding": {
+                    "x": {"value": 0},
+                    "x2": {"value": "width"},
+                    "tooltip": tooltip,
+                },
+            },
+        ],
     }
 
 

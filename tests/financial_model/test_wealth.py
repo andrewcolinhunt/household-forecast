@@ -13,6 +13,7 @@ from financial_model.wealth import (
     AccountPosition,
     AssetMix,
     DebtPosition,
+    PropertyPosition,
     SavedWealthSnapshot,
     WealthSnapshot,
 )
@@ -50,6 +51,75 @@ def test_snapshot_reconciles_balances_mixed_accounts_and_debts() -> None:
     assert sum(snapshot.asset_classes.values()) == snapshot.assets
     assert "Unknown balance: balance needs input." in snapshot.missing_details
     assert "Unknown loan: amount owed needs input." in snapshot.missing_details
+
+
+def test_property_value_is_separate_from_investment_accounts_and_mortgage() -> None:
+    mortgage = DebtPosition(label="Mortgage", amount_owed=100000)
+    snapshot = WealthSnapshot(
+        as_of=date(2026, 1, 1),
+        debts=(mortgage,),
+        properties=(
+            PropertyPosition(
+                label="Rental home",
+                market_value=250000,
+                mortgage_id=mortgage.id,
+                monthly_rent=1200,
+                monthly_expenses=200,
+                annual_taxable_rental_income=3000,
+            ),
+        ),
+    )
+    assert snapshot.assets == 250000
+    assert snapshot.liabilities == 100000
+    assert snapshot.net_recorded == 150000
+    assert snapshot.asset_classes == {"real_estate": 250000}
+    assert snapshot.has_balances
+    assert not snapshot.accounts
+    assert not snapshot.missing_details
+    assert WealthSnapshot.model_validate_json(snapshot.model_dump_json()) == snapshot
+
+
+def test_property_unknown_value_and_tax_profit_remain_required() -> None:
+    snapshot = WealthSnapshot(
+        as_of=date(2026, 1, 1),
+        properties=(PropertyPosition(label="Home", monthly_rent=1000),),
+    )
+    assert snapshot.properties[0].market_value is None
+    assert snapshot.properties[0].annual_taxable_rental_income is None
+    assert "Home: market value needs input." in snapshot.missing_details
+    assert any("taxable rental income" in detail for detail in snapshot.missing_details)
+    assert not snapshot.has_balances
+
+
+def test_property_rejects_missing_mortgage_and_repeated_identity() -> None:
+    identity = uuid4()
+    with pytest.raises(ValidationError, match="mortgage must refer"):
+        WealthSnapshot(
+            as_of=date(2026, 1, 1),
+            properties=(PropertyPosition(label="Home", mortgage_id=identity),),
+        )
+    with pytest.raises(ValidationError, match="distinct ID"):
+        WealthSnapshot(
+            as_of=date(2026, 1, 1),
+            accounts=(AccountPosition(id=identity, label="Cash"),),
+            properties=(PropertyPosition(id=identity, label="Home"),),
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"market_value": -1},
+        {"monthly_rent": -1},
+        {"monthly_expenses": -1},
+        {"annual_taxable_rental_income": -1},
+        {"annual_appreciation": -1},
+        {"annual_appreciation": "NaN"},
+    ],
+)
+def test_property_rejects_invalid_inputs(change) -> None:
+    with pytest.raises(ValidationError):
+        PropertyPosition(label="Home", **change)
 
 
 def test_snapshot_zero_empty_and_unknown_remain_distinct() -> None:

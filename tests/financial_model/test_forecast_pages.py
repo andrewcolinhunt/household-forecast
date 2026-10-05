@@ -19,7 +19,6 @@ from financial_model.forecast_models import (
     ForecastSummary,
     SavedForecast,
 )
-from financial_model.forecast_storage import HistoricalForecast
 from financial_model.planning import (
     EconomicAssumptions,
     InvestmentAssumptions,
@@ -116,6 +115,10 @@ def synthetic_ledger(plan, scenario: int = 0, path: int = 0):
             "rsu_income": 0.0,
             "rsu_tax_withholding": 0.0,
             "investment_gain": 100.0,
+            "property_value": 0.0,
+            "property_gain": 0.0,
+            "rental_income": 0.0,
+            "property_expenses": 0.0,
             "spending_planned": 300.0,
             "spending_paid": 300.0,
             "taxes": 50.0,
@@ -223,7 +226,6 @@ def calculation_calls(monkeypatch):
     module.forecast_issues = lambda request: ()
     monkeypatch.setitem(sys.modules, "financial_model.forecast", module)
     monkeypatch.setattr(app, "_database_url", lambda: None)
-    monkeypatch.setattr(forecast_pages, "list_historical_forecasts", lambda dsn: ())
     return calls
 
 
@@ -372,7 +374,9 @@ def test_forecast_older_saved_modes_open_unchanged_and_rerun_exact_inputs(
     )
     monkeypatch.setattr(app, "_database_url", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
-    monkeypatch.setattr(forecast_pages, "list_planning_documents", lambda dsn, kind: ())
+    monkeypatch.setattr(
+        forecast_pages, "list_planning_documents", lambda dsn, kind: (plan_record,)
+    )
     page.session_state["planning_records"] = {}
     page.run()
     field(page, "button", "Open saved run").click().run()
@@ -420,39 +424,84 @@ def test_forecast_saved_run_reuses_frozen_plans_without_library(
     assert page.session_state["forecast_document"].id != original.id
 
 
-def test_forecast_historical_inventory_exports_without_opening_or_rewriting(
+def test_forecast_opened_run_does_not_restore_deleted_plan_options(
     monkeypatch, plan_record, calculation_calls
 ) -> None:
     page = open_page(plan_record)
     page.multiselect[0].select(f"{plan_record.id}:0").run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
-    raw = original.model_dump(mode="json") | {"schema_version": 3, "model_version": "3"}
-    raw["request"]["plans"][0]["components"] = [{"obsolete": "frozen inputs"}]
-    historical = HistoricalForecast(
-        id=original.id,
-        created_at=original.created_at,
-        schema_version=3,
-        model_version="3",
-        names=("Historical household",),
-        document=raw,
+    replacement = plan_record.model_copy(
+        update={
+            "id": uuid4(),
+            "inputs": plan_record.inputs.model_copy(update={"name": "Current Plan"}),
+        }
     )
     monkeypatch.setattr(app, "_database_url", lambda: "test")
-    monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: ())
+    monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(
-        forecast_pages, "list_historical_forecasts", lambda dsn: (historical,)
+        forecast_pages, "list_planning_documents", lambda dsn, kind: (replacement,)
     )
+    page.session_state["forecast_loaded_request"] = original.request
+    page.run()
+    assert not page.exception
+    assert page.multiselect[0].options == ["Current Plan"]
+    assert page.multiselect[0].value == []
+    page.multiselect[0].select(f"{replacement.id}:0").run()
+    field(page, "button", "Open saved run").click().run()
+    assert not page.exception
+    assert page.multiselect[0].options == ["Current Plan"]
+    assert page.multiselect[0].value == [f"{replacement.id}:0"]
+    assert page.session_state["forecast_document"] == original
+    assert len(calculation_calls) == 1
+    field(page, "button", "Rerun these inputs").click().run()
+    assert calculation_calls[-1] == original.request
+
+
+@pytest.mark.parametrize("error_type", [psycopg.OperationalError, ValueError])
+def test_forecast_plan_read_failure_does_not_offer_cached_plans(
+    monkeypatch, plan_record, calculation_calls, error_type
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    field(page, "button", "Run forecast").click().run()
+    original = page.session_state["forecast_document"]
+
+    def unavailable(dsn, kind):
+        message = "Saved Plan read failed"
+        raise error_type(message)
+
+    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
+    monkeypatch.setattr(forecast_pages, "list_planning_documents", unavailable)
+    page.run()
+    assert not page.exception
+    assert not page.multiselect
+    assert any("Saved Plans could not be read" in item.value for item in page.error)
+    assert page.session_state["forecast_document"] == original
+    field(page, "button", "Rerun these inputs").click().run()
+    assert calculation_calls[-1] == original.request
+
+
+def test_forecast_saved_run_controls_omit_historical_inventory(
+    monkeypatch, plan_record, calculation_calls
+) -> None:
+    page = open_page(plan_record)
+    page.multiselect[0].select(f"{plan_record.id}:0").run()
+    field(page, "button", "Run forecast").click().run()
+    original = page.session_state["forecast_document"]
+    monkeypatch.setattr(app, "_database_url", lambda: "test")
+    monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: ())
     monkeypatch.setattr(forecast_pages, "list_planning_documents", lambda dsn, kind: ())
     page.run()
     assert not page.exception
-    assert field(page, "selectbox", "Historical run").value == historical
-    assert any(
+    assert not any(widget.label == "Historical run" for widget in page.selectbox)
+    assert not any(
         button.label == "Download historical forecast"
         for button in page.get("download_button")
     )
     assert not any(button.label == "Open saved run" for button in page.button)
     assert page.session_state["forecast_document"] == original
-    assert historical.document == raw
     assert len(calculation_calls) == 1
 
 
@@ -593,27 +642,66 @@ def test_forecast_save_failure_preserves_run_and_can_retry(
     assert len(calculation_calls) == 1
 
 
+@pytest.mark.parametrize("mode", ["fixed", "monte_carlo"])
 def test_forecast_duplicate_names_have_distinct_plot_series(
-    monkeypatch, plan_record, calculation_calls
+    monkeypatch, plan_record, calculation_calls, mode
 ) -> None:
     specs = []
     monkeypatch.setattr(
         forecast_pages.st, "vega_lite_chart", lambda spec, **kwargs: specs.append(spec)
+    )
+    name = "Example household — reduced working hours · one child · rental property"
+    plan_record = plan_record.model_copy(
+        update={"inputs": plan_record.inputs.model_copy(update={"name": name})}
     )
     page = open_page(plan_record)
     duplicate = plan_record.model_copy(update={"id": uuid4()})
     page.session_state["planning_records"] = {"plan": (plan_record, duplicate)}
     page.run()
     page.multiselect[0].select(f"{plan_record.id}:0").select(f"{duplicate.id}:0").run()
+    page.button_group(key="mode_0").set_value(mode).run()
     field(page, "button", "Run forecast").click().run()
     assert not page.exception
     assert len(specs) == 1
     for spec in specs:
         rows = spec["layer"][0]["data"]["values"]
         assert {row["scenario"] for row in rows} == {
-            "1. Compare choices",
-            "2. Compare choices",
+            f"1. {name}",
+            f"2. {name}",
         }
+        hover = spec["layer"][-1]
+        assert hover["layer"][0]["mark"]["type"] == "rule"
+        tooltip = hover["layer"][1]["encoding"]["tooltip"]
+        assert {field["title"] for field in tooltip} >= {
+            "Year",
+            "Adult 1 age",
+            "Adult 2 age",
+            "Plan 1 · Median",
+            "Plan 2 · Median",
+        }
+        measures = {"median": ("Median", "$100.00")}
+        if mode == "monte_carlo":
+            measures |= {
+                "lower": ("10th percentile", "$90.00"),
+                "upper": ("90th percentile", "$110.00"),
+            }
+        metric_fields = [
+            field for field in tooltip if field["field"].startswith("plan_")
+        ]
+        assert {field["field"]: field["title"] for field in metric_fields} == {
+            f"plan_{index}_{measure}": f"Plan {index + 1} · {label}"
+            for index in range(2)
+            for measure, (label, _) in measures.items()
+        }
+        assert len({field["title"] for field in metric_fields}) == len(metric_fields)
+        for row in hover["data"]["values"]:
+            assert {
+                key: value for key, value in row.items() if key.startswith("plan_")
+            } == {
+                f"plan_{index}_{measure}": value
+                for index in range(2)
+                for measure, (_, value) in measures.items()
+            }
     result_tab(page, "Simulated future")
     detail_value(page, "Simulated future", "selectbox", "Plan to inspect", 1)
     assert any(

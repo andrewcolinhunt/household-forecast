@@ -530,6 +530,134 @@ def test_compare_saved_scenarios_without_opening_editor(
     assert not page.tabs
 
 
+@pytest.mark.parametrize("recalculated", [False, True])
+def test_compare_does_not_duplicate_saved_calculations(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, recalculated: bool
+) -> None:
+    from datetime import timedelta
+
+    saved = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    document = saved
+    if recalculated:
+        document = saved.model_copy(
+            update={
+                "result": saved.result.model_copy(
+                    update={
+                        "calculated_at": saved.result.calculated_at
+                        + timedelta(minutes=1)
+                    }
+                )
+            }
+        )
+    current = saved.model_copy(update={"revision": saved.revision + 1})
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: (current,))
+    page = AppTest.from_string(
+        "from financial_model.app import compare_page\ncompare_page()"
+    )
+    page.session_state["loaded_record"] = saved
+    page.session_state["document"] = document
+    page.session_state["session_snapshot"] = document
+    page.run()
+    assert not page.exception
+    assert [item.key for item in page.checkbox] == [f"compare_check_{saved.id}"]
+    assert page.session_state["document"] == document
+    assert app._matching_saved_key(document, (current,)) == str(saved.id)
+    other = SavedScenario(inputs=saved.inputs, result=saved.result)
+    assert app._matching_saved_key(document, (other, current)) == str(saved.id)
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_compare_does_not_reintroduce_old_loaded_plans(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, deleted: bool
+) -> None:
+    saved = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    inputs = scenario.model_copy(update={"name": "Current annual plan"})
+    current = SavedScenario(
+        inputs=inputs,
+        result=evaluate_scenario(inputs),
+        **({} if deleted else {"id": saved.id, "revision": saved.revision + 1}),
+    )
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: (current,))
+    page = AppTest.from_string(
+        "from financial_model.app import compare_page\ncompare_page()"
+    )
+    page.session_state["loaded_record"] = saved
+    page.session_state["document"] = saved
+    page.session_state["draft_ages"] = "unfinished child age"
+    page.session_state["comparison_selection"] = [str(saved.id), "draft", "snapshot"]
+    if deleted:
+        page.session_state["session_snapshot"] = saved
+    page.run()
+    assert not page.exception
+    assert [item.key for item in page.checkbox] == [f"compare_check_{current.id}"]
+    assert page.session_state["comparison_selection"] == (
+        [] if deleted else [str(current.id)]
+    )
+    assert page.session_state["document"] == saved
+    assert page.session_state["draft_ages"] == "unfinished child age"
+
+
+@pytest.mark.parametrize("error", [psycopg.OperationalError, ValueError])
+def test_compare_read_failure_does_not_offer_cached_plans(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    saved = SavedScenario(inputs=scenario, result=evaluate_scenario(scenario))
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: (saved,))
+    page = AppTest.from_string(
+        "from financial_model.app import compare_page\ncompare_page()"
+    )
+    page.session_state["loaded_record"] = saved
+    page.session_state["document"] = saved
+    page.session_state["session_snapshot"] = saved
+    page.run()
+    assert len(page.checkbox) == 1
+
+    def unavailable(dsn: str) -> tuple[SavedScenario, ...]:
+        message = "private database details"
+        raise error(message)
+
+    monkeypatch.setattr(app, "list_scenarios", unavailable)
+    page.run()
+    assert not page.exception
+    assert not page.checkbox
+    assert not page.session_state["comparison_selection"]
+    assert page.session_state["document"] == saved
+    assert any("could not be read" in item.value for item in page.error)
+    assert not any("private database" in item.value for item in page.error)
+
+
+@pytest.mark.parametrize("error", [psycopg.OperationalError, ValueError])
+def test_goal_read_failure_removes_cached_choices_without_changing_allocations(
+    scenario: Scenario, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    from copy import deepcopy
+
+    from financial_model.schemas import Goal
+
+    goal = Goal(name="Old deposit goal")
+    page = editor(scenario)
+    page.session_state["goals"] = (goal,)
+    go(page, "Investments")
+    assert next(item for item in page.selectbox if item.label == "Goal to add")
+    allocations = deepcopy(page.session_state["draft_data"]["allocation_plan"])
+
+    def unavailable(dsn: str) -> tuple[Goal, ...]:
+        message = "private database details"
+        raise error(message)
+
+    monkeypatch.setattr(app, "_database_url", lambda: "synthetic-store")
+    monkeypatch.setattr(app, "list_scenarios", lambda dsn: ())
+    monkeypatch.setattr(app, "list_goals", unavailable)
+    page.run()
+    assert not page.exception
+    assert not page.session_state["goals"]
+    assert not any(item.label == "Goal to add" for item in page.selectbox)
+    assert page.session_state["draft_data"]["allocation_plan"] == allocations
+
+
 @pytest.mark.integration
 def test_editor_keeps_separate_drafts_for_saved_scenarios(
     scenario: Scenario, database_url: str, monkeypatch: pytest.MonkeyPatch
@@ -943,10 +1071,12 @@ def test_automatic_title_save_copy_compare_and_clear_label(
     assert widget(page, "text_input", "name_").value == ""
     widget(page, "number_input", "living_rent").set_value(4000.0)
     press(page, "Save")
-    assert len(list_scenarios(database_url)) == 2
+    records = list_scenarios(database_url)
+    assert len(records) == 2
+    duplicate = next(record for record in records if record.id != original.id)
     go(page, "compare")
-    assert "Rent: $4,000/mo" in page.checkbox[0].label
-    assert "Rent: $0/mo" in page.checkbox[1].label
+    assert "Rent: $4,000/mo" in page.checkbox(key=f"compare_check_{duplicate.id}").label
+    assert "Rent: $0/mo" in page.checkbox(key=f"compare_check_{original.id}").label
     selected = page.session_state["comparison_selection"]
     go(page, "editor")
     widget(page, "text_input", "name_").set_value("Higher rent")

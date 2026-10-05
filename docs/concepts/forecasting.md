@@ -21,14 +21,32 @@ earlier years are excluded.
 
 Every annual ledger checks:
 
-**Closing assets = opening assets + external income + investment return
+**Closing assets = opening assets + external income + investment return + property appreciation
 − paid spending − paid taxes − debt payments.**
 
-External income includes employer retirement contributions and vested shares.
+External income includes employer retirement contributions, vested shares, and rent.
 Employee contributions, withdrawals, account transfers, and cash reserves move
 existing money; they do not create wealth. Net wealth subtracts remaining debt
 and unpaid tax liabilities. Debt interest increases the contractual balance;
 unpaid tax is carried without estimating penalties or interest.
+
+Real estate counts toward assets and net wealth, but cannot fund spending or
+portfolio rebalancing. Its value follows the entered nominal appreciation rate.
+Rent and property expenses stay fixed in nominal dollars; the model assumes the
+property remains owned and rented throughout the forecast. It does not model
+vacancies, sales, or automatic rent increases. Property expenses include entered
+escrow and operating costs and are added to spending once. Mortgage payments
+contain principal and interest only; escrow does not reduce the debt balance.
+Monthly debts accrue interest and apply installments each month, capped at the
+remaining balance. The opening partial month is prorated by remaining days.
+Existing annual debts retain their annual interest-and-payment convention.
+
+Taxable rental profit is a separate, explicit annual assumption. The tax engine
+receives it as rental income; the app does not infer profit from cash left after
+the mortgage payment or calculate depreciation and passive rental losses.
+This nominal estimate stays fixed, including after mortgage payoff, so review
+it when financing or deductions change. An unknown estimate blocks forecasting
+for a rented property. See [IRS rental-property guidance](https://www.irs.gov/publications/p527).
 
 The model meets required distributions, then funds needs from taxable cash, taxable
 investments, eligible pretax accounts, and Roth accounts. Withdrawals generate

@@ -121,6 +121,24 @@ def test_yearly_tax_investment_income_tax_excludes_retirement_distributions() ->
     assert investment.employee_payroll_tax[0] == retirement.employee_payroll_tax[0]
 
 
+def test_yearly_tax_rental_profit_is_investment_income_without_payroll_or_qbi() -> None:
+    args = {"wages": [[150000, 150000]], "ages": (40, 40), "state": "CA"}
+    retirement = tax(**args, ordinary_income=50000)
+    rental = tax(**args, rental_income=50000)
+    interest = tax(**args, investment_income=50000)
+    assert rental.federal_income_tax[0] - retirement.federal_income_tax[
+        0
+    ] == pytest.approx(1900, abs=0.02)
+    assert rental.federal_income_tax[0] == interest.federal_income_tax[0]
+    assert rental.state_income_tax[0] == interest.state_income_tax[0]
+    assert rental.employee_payroll_tax[0] == retirement.employee_payroll_tax[0]
+
+
+def test_yearly_tax_rejects_unmodeled_rental_losses() -> None:
+    with pytest.raises(ValueError, match="nonnegative"):
+        tax(rental_income=-1000)
+
+
 def test_yearly_tax_wa_capital_gains_progressive_rates() -> None:
     # WA RCW82.87.040:7% first1m of taxablegain,9.9% excess.
     # Pinned engine's2026 standard deduction projection is284,000.

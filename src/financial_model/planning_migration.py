@@ -26,14 +26,17 @@ from financial_model.wealth_migration import (
 
 
 def upgrade_forecast_constraint(connection: Connection) -> None:
-    """Permit current results during an explicit migration, retaining old run JSON."""
+    """Discard obsolete results and allow only the current forecast format."""
     connection.execute(
-        "ALTER TABLE IF EXISTS forecast_runs "
+        "DO $$ BEGIN IF to_regclass('forecast_runs') IS NOT NULL THEN "
+        "DELETE FROM forecast_runs WHERE (document ->> 'schema_version')::integer < 5; "
+        "ALTER TABLE forecast_runs "
         "DROP CONSTRAINT IF EXISTS forecast_runs_document_check, "
         "DROP CONSTRAINT IF EXISTS forecast_runs_document_check1, "
         "DROP CONSTRAINT IF EXISTS forecast_runs_schema_version, "
         "ADD CONSTRAINT forecast_runs_schema_version "
-        "CHECK ((document ->> 'schema_version' IN ('1', '2', '3', '4')) IS TRUE)"
+        "CHECK ((document ->> 'schema_version') IS NOT DISTINCT FROM '5'); "
+        "END IF; END $$;"
     )
 
 
