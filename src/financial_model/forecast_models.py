@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Final, Literal, Self
+from typing import Annotated, Final, Literal, Self
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -53,17 +53,13 @@ class ForecastRequest(ValueModel):
 
     @model_validator(mode="after")
     def validate_comparison(self) -> Self:
-        """Require a common dated balance sheet and household identity mapping."""
+        """Keep opening wealth and adults fixed while family plans may differ."""
         first = self.plans[0]
         if first.wealth is None:
             msg = "Select an opening Wealth snapshot."
             raise ValueError(msg)
         starting = first.wealth.snapshot.model_dump(exclude={"name", "notes"})
-        # Child IDs anchor dates within each Plan; demographic facts define comparability.
-        household_exclusions: dict[str, Any] = {
-            "residence": True,
-            "children": {"__all__": {"id"}},
-        }
+        household_exclusions = {"residence", "children"}
         for plan in self.plans:
             if (
                 plan.wealth is None
@@ -75,7 +71,7 @@ class ForecastRequest(ValueModel):
             if plan.household.model_dump(
                 exclude=household_exclusions
             ) != first.household.model_dump(exclude=household_exclusions):
-                msg = "Compare choices within one household and reference year."
+                msg = "Compared scenarios must use the same adults and reference year."
                 raise ValueError(msg)
         return self
 

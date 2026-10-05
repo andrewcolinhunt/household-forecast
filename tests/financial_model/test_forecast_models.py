@@ -55,31 +55,42 @@ def test_forecast_request_allows_residence_choices(request_input):
     assert len(request.plans) == 2
 
 
-def test_forecast_request_ignores_plan_local_child_ids_but_requires_same_demographics(
+def test_forecast_request_allows_child_count_identity_and_birth_year_choices(
     request_input,
 ):
-    data = request_input.plans[0].model_dump()
-    data["household"]["children"] = [{"name": "Child", "birth_year": 2020}]
-    original = PlanningScenario.model_validate(data)
-    alternative = original.model_dump()
-    alternative["household"]["children"][0]["id"] = uuid4()
-    request = ForecastRequest(
-        plans=(original, PlanningScenario.model_validate(alternative))
-    )
-    assert len(request.plans) == 2
-    alternative["household"]["children"][0]["birth_year"] = 2021
-    with pytest.raises(ValidationError, match="one household"):
-        ForecastRequest(plans=(original, PlanningScenario.model_validate(alternative)))
+    plans = [request_input.plans[0]]
+    for years in ((2027,), (2029,), (2027, 2029)):
+        data = request_input.plans[0].model_dump()
+        data["household"]["children"] = [
+            {"id": uuid4(), "name": f"Child {index}", "birth_year": year}
+            for index, year in enumerate(years, start=1)
+        ]
+        plans.append(PlanningScenario.model_validate(data))
+    request = ForecastRequest(plans=tuple(plans))
+    assert [len(plan.household.children) for plan in request.plans] == [0, 1, 1, 2]
+    assert request.plans[1].household.children[0].birth_year == 2027
+    assert request.plans[2].household.children[0].birth_year == 2029
 
 
-@pytest.mark.parametrize("difference", ["wealth", "household"])
+@pytest.mark.parametrize(
+    "difference",
+    ["wealth", "adult_age", "adult_name", "adult_order", "reference_year", "tax_fact"],
+)
 def test_forecast_request_rejects_unfair_comparison(request_input, difference):
     original = request_input.plans[0]
     alternative = original.model_dump()
     if difference == "wealth":
         alternative["wealth"]["snapshot"]["as_of"] = date(2026, 2, 1)
-    else:
+    elif difference == "adult_age":
         alternative["household"]["adults"][0]["age"] = 40
+    elif difference == "adult_name":
+        alternative["household"]["adults"][0]["name"] = "Someone else"
+    elif difference == "adult_order":
+        alternative["household"]["adults"] = alternative["household"]["adults"][::-1]
+    elif difference == "reference_year":
+        alternative["household"]["reference_year"] = 2027
+    else:
+        alternative["household"]["adults"][0]["wa_cares_exempt"] = True
     with pytest.raises(ValidationError):
         ForecastRequest(
             plans=(original, PlanningScenario.model_validate(alternative)),

@@ -11,7 +11,7 @@ import pytest
 from financial_model.forecast import calculate_forecast, forecast_issues
 from financial_model.forecast_models import ForecastRequest
 from financial_model.forecast_tax import ForecastTaxResult
-from financial_model.planning import PlanningScenario
+from financial_model.planning import PlanningChild, PlanningScenario
 from financial_model.schemas import default_allocation_plan
 
 
@@ -625,6 +625,103 @@ def test_forecast_comparison_uses_each_plans_investment_yields(monkeypatch):
     assert result.inspect(0, 0)[0]["taxes"] == 50
     assert result.inspect(1, 0)[0]["taxes"] == 100
     assert result.document.summaries[1].points[0].median_difference == -50
+
+
+@pytest.fixture
+def family_request() -> ForecastRequest:
+    """Compare zero, one and two children with sufficient income for their costs."""
+    children = [
+        PlanningChild(name=f"Child {index}", birth_year=2026 + index)
+        for index in (1, 2)
+    ]
+    data = forecast_request().model_dump(mode="json")
+    data["plans"][0]["wealth"]["snapshot"]["accounts"][0].update(
+        invested_in="stocks", cost_basis=10000
+    )
+    _profile(data, "retirement")["adults"][0].update(
+        pension=100000, pension_start_age=60, pension_survivor_fraction=0
+    )
+    _profile(data, "economy")["volatility"] = [".18", ".06", 0, 0]
+    original = PlanningScenario.model_validate(data["plans"][0])
+    data["plans"] = []
+    for count in range(3):
+        plan = original.model_dump(mode="json")
+        plan["name"] = f"{count} children"
+        plan["household"]["children"] = [
+            child.model_dump(mode="json") for child in children[:count]
+        ]
+        spending = next(
+            c["inputs"] for c in plan["components"] if c["inputs"]["kind"] == "spending"
+        )
+        spending["expenses"].extend(
+            {
+                "label": f"{child.name} living costs",
+                "category": "children",
+                "levels": [
+                    {
+                        "when": {"kind": "age", "person": str(child.id), "age": 0},
+                        "amount": {"central": 5000},
+                    }
+                ],
+                "end": {"kind": "age", "person": str(child.id), "age": 18},
+            }
+            for child in children[:count]
+        )
+        data["plans"].append(plan)
+    return ForecastRequest.model_validate(data)
+
+
+@pytest.mark.parametrize("mode", ["fixed", "monte_carlo"])
+def test_forecast_comparison_uses_each_plans_children_and_shared_paths(
+    family_request: ForecastRequest, mode: str
+) -> None:
+    request = _edit(
+        family_request, lambda data: data["settings"].update(mode=mode, count=3)
+    )
+    result = calculate_forecast(request)
+    for count, trace in enumerate(result.traces):
+        for year_index, (row, baseline) in enumerate(
+            zip(trace, result.traces[0], strict=True)
+        ):
+            dependent_count = min(count, year_index)
+            np.testing.assert_allclose(
+                row["spending_planned"], 1000 + dependent_count * 5000
+            )
+            # At $100k income, each child receives the pinned 2026 $2,200 credit.
+            np.testing.assert_allclose(
+                baseline["taxes"] - row["taxes"], dependent_count * 2200, atol=0.02
+            )
+            for field in ("equity_return", "bond_return", "cash_return", "inflation"):
+                np.testing.assert_array_equal(row[field], baseline[field])
+        np.testing.assert_array_equal(
+            trace[0]["net_worth"], result.traces[0][0]["net_worth"]
+        )
+    if mode == "monte_carlo":
+        assert np.ptp(result.traces[0][0]["equity_return"]) > 0
+    assert all(summary.funded_fraction == 1 for summary in result.document.summaries)
+
+
+@pytest.mark.parametrize("mismatch", ["absent_child", "unknown_birth_year"])
+def test_forecast_comparison_rejects_unresolved_child_expenses(
+    family_request: ForecastRequest, mismatch: str
+) -> None:
+    def edit(data):
+        plan = data["plans"][1]
+        plan["name"] = "Unresolved child"
+        if mismatch == "absent_child":
+            plan["household"]["children"] = []
+        else:
+            plan["household"]["children"][0]["birth_year"] = None
+
+    request = _edit(family_request, edit)
+    assert any(
+        "Unresolved child" in issue and "Spending timing unresolved" in issue
+        for issue in forecast_issues(request)
+    )
+    with pytest.raises(
+        ValueError, match="Child 1 living costs; date or person needs input"
+    ):
+        calculate_forecast(request)
 
 
 def test_forecast_partial_year_event_occurs_once_without_timing_question(zero_tax):
