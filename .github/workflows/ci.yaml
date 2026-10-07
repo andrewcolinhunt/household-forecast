@@ -17,9 +17,9 @@ jobs:
     env:
       PIXI_LOCKED: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: prefix-dev/setup-pixi@v0.10.0
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
           pixi-version: v0.66.0
           locked: true
@@ -35,9 +35,9 @@ jobs:
     env:
       PIXI_LOCKED: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: prefix-dev/setup-pixi@v0.10.0
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
           pixi-version: v0.66.0
           locked: true
@@ -50,9 +50,9 @@ jobs:
     env:
       PIXI_LOCKED: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: prefix-dev/setup-pixi@v0.10.0
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
           pixi-version: v0.66.0
           locked: true
@@ -72,7 +72,7 @@ jobs:
   cloud-environment:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Test exported deployment environment
         run: |
