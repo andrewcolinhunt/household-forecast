@@ -4,12 +4,14 @@
 ## Work with a database file
 
 Each browser session starts with an empty SQLite database. **Open database**
-uploads a database you previously downloaded. Opening another database or choosing
-**New database** replaces the current session's contents after confirmation.
+uploads a database you previously downloaded. **Load example** opens fictional
+starter data with two Plans to compare. Opening another database, loading the
+example, or choosing **New database** replaces the current session's contents
+after confirmation.
 Uploads are limited to 50 MiB. Invalid or incompatible files leave the current
 database unchanged.
 
-1. Open your latest database file, or start with the empty database.
+1. Open your latest database file, load the example, or start with the empty database.
 2. Edit assumptions and use the normal **Save** actions in each editor. Save
    forecast runs you want to keep too.
 3. Choose **Download database** to keep the updated database on your computer.
@@ -31,6 +33,13 @@ changes, detect edits in the other copy, or merge automatically. To share work,
 finish editing, download the database, and pass that file to the next person.
 Keep earlier downloads if you need recovery points. Store and share them privately
 because they contain household financial data.
+
+Keep your original and downloaded databases outside the application repository,
+such as in a private notes folder. If that folder is a separate Git repository,
+verify its visibility before committing family data. A local app session reads
+your selected file into a temporary copy; each new download must be saved back
+to your private folder deliberately. Opening a private file in a hosted app
+uploads it to that host for the session.
 
 ## Organize assumptions and combine plans
 

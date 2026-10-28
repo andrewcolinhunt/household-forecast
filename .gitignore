@@ -1,13 +1,23 @@
 # Environment and secrets
 .env
+.env.*
+!.env.example
 .streamlit/secrets.toml
 *.scenario.json
+*.wealth.json
+*.planning.json
+*.forecast.json
+forecast-*.json
+*.preserved-draft.json
 *.sqlite
 *.sqlite3
 *.db
 *.sqlite-*
 *.sqlite3-*
 *.db-*
+*.dump
+data/
+backups/
 
 # macOS system files
 .DS_Store

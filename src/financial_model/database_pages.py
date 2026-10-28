@@ -8,6 +8,7 @@ from typing import cast
 import streamlit as st
 
 from financial_model.database import MAX_DATABASE_BYTES, SessionDatabase
+from financial_model.examples import example_database
 
 
 def session_database() -> SessionDatabase:
@@ -68,6 +69,9 @@ def database_controls() -> None:
             )
         if st.button("New database", key="new_database"):
             st.session_state["pending_database_replacement"] = None
+        st.caption("Explore a fictional household with two example Plans.")
+        if st.button("Load example", key="load_example_database"):
+            st.session_state["pending_database_replacement"] = example_database()
     if "pending_database_replacement" in st.session_state:
         _confirm_replace(st.session_state["pending_database_replacement"])
 

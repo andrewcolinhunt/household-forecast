@@ -15,6 +15,13 @@ Each session starts with an empty database. To continue previous work, use
 **Open database** to upload your latest SQLite database file. **New database**
 replaces the current session's database with an empty one.
 
+To try the app first, choose **Load example** and confirm the replacement. This
+loads fictional household assumptions and two saved Plans. Open **Forecast** and
+compare **Current spending** with **Lower spending** to see the effect of a smaller
+annual budget. You can edit and save these inputs, download your own copy, or use
+**New database** to start with an empty database. Loading the example never changes
+the file you originally opened.
+
 Open **Scenarios**. Its sub-tabs collect Plans, Household, Wealth, Work,
 Spending, Retirement, Investments, Economy, and Goals. **Compare annual plans**
 remains a separate results page. **Forecast** projects saved combined Plans
@@ -50,6 +57,9 @@ Sessions are independent, including when two people upload the same file. Share
 the latest download to hand work to another person; changes do not synchronize
 automatically. Keep database files private. Category-level JSON backups remain
 available when you need to move an individual scenario or snapshot.
+Store private databases outside the application repository. To keep one in a
+separate notes repository, confirm that repository is private and save each
+updated download there; saving in the app does not update that private file.
 
 Next, [compare and save scenarios](../how-to-guides/index.md) or read
 [how the calculations work](../concepts/index.md).

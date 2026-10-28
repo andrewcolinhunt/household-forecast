@@ -29,9 +29,10 @@ pixi run --locked app
 ```
 
 Open <http://localhost:8501>. Each browser session starts with an empty SQLite
-database. Use **Open database** to upload an existing database, or **New database**
-to start over. Enter household assumptions and use the normal **Save** actions
-to keep scenarios, Plans, Wealth, and forecasts in that session's database.
+database. Choose **Load example** to explore a fictional household, **Open database**
+to upload your own database, or **New database** to start over. Enter household
+assumptions and use the normal **Save** actions to keep scenarios, Plans, Wealth,
+and forecasts in that session's database.
 
 Choose **Download database** before closing or refreshing the browser tab,
 replacing its database, or restarting the app. The download contains all saved
@@ -44,6 +45,13 @@ different changes, but the app does not synchronize or merge their copies. Pass
 the latest downloaded file to the next person before they edit. No database
 server or credentials are required. See the [database workflow and private
 deployment guide](docs/how-to-guides/index.md#work-with-a-database-file).
+
+The example uses invented, rounded amounts: two adults earning a combined
+\$95,000, \$120,000 in financial accounts, and a \$300,000 home with a mortgage.
+Its two Plans compare current spending with a lower spending budget. It includes
+retirement dates, illustrative benefits, and investment assumptions so you can
+run a forecast. All example inputs are fictional and editable.
+[Try the example](docs/getting-started/index.md).
 
 [Usage and deployment](docs/how-to-guides/index.md) ·
 [Calculation assumptions](docs/concepts/index.md) ·
@@ -70,6 +78,7 @@ pixi run --locked test
 pixi run --locked mypy
 pixi run --locked docs-build
 pixi run --locked check-cloud
+pixi run --locked python scripts/check_public_content.py
 ```
 
 Database tests use temporary SQLite databases and run without a database server.
@@ -83,3 +92,17 @@ Streamlit Community Cloud. Commit it alongside intentional dependency changes.
 Source is in `src/financial_model/`; tests mirror it in `tests/financial_model/`.
 Private design and research notes live in `~/git/notes/financial-model/`, linked
 through the ignored `_dev` directory. Notes have separate Git history.
+Keep household databases and backups in private storage outside this repository.
+The app opens a session copy and never writes back to the original file; download
+changes and save them to your private location after each editing session.
+
+Before sharing source or a package, run the privacy check above. An optional
+`--private-terms /path/to/private-terms.json` checks a private JSON array of names
+or phrases; that file must live outside the public repository. Add `--history`
+to check all reachable Git revisions, or `--directory /path/to/unpacked-release`
+to check release contents too. Findings report locations without printing
+matched values. The check detects common credential formats and private file
+types; it complements a manual review of examples and documentation.
+
+Share a Git-derived archive or a checked package. A ZIP of the working directory
+can include ignored personal databases, exports, credentials, and private notes.
