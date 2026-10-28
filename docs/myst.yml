@@ -8,7 +8,7 @@ project:
   copyright: "2026"
 
   # Repository information
-  github: https://github.com/andrewcolinhunt/financial-model
+  github: https://github.com/andrewcolinhunt/financial-model-release
 
   # Bibliography
   bibliography:
@@ -48,7 +48,7 @@ site:
 
   actions:
     - title: GitHub
-      url: https://github.com/andrewcolinhunt/financial-model
+      url: https://github.com/andrewcolinhunt/financial-model-release
 
   parts:
     footer: footer.md
