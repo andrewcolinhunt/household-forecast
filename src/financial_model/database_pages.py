@@ -87,7 +87,7 @@ def database_download() -> None:
         st.download_button(
             "Download database",
             data,
-            file_name="financial-model.sqlite",
+            file_name="household-forecast.sqlite",
             mime="application/vnd.sqlite3",
             key="download_database",
             on_click="ignore",

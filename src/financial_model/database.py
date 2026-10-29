@@ -58,7 +58,7 @@ def validate_database(path: str) -> None:
             expected.executescript(_schema())
             valid_schema = _schema_objects(connection) == _schema_objects(expected)
         if metadata != (APPLICATION_ID, DATABASE_VERSION) or not valid_schema:
-            message = "This is not a supported financial-model database."
+            message = "This is not a supported Household Forecast database."
             raise ValueError(message)
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             message = "The database is damaged. Open another backup."
@@ -105,7 +105,7 @@ class SessionDatabase:
         if data is not None and (
             len(data) > MAX_DATABASE_BYTES or not data.startswith(b"SQLite format 3\0")
         ):
-            message = "Upload a financial-model SQLite database, up to 50 MB."
+            message = "Upload a Household Forecast SQLite database, up to 50 MB."
             raise ValueError(message)
         directory = TemporaryDirectory(prefix="financial-model-")
         self._cleanup = weakref.finalize(self, directory.cleanup)

@@ -1,5 +1,5 @@
 [project]
-name = "financial-model"
+name = "household-forecast"
 dynamic = ["version"]
 description = "A financial model for personal and family financial planning"
 readme = "README.md"
@@ -46,7 +46,7 @@ pip          = "*"  # Required by the generated Community Cloud environment
 nodejs       = ">=20"
 
 [tool.pixi.pypi-dependencies]
-financial-model = { path = ".", editable = true }
+household-forecast = { path = ".", editable = true }
 # Small runtime kit
 rootutils = ">=1.0"
 rich      = "*"

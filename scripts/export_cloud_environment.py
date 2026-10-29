@@ -43,7 +43,7 @@ def render_environment(lock: dict[str, Any]) -> str:
         package = records[kind, source]
         if kind == "conda":
             conda.append(_conda_pin(source))
-        elif source == "./" and package["name"] == "financial-model":
+        elif source == "./" and package["name"] == "household-forecast":
             pip.append("-e .")
         elif urlparse(source).hostname == "files.pythonhosted.org":
             pip.append(f"{package['name']}=={package['version']}")
@@ -51,7 +51,7 @@ def render_environment(lock: dict[str, Any]) -> str:
             message = f"Unsupported pip source for {package.get('name', 'package')}."
             raise ValueError(message)
     result = {
-        "name": "financial-model",
+        "name": "household-forecast",
         "channels": [channel["url"] for channel in environment["channels"]],
         "dependencies": [*sorted(conda), {"pip": sorted(pip)}],
     }

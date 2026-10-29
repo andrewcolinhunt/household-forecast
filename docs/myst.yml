@@ -4,11 +4,11 @@
 version: 1
 
 project:
-  title: financial-model
+  title: household-forecast
   copyright: "2026"
 
   # Repository information
-  github: https://github.com/andrewcolinhunt/financial-model-release
+  github: https://github.com/andrewcolinhunt/household-forecast
 
   # Bibliography
   bibliography:
@@ -34,7 +34,7 @@ project:
         - file: reference/index.md
 
 site:
-  title: financial-model
+  title: household-forecast
 
   nav:
     - title: Getting Started
@@ -48,13 +48,13 @@ site:
 
   actions:
     - title: GitHub
-      url: https://github.com/andrewcolinhunt/financial-model-release
+      url: https://github.com/andrewcolinhunt/household-forecast
 
   parts:
     footer: footer.md
     primary_sidebar_footer: primary-sidebar-footer.md
 
   options:
-    logo_text: financial-model
+    logo_text: household-forecast
     folders: true
     style: ./custom.css

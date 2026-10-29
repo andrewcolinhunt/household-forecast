@@ -1,11 +1,11 @@
 {
-  "name": "financial-model",
+  "name": "household-forecast",
   "owner": {
     "name": "Andrew Hunt"
   },
   "plugins": [
     {
-      "name": "financial-model",
+      "name": "household-forecast",
       "source": "./",
       "strict": false,
       "description": "In-repo Claude Code skills for this project",

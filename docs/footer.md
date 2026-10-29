@@ -1,7 +1,7 @@
 ::::{grid} 2
 
 :::{grid-item}
-**financial-model**
+**household-forecast**
 
 A financial model for personal and family financial planning.
 :::

@@ -1500,11 +1500,6 @@ packages:
   - pkg:pypi/filelock?source=compressed-mapping
   size: 84079
   timestamp: 1790215975024
-- pypi: ./
-  name: financial-model
-  version: 0.1.dev96+ge5f365e97.d20261005
-  sha256: 344850ef35ec462f4be5d07b0ded26261ba4c3ac77416a05e4e62f731873de8e
-  requires_python: '>=3.12'
 - pypi: https://files.pythonhosted.org/packages/cf/58/8acf1b3e91c58313ce5cb67df61001fc9dcd21be4fadb76c1a2d540e09ed/fqdn-1.5.1-py3-none-any.whl
   name: fqdn
   version: 1.5.1
@@ -1662,6 +1657,11 @@ packages:
   requires_dist:
   - pytest ; extra == 'tests'
   requires_python: '>=3.8'
+- pypi: ./
+  name: household-forecast
+  version: 0.1.dev103+g48a350aa5.d20261029
+  sha256: 2b65896ba27e3f1c0a914e11680334d3d9584c19a6d6871964b538163bf5ab12
+  requires_python: '>=3.12'
 - pypi: https://files.pythonhosted.org/packages/71/b4/4a9fcfb2aef6ba44d9073ecd301443aa00b3dac95de5619f2a7de7ec8a91/hpack-4.2.0-py3-none-any.whl
   name: hpack
   version: 4.2.0

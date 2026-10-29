@@ -1,4 +1,4 @@
-"""financial-model package."""
+"""Household Forecast package."""
 
 from __future__ import annotations
 

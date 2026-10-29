@@ -478,7 +478,7 @@ household database, export it once to SQLite. Set `FINANCIAL_MODEL_DATABASE_URL`
 to its connection string in your shell, then choose a private output location:
 
 ```bash
-pixi run --locked -e postgres-export python scripts/export_postgres.py /private/path/financial-model.sqlite
+pixi run --locked -e postgres-export python scripts/export_postgres.py /private/path/household-forecast.sqlite
 ```
 
 The optional `postgres-export` environment supplies the PostgreSQL driver; the

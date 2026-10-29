@@ -6,7 +6,7 @@ family's financial future. A move, job change, or spending choice should connect
 to both the cash available now and the wealth and retirement options available
 later.
 
-The intended calculation follows this sequence:
+The calculation follows this sequence:
 
 **Decision → compensation, taxes, and expenses → saving by account and asset
 type → future balances → retirement options.**
@@ -32,7 +32,7 @@ the change takes effect.
 
 The annual calculation estimates the resulting taxes, cash surplus or shortfall,
 retirement contributions, and retained shares. The forecast
-carry these amounts forward to compare future balances under the same economic
+carries these amounts forward to compare future balances under the same economic
 assumptions. This connects the difference in outcomes to the decision being
 compared.
 
@@ -42,38 +42,7 @@ throughout the comparison. Forecasts use explicit assumptions
 about investment returns, share sales, and withdrawals before those assets can
 fund spending.
 
-## The role of Simplifi
-
-Simplifi remains the household's tool for recording transactions, categorizing
-expenses, and tracking accounts. Its data can establish observed spending and
-starting balances for a plan. A manual snapshot or CSV import is useful when it
-improves those inputs; transaction tracking and bank synchronization are not
-objectives of this application.
-
-Simplifi also provides a retirement planner with adjustable contributions,
-expenses, returns, retirement age, and assumed tax rates. Its documented inputs
-let you explore the effect of changing those quantities. They do not document
-an integrated calculation from a new job and location through compensation,
-state taxes, living costs, and annual saving to retirement outcomes.
-[Simplifi retirement planner](https://support.simplifi.quicken.com/en/articles/10339048-retirement-planner)
-
-That connected calculation is the reason to develop this tool. A useful
-projection explains which decision changed an outcome and through which
-income, expense, tax, or asset assumption.
-
-## Current and planned capabilities
-
-| Planning question | Status |
-| --- | --- |
-| How do supported job and full-year CA/WA alternatives change annual cash, taxes, saving, and equity? | Implemented in the annual model. |
-| Can we reuse household facts and mix work, spending, retirement, portfolio and economic assumptions from a chosen Wealth snapshot? | Implemented as saved copies in combined Plans, selectable in Forecast. |
-| How do those choices change assets and available cash after five or ten years, or at a selected retirement age? | Implemented with annual account balances and an explicit future-tax assumption. |
-| How do expenses change as children grow up, work ends, or care is needed? | Implemented as named annual expenses with dated amounts and optional end dates. |
-| Can each scenario fund a specified retirement lifestyle, and for how long? | Implemented with retirement income, eligible withdrawals, taxes, and visible shortfalls. |
-| How sensitive is the comparison to returns and inflation? | Implemented with shared Monte Carlo futures, supplied historical observations, and illustrative stresses. |
-| What must change to make a target retirement age feasible? | Planned: parameter search through the same forecast evaluator. |
-
-See [how the annual model works](index.md) for implemented accounting and tax
+See [how the annual model works](index.md) for accounting and tax
 coverage. In particular, an annual full-year state comparison does not calculate
 the transition year of a move. Forecasts also assume full-year residence and
 apply a documented planning policy for future taxes. See
@@ -171,5 +140,3 @@ Missing values remain unknown. Input completeness does not establish retirement
 feasibility. Captured lifespan assumptions are different from a future calculated
 age of funding exhaustion, and exploratory ranges are different from calibrated
 probability distributions.
-
-Detailed implementation choices and development notes live under `_dev`.

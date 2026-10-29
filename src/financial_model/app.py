@@ -804,9 +804,7 @@ def scenarios_page() -> None:
 
 def main() -> None:
     """Route the app through top navigation with an editor opened from the library."""
-    st.set_page_config(
-        page_title="Family financial model", page_icon="🏡", layout="wide"
-    )
+    st.set_page_config(page_title="Household Forecast", page_icon="🏡", layout="wide")
     page = st.navigation(
         [
             st.Page(str(SCENARIOS_PAGE), title="Scenarios", default=True),
