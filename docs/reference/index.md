@@ -223,8 +223,8 @@ scenario = Scenario(
     tax_year=2025,
     state="WA",
     adults=(
-        PersonInputs(name="Adult A", age=40, cash_pay=100000),
-        PersonInputs(name="Adult B", age=38, cash_pay=100000),
+        PersonInputs(name="Adult A", age=40, cash_pay=55000),
+        PersonInputs(name="Adult B", age=38, cash_pay=40000),
     ),
     assumptions_confirmed=True,
 )
