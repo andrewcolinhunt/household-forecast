@@ -29,10 +29,10 @@ from financial_model.schemas import (
 )
 from financial_model.storage import (
     create_scenario,
-    create_wealth_snapshot,
     save_household,
 )
 from financial_model.wealth import SavedWealthSnapshot
+from financial_model.wealth_storage import create_wealth_snapshot
 
 _ADULTS = (("Alex", 40, 55000, 3000), ("Sam", 38, 40000, 2000))
 _NOTE = "Fictional example with rounded, illustrative assumptions. Edit before use."

@@ -12,13 +12,22 @@ from pydantic import ValidationError
 from financial_model import input_forms as forms
 from financial_model.schemas import Goal, Household, SavedScenario
 from financial_model.storage import (
-    RevisionConflictError,
     create_goal,
     delete_goal,
+    list_goals,
     load_household,
     save_household,
     update_goal,
 )
+from financial_model.storage_common import RevisionConflictError
+
+
+def read_goal_catalogue(dsn: str) -> None:
+    """Read the current session database's shared goal names."""
+    try:
+        st.session_state["goals"] = list_goals(dsn)
+    except (sqlite3.Error, ValueError):
+        st.session_state["goals"] = ()
 
 
 def _setup_error(error: Exception) -> None:
@@ -34,7 +43,7 @@ def _setup_error(error: Exception) -> None:
         st.error("Could not save this change. Your entries are still here; try again.")
 
 
-def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
+def household_page(dsn: str, records: tuple[SavedScenario, ...]) -> None:
     """Edit the family defaults that new scenarios copy, retaining an editing buffer."""
     st.title("Annual household defaults")
     st.caption(
@@ -42,9 +51,7 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     )
     if "household_draft" not in st.session_state:
         try:
-            saved = (
-                load_household(dsn) if dsn else st.session_state.get("local_household")
-            )
+            saved = load_household(dsn)
         except (sqlite3.Error, ValueError):
             st.error("Household defaults could not be loaded. Try again.")
             return
@@ -126,7 +133,7 @@ def household_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
         st.rerun()
 
 
-def _save_household_inputs(dsn: str | None, raw: dict[str, Any]) -> None:
+def _save_household_inputs(dsn: str, raw: dict[str, Any]) -> None:
     """Validate family details and preserve pending edits when a save conflicts."""
     try:
         data = {key: value for key, value in raw.items() if key != "children_text"}
@@ -136,24 +143,18 @@ def _save_household_inputs(dsn: str | None, raw: dict[str, Any]) -> None:
             if value.strip()
         ]
         inputs = Household.model_validate(data)
-        saved = (
-            save_household(dsn, inputs)
-            if dsn
-            else inputs.model_copy(update={"revision": inputs.revision + 1})
-        )
+        saved = save_household(dsn, inputs)
     except (ValueError, RevisionConflictError, sqlite3.Error) as error:
         _setup_error(error)
         return
     st.session_state["household_draft"] = saved.model_dump(mode="json")
-    if not dsn:
-        st.session_state["local_household"] = saved
     st.session_state["notice"] = (
         "Household defaults saved. Existing plans keep their own details."
     )
     st.rerun()
 
 
-def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
+def goals_page(dsn: str, records: tuple[SavedScenario, ...]) -> None:
     """Manage shared goal definitions without changing scenario allocations."""
     st.title("Goals")
     st.caption(
@@ -165,8 +166,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
         if add_column.form_submit_button("Add goal"):
             try:
                 goal = Goal(name=name)
-                if dsn:
-                    goal = create_goal(dsn, goal)
+                goal = create_goal(dsn, goal)
                 st.session_state["goals"] = (*st.session_state.get("goals", ()), goal)
                 st.session_state["notice"] = (
                     "Goal added. Choose it in Investments to assign savings."
@@ -196,7 +196,7 @@ def goals_page(dsn: str | None, records: tuple[SavedScenario, ...]) -> None:
     )
 
 
-def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -> None:
+def _goal_row(dsn: str, goal: Goal, records: tuple[SavedScenario, ...]) -> None:
     """Rename one shared goal or delete it when no saved scenario references it."""
     used = sum(
         any(row.goal.id == goal.id for row in r.inputs.allocation_plan.rows)
@@ -232,18 +232,13 @@ def _goal_row(dsn: str | None, goal: Goal, records: tuple[SavedScenario, ...]) -
             return
         try:
             if remove:
-                if dsn:
-                    delete_goal(dsn, goal)
+                delete_goal(dsn, goal)
                 st.session_state["goals"] = tuple(
                     g for g in st.session_state["goals"] if g.id != goal.id
                 )
             else:
                 updated = Goal.model_validate(goal.model_dump() | {"name": name})
-                updated = (
-                    update_goal(dsn, updated)
-                    if dsn
-                    else updated.model_copy(update={"revision": goal.revision + 1})
-                )
+                updated = update_goal(dsn, updated)
                 st.session_state["goals"] = tuple(
                     updated if g.id == goal.id else g for g in st.session_state["goals"]
                 )

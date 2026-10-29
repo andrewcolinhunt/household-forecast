@@ -7,14 +7,14 @@ from datetime import UTC
 from typing import Any
 
 from financial_model.forecast_models import SavedForecast
-from financial_model.storage import _connect
+from financial_model.storage_common import connect
 
 MAX_FORECAST_BYTES = 10 * 1024 * 1024
 
 
 def create_forecast(dsn: str, document: SavedForecast) -> SavedForecast:
     """Insert a run once; an existing run's inputs and results cannot be replaced."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         connection.execute(
             "INSERT INTO forecast_runs (id, document, created_at) VALUES (?, ?, ?)",
             (
@@ -28,7 +28,7 @@ def create_forecast(dsn: str, document: SavedForecast) -> SavedForecast:
 
 def list_forecasts(dsn: str) -> tuple[SavedForecast, ...]:
     """Read current-format runs in reverse creation order."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         rows = connection.execute(
             "SELECT document FROM forecast_runs "
             "WHERE document ->> 'schema_version' = ? ORDER BY created_at DESC, id",

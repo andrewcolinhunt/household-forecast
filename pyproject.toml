@@ -50,7 +50,6 @@ household-forecast = { path = ".", editable = true }
 # Small runtime kit
 rootutils = ">=1.0"
 rich      = "*"
-beartype  = "*"
 pydantic  = ">=2.11,<3"
 streamlit = ">=1.45,<2"
 policyengine-us = "==2.15.1"
@@ -150,7 +149,6 @@ ignore = [
 isort.required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/**" = ["ARG001", "ARG002"]
 "tests/**" = [
     "ARG",
     "E402",

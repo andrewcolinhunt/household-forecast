@@ -505,6 +505,17 @@ def _growth(
     return accounts.total() - before, dividend, interest
 
 
+def _can_withdraw(accounts: _Accounts, index: int, annual: AnnualInputs) -> bool:
+    """Return whether an account can fund general expenses this year."""
+    treatment = accounts.treatment[index]
+    owner = accounts.owners[index]
+    return treatment == "taxable" or (
+        treatment in {"tax_deferred", "roth"}
+        and owner is not None
+        and annual.adults[owner].age >= 60
+    )
+
+
 def _withdraw(
     accounts: _Accounts, need: FloatArray, annual: AnnualInputs
 ) -> tuple[FloatArray, FloatArray, FloatArray]:
@@ -523,11 +534,11 @@ def _withdraw(
             (i, asset)
             for i, t in enumerate(accounts.treatment)
             if t == treatment
-            and accounts.owners[i] is not None
-            and annual.adults[cast(int, accounts.owners[i])].age >= 60
             for asset in (2, 1, 0)
         ]
     for index, asset in order:
+        if not _can_withdraw(accounts, index, annual):
+            continue
         sale, gain = _sell(accounts, index, asset, remaining)
         remaining -= sale
         gains += gain
@@ -612,8 +623,8 @@ def _pay(
     employer = factor * np.asarray(
         [float(a.employer_retirement) for a in annual.adults]
     )
-    for index, adult in enumerate(annual.adults):
-        employee_limit, total_limit = contribution_limits(adult.age)
+    employee_limit, total_limit = contribution_limits()
+    for index in range(len(annual.adults)):
         contributions[:, index] = np.minimum(
             contributions[:, index],
             np.minimum(cash[:, index], factor[:, 0] * employee_limit),
@@ -921,7 +932,7 @@ def _forecast(
         cash += withholding
         retained_rsu = rsu.sum(axis=1) - withholding
         _buy(accounts, accounts.brokerage, retained_rsu[:, None] * np.array([1, 0, 0]))
-        tax, cash, gains, ordinary, withdrawals = _fund(
+        tax, cash, gains, withdrawals = _fund(
             accounts,
             plan,
             annual,
@@ -1073,22 +1084,17 @@ def _fund(
     spending: FloatArray,
     unpaid_tax: FloatArray,
     tax: ForecastTaxResult,
-) -> tuple[ForecastTaxResult, FloatArray, FloatArray, FloatArray, FloatArray]:
+) -> tuple[ForecastTaxResult, FloatArray, FloatArray, FloatArray]:
     deficit = spending + unpaid_tax + tax.total * annual.year_fraction - cash
     finished = deficit <= 0.005
     if finished.all():
-        return tax, cash, gains, ordinary, np.zeros_like(cash)
+        return tax, cash, gains, np.zeros_like(cash)
     holdings, basis = accounts.holdings.copy(), accounts.basis.copy()
     available = sum(
         (
             holdings[:, index].sum(axis=1)
-            for index, treatment in enumerate(accounts.treatment)
-            if treatment == "taxable"
-            or (
-                treatment in {"tax_deferred", "roth"}
-                and accounts.owners[index] is not None
-                and annual.adults[cast(int, accounts.owners[index])].age >= 60
-            )
+            for index in range(len(accounts.treatment))
+            if _can_withdraw(accounts, index, annual)
         ),
         np.zeros_like(cash),
     )
@@ -1135,13 +1141,7 @@ def _fund(
             | (narrow & (error >= 0))
         )
         if finished.all():
-            return (
-                tax,
-                cash + sale,
-                gains + extra_gains,
-                ordinary + extra_ordinary,
-                sale,
-            )
+            return tax, cash + sale, gains + extra_gains, sale
         slope = np.divide(
             error - previous_error,
             sale - previous,
@@ -1190,12 +1190,7 @@ def _account_trace(
     for index, treatment in enumerate(accounts.treatment):
         balance = accounts.holdings[:, index].sum(axis=1)
         row[accounts.labels[index]] = balance.copy()
-        owner = accounts.owners[index]
-        if treatment == "taxable" or (
-            treatment in {"tax_deferred", "roth"}
-            and owner is not None
-            and annual.adults[owner].age >= 60
-        ):
+        if _can_withdraw(accounts, index, annual):
             accessible += balance
         if treatment == "taxable":
             cash += accounts.holdings[:, index, 2]

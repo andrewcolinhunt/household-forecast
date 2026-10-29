@@ -10,8 +10,15 @@ from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
+from ui_helpers import open_annual_draft
 
-from financial_model import app, planning_pages
+from financial_model import (
+    app,
+    database_pages,
+    plan_pages,
+    planning_forms,
+    planning_library,
+)
 from financial_model.planning import (
     EconomicAssumptions,
     ExpenseSchedule,
@@ -34,19 +41,14 @@ from financial_model.planning_storage import (
 )
 from financial_model.scenario_pages import CATEGORIES
 from financial_model.schemas import AllocationPlan
-from financial_model.storage import create_wealth_snapshot
 from financial_model.wealth import (
     AccountPosition,
     SavedWealthSnapshot,
     WealthSnapshot,
 )
+from financial_model.wealth_storage import create_wealth_snapshot
 
 ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
-
-
-@pytest.fixture(autouse=True)
-def preview(monkeypatch):
-    monkeypatch.setattr(app, "_database_path", lambda: None)
 
 
 def tab(page, category):
@@ -90,7 +92,7 @@ def test_active_categories_and_new_inputs_never_calculate(monkeypatch):
         tab(page, category)
         press(page, f"New {category} assumptions")
         assert page.get("download_button")
-        assert next(b for b in page.button if b.label == "Save inputs").disabled
+        assert not next(b for b in page.button if b.label == "Save inputs").disabled
         assert not any(b.label == "Calculate" for b in page.button)
         assert any("need input" in c.value for c in page.caption)
     tab(page, "Plans")
@@ -159,10 +161,12 @@ def _household_plan_app(plan_json):
 
     import streamlit as st
 
-    from financial_model.planning_pages import _assembly
+    from financial_model.plan_pages import assembly
 
     data = st.session_state.setdefault("household_test_plan", json.loads(plan_json))
-    _assembly(data, "household_test_0", None)
+    from financial_model.database_pages import session_database
+
+    assembly(data, "household_test_0", session_database().path)
 
 
 def test_household_children_warn_per_spending_alternative_without_changing_inputs():
@@ -205,7 +209,7 @@ def test_household_children_warn_per_spending_alternative_without_changing_input
 
 @pytest.mark.integration
 def test_household_library_save_duplicate_delete_and_backup(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Household")
     press(page, "New Household assumptions")
@@ -238,7 +242,7 @@ def test_household_library_save_duplicate_delete_and_backup(database_url, monkey
 def test_plan_household_copy_requires_explicit_update_and_preserves_finances(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     source = create_planning_document(
         database_url,
         SavedPlanningDocument(
@@ -441,7 +445,7 @@ def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Economy")
     monkeypatch.setattr(
-        planning_pages.st,
+        planning_library.st,
         "file_uploader",
         lambda *args, **kwargs: BytesIO(record.model_dump_json().encode()),
     )
@@ -451,7 +455,9 @@ def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
     assert page.session_state["planning_active"]["economy"] != str(record.id)
     field(page, "text_input", "Name").set_value("Edited").run()
     monkeypatch.setattr(
-        planning_pages.st, "file_uploader", lambda *args, **kwargs: BytesIO(b"invalid")
+        planning_library.st,
+        "file_uploader",
+        lambda *args, **kwargs: BytesIO(b"invalid"),
     )
     page.run()
     assert page.error
@@ -465,7 +471,7 @@ def test_import_is_independent_and_bad_upload_keeps_draft(monkeypatch):
 def test_investment_surplus_destination_survives_save_and_reopen(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Investments")
     press(page, "New Investments assumptions")
@@ -503,7 +509,7 @@ def test_investment_surplus_destination_survives_save_and_reopen(
 def test_glide_shape_survives_save_backup_and_plan_selection(
     database_url, monkeypatch, shape
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     page = AppTest.from_file(str(ENTRY)).run()
     tab(page, "Investments")
     press(page, "New Investments assumptions")
@@ -518,7 +524,7 @@ def test_glide_shape_survives_save_backup_and_plan_selection(
     plan = PlanningScenario(name="Plan", components=(select_profile(saved),))
     assert plan.components[0].inputs.interpolation == shape
     press(page, "All Investments inputs")
-    assert any(planning_pages.GLIDE_SHAPES[shape] in t.value for t in page.caption)
+    assert any(planning_library.GLIDE_SHAPES[shape] in t.value for t in page.caption)
     press(page, "Edit")
     assert field(page, "button_group", "Glide-path shape").value == shape
     field(page, "button_group", "Allocation policy").set_value("constant").run()
@@ -532,7 +538,7 @@ def test_glide_shape_survives_save_backup_and_plan_selection(
 def test_all_categories_save_partial_inputs_without_calculation(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     monkeypatch.setattr(
         app, "evaluate_scenario", lambda *args: pytest.fail("No annual evaluation")
     )
@@ -559,7 +565,7 @@ def test_all_categories_save_partial_inputs_without_calculation(
 
 @pytest.mark.integration
 def test_conflicts_reload_duplicate_and_same_name_drafts(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     original = create_planning_document(
         database_url,
         SavedPlanningDocument(inputs=EconomicAssumptions(name="Same name")),
@@ -604,7 +610,7 @@ def test_conflicts_reload_duplicate_and_same_name_drafts(database_url, monkeypat
 
 @pytest.mark.integration
 def test_two_saved_plans_keep_copies_after_source_changes(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     source = create_planning_document(
         database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Shared work"))
     )
@@ -649,8 +655,7 @@ def test_two_saved_plans_keep_copies_after_source_changes(database_url, monkeypa
 
 def test_annual_ownership_and_unchanged_round_trip(scenario):
     page = AppTest.from_file(str(ENTRY)).run()
-    page.session_state["pending_inputs"] = scenario
-    page.run()
+    open_annual_draft(page, scenario)
     assert not any(w.label == "Annual salary and bonus ($)" for w in page.number_input)
     for category in ("Household", "Work", "Spending", "Investments", "Plans"):
         tab(page, category)
@@ -681,7 +686,7 @@ def test_annual_ownership_and_unchanged_round_trip(scenario):
 def test_plan_household_and_wealth_are_copied_without_account_bindings(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     account = AccountPosition(
         label="Synthetic cash", balance=100, invested_in="cash", tax_treatment="taxable"
     )
@@ -933,8 +938,8 @@ def test_refresh_one_profile_preserves_alternatives_and_reviews_person_changes(
     updated["inputs"]["notes"] = "Updated assumptions"
     if rename_person:
         updated["inputs"]["adults"][0]["name"] = "Different person"
-    monkeypatch.setattr(planning_pages, "_changed_rows", lambda: None)
-    planning_pages._refresh_profile_copy(
+    monkeypatch.setattr(planning_library, "changed_rows", lambda: None)
+    plan_pages._refresh_profile_copy(
         data, SavedPlanningDocument.model_validate(updated)
     )
     assert data["components"][0]["source_revision"] == 2
@@ -947,7 +952,7 @@ def test_refresh_one_profile_preserves_alternatives_and_reviews_person_changes(
 def test_spending_timing_context_is_distinct_from_missing_amounts(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     source = create_planning_document(
         database_url,
         SavedPlanningDocument(
@@ -1106,9 +1111,9 @@ def test_economy_hidden_ranges_preserve_invalid_edits_and_clear_explicitly():
 def test_plan_explicit_copy_updates_preserve_other_alternatives(
     database_url, monkeypatch
 ):
-    from financial_model.storage import update_wealth_snapshot
+    from financial_model.wealth_storage import update_wealth_snapshot
 
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     source = create_planning_document(
         database_url, SavedPlanningDocument(inputs=WorkAssumptions(name="Work"))
     )
@@ -1185,7 +1190,7 @@ def test_plan_alternatives_save_combinations_and_survive_source_deletion(
 ):
     from financial_model.planning import InvestmentAssumptions, RetirementAssumptions
 
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     choices = [
         create_planning_document(database_url, SavedPlanningDocument(inputs=m(name=n)))
         for m, n in (
@@ -1241,7 +1246,7 @@ def test_compact_editors_save_populated_profiles_without_changing_values(
 ):
     from financial_model.planning import InvestmentAssumptions, RetirementAssumptions
 
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     budget = {
         "amount": {"central": "78901.23", "lower": "60000", "upper": "90000"},
         "notes": "Included costs and exclusions",
@@ -1351,11 +1356,13 @@ def _timeline_app(plan_json):
 
     import streamlit as st
 
-    from financial_model.planning_pages import _plan_timeline
+    from financial_model.plan_pages import _plan_timeline
 
     data = st.session_state.setdefault("timeline_plan", json.loads(plan_json))
     scope = f"timeline_test_{st.session_state.get('planning_epoch', 0)}"
-    _plan_timeline(data, scope, None)
+    from financial_model.database_pages import session_database
+
+    _plan_timeline(data, scope, session_database().path)
 
 
 def test_plan_timeline_category_views_edit_one_copy_and_preserve_invalid_text():
@@ -1461,7 +1468,7 @@ def test_reviewed_split_preserves_phase_totals_ranges_dates_and_growth():
         end={"kind": "survivor", "offset": 5},
     ).model_dump(mode="json")
     before = deepcopy(expense)
-    remaining, separated = planning_pages._split_expense(
+    remaining, separated = planning_forms._split_expense(
         expense,
         Decimal("0.3333"),
         "Healthcare",
@@ -1514,9 +1521,9 @@ def test_plan_selection_view_retains_invalid_timeline_draft():
 def _read_library_app():
     import streamlit as st
 
-    from financial_model.planning_pages import _read
+    from financial_model.planning_library import read_records
 
-    st.session_state["read_records"] = _read("unused-test-dsn", "spending")
+    st.session_state["read_records"] = read_records("unused-test-dsn", "spending")
 
 
 @pytest.mark.parametrize("failure", ["schema", "validation", "database"])
@@ -1545,7 +1552,7 @@ def test_library_read_shows_migration_errors_but_hides_database_details(
         message = "password=private-connection-detail"
         raise sqlite3.OperationalError(message)
 
-    monkeypatch.setattr(planning_pages, "list_planning_documents", fail)
+    monkeypatch.setattr(planning_library, "list_planning_documents", fail)
     cached = SavedPlanningDocument(inputs=SpendingAssumptions(name="Old spending"))
     draft = {"data": {"kind": "spending", "name": "Keep edits"}, "loaded": None}
     page = AppTest.from_function(_read_library_app)
@@ -1602,7 +1609,7 @@ def test_library_resume_omits_untouched_saved_copies_but_keeps_unsaved_edits(
         },
     }
     monkeypatch.setattr(
-        planning_pages, "list_planning_documents", lambda *_: (current,)
+        planning_library, "list_planning_documents", lambda *_: (current,)
     )
     page = AppTest.from_function(_economy_library_app)
     page.session_state["planning_drafts"] = deepcopy(drafts)
@@ -1621,12 +1628,12 @@ def test_old_format_draft_is_preserved_and_exported_without_rendering_editor(
     import json
 
     page = AppTest.from_file(str(ENTRY)).run()
-    tab(page, planning_pages.LABELS[kind])
+    tab(page, planning_library.LABELS[kind])
     press(
         page,
         "New combined plan"
         if kind == "plan"
-        else f"New {planning_pages.LABELS[kind]} assumptions",
+        else f"New {planning_library.LABELS[kind]} assumptions",
     )
     data = raw(page, kind)
     old_spending = {
@@ -1646,7 +1653,7 @@ def test_old_format_draft_is_preserved_and_exported_without_rendering_editor(
     before = deepcopy(data)
     exports = []
     monkeypatch.setattr(
-        planning_pages.st,
+        planning_library.st,
         "download_button",
         lambda label, contents, **kwargs: exports.append((label, contents)) or False,
     )
@@ -1680,7 +1687,9 @@ def _old_loaded_draft_app(saved_json):
     )
     st.session_state.setdefault("planning_active", {"spending": str(old.id)})
     st.session_state.setdefault("planning_available", {"spending": True})
-    _editor("spending", None, (current,))
+    from financial_model.database_pages import session_database
+
+    _editor("spending", session_database().path, (current,))
 
 
 def test_old_draft_reloads_only_after_explicit_discard_action():

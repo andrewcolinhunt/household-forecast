@@ -14,7 +14,6 @@ from financial_model.schemas import (
     PersonInputs,
     Rate,
     Scenario,
-    ScenarioResult,
     dollars,
 )
 
@@ -56,37 +55,3 @@ def convert_legacy_inputs(
         allocation_plan=destinations.model_copy(update={"rows": tuple(rows)}),
     )
     return Scenario.model_validate(data)
-
-
-def verify_legacy_totals(old: dict[str, Any], result: ScenarioResult) -> None:
-    """Fail migration if goal assignment changes any financial source or tax."""
-    for key in (
-        "gross_cash",
-        "gross_rsus",
-        "employee_401k",
-        "employer_retirement",
-        "option_cost",
-        "option_value",
-        "living_cost",
-        "rsu_tax_funding",
-        "retained_rsus",
-        "cash_funded_tax",
-    ):
-        if Decimal(str(old[key])) != getattr(result, key):
-            msg = f"Migration changed {key}; review before applying."
-            raise ValueError(msg)
-    if old["taxes"] != result.taxes.model_dump(mode="json"):
-        # JSON amounts may use different equivalent decimal spellings.
-        from financial_model.schemas import TaxResult
-
-        if TaxResult.model_validate(old["taxes"]) != result.taxes:
-            msg = "Migration changed taxes; review before applying."
-            raise ValueError(msg)
-    net = (
-        Decimal(str(old["total_savings_and_assets"]))
-        - Decimal(str(old["option_value"]))
-        + Decimal(str(old["option_cost"]))
-    )
-    if net != result.net_saved_from_income:
-        msg = "Migration changed total net additions."
-        raise ValueError(msg)

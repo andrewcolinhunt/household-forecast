@@ -7,6 +7,7 @@ from typing import Any
 
 import streamlit as st
 
+from financial_model import database_pages
 from financial_model import input_forms as forms
 from financial_model.forecast_charts import (
     ChartRow,
@@ -77,29 +78,28 @@ def _open_run(document: SavedForecast) -> None:
     st.session_state.pop("forecast_calculation", None)
 
 
-def _saved_runs(dsn: str | None) -> None:
+def _saved_runs(dsn: str) -> None:
     """Open saved or downloaded runs even when input libraries are unavailable."""
     with st.expander("Open a saved forecast"):
-        if dsn:
-            try:
-                records = list_forecasts(dsn)
-            except ValueError as error:
-                st.error(str(error))
-                records = ()
-            except sqlite3.Error:
-                st.error(
-                    "Saved forecasts could not be read. Try again or open a downloaded JSON file."
-                )
-                records = ()
-            if records:
-                selected = st.selectbox(
-                    "Saved run",
-                    records,
-                    format_func=lambda item: f"{item.request.name} · {item.created_at:%Y-%m-%d %H:%M} UTC",
-                )
-                if st.button("Open saved run"):
-                    _open_run(selected)
-                    st.rerun()
+        try:
+            records = list_forecasts(dsn)
+        except ValueError as error:
+            st.error(str(error))
+            records = ()
+        except sqlite3.Error:
+            st.error(
+                "Saved forecasts could not be read. Try again or open a downloaded JSON file."
+            )
+            records = ()
+        if records:
+            selected = st.selectbox(
+                "Saved run",
+                records,
+                format_func=lambda item: f"{item.request.name} · {item.created_at:%Y-%m-%d %H:%M} UTC",
+            )
+            if st.button("Open saved run"):
+                _open_run(selected)
+                st.rerun()
         uploaded = st.file_uploader("Forecast JSON", type="json", key="forecast_upload")
         if uploaded is not None and st.button("Open forecast JSON"):
             try:
@@ -110,17 +110,13 @@ def _saved_runs(dsn: str | None) -> None:
                 st.rerun()
 
 
-def _plans(dsn: str | None) -> dict[str, PlanningScenario]:
+def _plans(dsn: str) -> dict[str, PlanningScenario]:
     """Read only current saved Plans for new forecasts."""
-    records = tuple(st.session_state.get("planning_records", {}).get("plan", ()))
-    if dsn:
-        try:
-            records = list_planning_documents(dsn, "plan")
-        except (sqlite3.Error, ValueError):
-            st.error(
-                "Saved Plans could not be read. An opened forecast remains available."
-            )
-            return {}
+    try:
+        records = list_planning_documents(dsn, "plan")
+    except (sqlite3.Error, ValueError):
+        st.error("Saved Plans could not be read. An opened forecast remains available.")
+        return {}
     return plan_options(records)
 
 
@@ -494,7 +490,7 @@ def _overview(document: SavedForecast) -> None:
         )
 
 
-def _results(document: SavedForecast, dsn: str | None) -> None:
+def _results(document: SavedForecast, dsn: str) -> None:
     """Group overview and accepted breakdowns around the same frozen run."""
     from financial_model.forecast_views import forecast_breakdown, forecast_sensitivity
 
@@ -515,10 +511,6 @@ def _results(document: SavedForecast, dsn: str | None) -> None:
             else:
                 forecast_breakdown(document, label)
     st.markdown("#### Keep this forecast")
-    if not dsn:
-        st.caption(
-            "Database saving is unavailable. Download a copy to reopen this forecast later."
-        )
     st.download_button(
         "Download forecast JSON",
         document.model_dump_json(indent=2),
@@ -526,10 +518,7 @@ def _results(document: SavedForecast, dsn: str | None) -> None:
         mime="application/json",
     )
     saved_ids = st.session_state.setdefault("forecast_saved_ids", set())
-    if (
-        st.button("Save forecast", disabled=not dsn or str(document.id) in saved_ids)
-        and dsn
-    ):
+    if st.button("Save forecast", disabled=str(document.id) in saved_ids):
         try:
             create_forecast(dsn, document)
         except sqlite3.Error as error:
@@ -550,14 +539,13 @@ def _results(document: SavedForecast, dsn: str | None) -> None:
 
 def forecast_page() -> None:
     """Set up, run, compare, inspect, and retain household forecasts."""
-    from financial_model.app import _database_path
     from financial_model.forecast import forecast_issues
 
     st.title("Forecast")
     st.caption(
         "See how saved Plans affect wealth and the ability to pay expenses through retirement."
     )
-    dsn = _database_path()
+    dsn = database_pages.database_path()
     _saved_runs(dsn)
     with st.expander(
         "Set up forecast", expanded="forecast_document" not in st.session_state

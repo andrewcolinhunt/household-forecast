@@ -3,13 +3,53 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
+from typing import Any
 
 import pytest
 
-from financial_model.migration import convert_legacy_inputs, verify_legacy_totals
+from financial_model.migration import convert_legacy_inputs
 from financial_model.model import evaluate_scenario
-from financial_model.schemas import SavedScenario, default_allocation_plan
+from financial_model.schemas import (
+    SavedScenario,
+    ScenarioResult,
+    default_allocation_plan,
+)
 from financial_model.storage import import_backup
+
+
+def _verify_legacy_totals(old: dict[str, Any], result: ScenarioResult) -> None:
+    """Check that migration preserves financial sources, taxes, and net additions."""
+    for key in (
+        "gross_cash",
+        "gross_rsus",
+        "employee_401k",
+        "employer_retirement",
+        "option_cost",
+        "option_value",
+        "living_cost",
+        "rsu_tax_funding",
+        "retained_rsus",
+        "cash_funded_tax",
+    ):
+        if Decimal(str(old[key])) != getattr(result, key):
+            msg = f"Migration changed {key}; review before applying."
+            raise ValueError(msg)
+    if old["taxes"] != result.taxes.model_dump(mode="json"):
+        # JSON amounts may use different equivalent decimal spellings.
+        from financial_model.schemas import TaxResult
+
+        if TaxResult.model_validate(old["taxes"]) != result.taxes:
+            msg = "Migration changed taxes; review before applying."
+            raise ValueError(msg)
+    net = (
+        Decimal(str(old["total_savings_and_assets"]))
+        - Decimal(str(old["option_value"]))
+        + Decimal(str(old["option_cost"]))
+    )
+    if net != result.net_saved_from_income:
+        msg = "Migration changed total net additions."
+        raise ValueError(msg)
 
 
 @pytest.fixture
@@ -36,7 +76,7 @@ def test_legacy_conversion_requires_destinations_and_keeps_cash_target(legacy):
     assert inputs.allocation_plan.fixed_cash == 20000
     assert all("savings_rate" not in adult for adult in inputs.model_dump()["adults"])
     result = evaluate_scenario(inputs)
-    verify_legacy_totals(legacy["result"], result)
+    _verify_legacy_totals(legacy["result"], result)
     assert (
         import_backup(
             json.dumps(legacy).encode(), legacy_destinations=default_allocation_plan()
@@ -47,4 +87,4 @@ def test_legacy_conversion_requires_destinations_and_keeps_cash_target(legacy):
         import_backup(json.dumps(legacy).encode())
     changed = dict(legacy["result"], gross_cash="1")
     with pytest.raises(ValueError, match="gross_cash"):
-        verify_legacy_totals(changed, result)
+        _verify_legacy_totals(changed, result)

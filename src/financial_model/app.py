@@ -13,6 +13,7 @@ from uuid import uuid4
 import streamlit as st
 from pydantic import ValidationError
 
+from financial_model import database_pages
 from financial_model import input_forms as forms
 from financial_model.comparison import (
     Period,
@@ -28,9 +29,9 @@ from financial_model.comparison import (
 from financial_model.database_pages import (
     database_controls,
     database_download,
-    session_database,
 )
 from financial_model.model import evaluate_scenario
+from financial_model.navigation import PAGE_DIR, navigate
 from financial_model.scenario_display import (
     ScenarioDisplay,
     scenario_displays,
@@ -43,20 +44,19 @@ from financial_model.schemas import (
     ScenarioResult,
     default_allocation_plan,
 )
+from financial_model.setup_pages import read_goal_catalogue
 from financial_model.storage import (
-    RevisionConflictError,
     create_scenario,
     delete_scenario,
     import_backup,
-    list_goals,
     list_scenarios,
     load_household,
     resolve_goal_conflicts,
     update_scenario,
 )
+from financial_model.storage_common import RevisionConflictError
 from financial_model.taxes import CORE_VERSION, CORRECTION_VERSION, ENGINE_VERSION
 
-PAGE_DIR = Path(__file__).with_name("pages")
 SCENARIOS_PAGE = PAGE_DIR / "scenarios.py"
 COMPARE_PAGE = PAGE_DIR / "compare.py"
 DRAFT_FIELDS = (
@@ -69,16 +69,9 @@ DRAFT_FIELDS = (
 )
 
 
-def _database_path() -> str | None:
-    """Use only the current browser session's private database copy."""
-    return session_database().path
-
-
-def _read_store(dsn: str | None) -> tuple[SavedScenario, ...]:
+def _read_store(dsn: str) -> tuple[SavedScenario, ...]:
     """Keep the editor usable if the shared store is temporarily unavailable."""
-    st.session_state["store_available"] = bool(dsn)
-    if not dsn:
-        return ()
+    st.session_state["store_available"] = True
     try:
         return list_scenarios(dsn)
     except (sqlite3.Error, ValidationError, ValueError):
@@ -108,11 +101,9 @@ def _set_editor(inputs: Scenario | None, record: SavedScenario | None = None) ->
 
 def _household_defaults() -> dict[str, Any]:
     """Copy shared family facts only when starting a new scenario."""
-    dsn = _database_path()
+    dsn = database_pages.database_path()
     try:
-        household = (
-            load_household(dsn) if dsn else st.session_state.get("local_household")
-        )
+        household = load_household(dsn)
     except (sqlite3.Error, ValueError):
         st.warning(
             "Household defaults could not be loaded. Enter the family details for this draft."
@@ -157,23 +148,11 @@ def _open_editor(
     else:
         inputs = record.inputs if record else None
         _set_editor(inputs, None if duplicate else record)
-    from financial_model.scenario_pages import navigate
 
     navigate("Plans", target="annual")
 
 
-def _read_goal_catalogue(dsn: str | None) -> None:
-    """Use live shared names, with local snapshots available in preview mode."""
-    if dsn:
-        try:
-            st.session_state["goals"] = list_goals(dsn)
-        except (sqlite3.Error, ValueError):
-            st.session_state["goals"] = ()
-    else:
-        st.session_state.setdefault("goals", ())
-
-
-def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> None:
+def _submit(data: dict[str, Any], ages: str, action: str, dsn: str) -> None:
     """Keep results and their inputs together through validation and failed saves."""
     loaded = st.session_state.get("loaded_record")
     try:
@@ -191,9 +170,9 @@ def _submit(data: dict[str, Any], ages: str, action: str, dsn: str | None) -> No
     )
     st.session_state["document"] = document
     _remember_draft()
-    if action != "calculate" and dsn:
+    if action != "calculate":
         _save(dsn, document, new=action == "copy" or loaded is None)
-    elif action == "calculate":
+    else:
         st.rerun()
 
 
@@ -395,8 +374,8 @@ def compare_page() -> None:
     st.caption(
         "Annual plans compare a single year. The combined plans used in Forecast are a separate list."
     )
-    st.session_state["records"] = _read_store(_database_path())
-    _read_goal_catalogue(_database_path())
+    st.session_state["records"] = _read_store(database_pages.database_path())
+    read_goal_catalogue(database_pages.database_path())
     choices = _comparison_choices(st.session_state["records"])
     status_labels = {"draft": "Last calculated draft", "snapshot": "Kept snapshot"}
     displays = dict(
@@ -625,7 +604,6 @@ def _backups(document: SavedScenario | None) -> None:
                 st.error("This backup could not be read. Check its format and version.")
         if st.button("Load backup as new draft", disabled=not ready) and inputs:
             _set_editor(inputs)
-            from financial_model.scenario_pages import navigate
 
             navigate("Plans", target="annual")
         st.caption(
@@ -690,10 +668,7 @@ def _confirm_delete(record: SavedScenario) -> None:
         st.session_state.pop("pending_delete", None)
         st.rerun()
     if confirm.button("Delete annual plan", type="primary", width="stretch"):
-        dsn = _database_path()
-        if not dsn:
-            st.error("Saved annual plans are unavailable.")
-            return
+        dsn = database_pages.database_path()
         try:
             delete_scenario(dsn, record.id, record.revision)
         except RevisionConflictError as error:
@@ -789,7 +764,6 @@ def scenarios_page() -> None:
                     st.session_state["editor_epoch"] = (
                         st.session_state.get("editor_epoch", 0) + 1
                     )
-                    from financial_model.scenario_pages import navigate
 
                     navigate("Plans", target="annual")
     if any(
@@ -820,10 +794,6 @@ def main() -> None:
     database_controls()
     if notice := st.session_state.pop("notice", None):
         st.success(notice)
-    if imported := st.session_state.pop("pending_inputs", None):
-        _set_editor(imported)
-        st.session_state["workspace_target"] = "annual"
-        st.session_state["pending_category"] = "Plans"
     # Page widgets are transient; persist comparison choices between visits.
     for key in (
         "scenario_category",

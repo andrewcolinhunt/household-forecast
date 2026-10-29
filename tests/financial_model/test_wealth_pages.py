@@ -12,23 +12,18 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from financial_model import app, wealth_pages
-from financial_model.storage import (
+from financial_model import app, database_pages, wealth_pages
+from financial_model.wealth import AccountPosition, SavedWealthSnapshot, WealthSnapshot
+from financial_model.wealth_storage import (
     create_wealth_snapshot,
     delete_wealth_snapshot,
     list_wealth_snapshots,
     load_wealth_snapshot,
     update_wealth_snapshot,
 )
-from financial_model.wealth import AccountPosition, SavedWealthSnapshot, WealthSnapshot
 
 ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
 PAGES = "src/financial_model/pages/"
-
-
-@pytest.fixture(autouse=True)
-def local_preview(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: None)
 
 
 def go(page: AppTest, target: str) -> AppTest:
@@ -84,7 +79,7 @@ def test_wealth_compact_accounts_and_mixed_edits_survive_navigation(monkeypatch)
     monkeypatch.setattr(app, "evaluate_scenario", no_calculation)
     page = press(library(), "New snapshot")
     assert any("No balances entered" in v.value for v in page.info)
-    assert next(b for b in page.button if b.label == "Save snapshot").disabled
+    assert not next(b for b in page.button if b.label == "Save snapshot").disabled
     press(page, "Add account")
     field(page, "text_input", "Account").set_value("Brokerage").run()
     field(page, "text_input", "Balance ($)").set_value("100.01").run()
@@ -234,9 +229,14 @@ def test_wealth_owner_labels_show_household_names_with_slot_numbers():
     from financial_model.schemas import Household
 
     page = library()
-    page.session_state["local_household"] = Household(
-        tax_year=2026,
-        adults=({"name": "Alex", "age": 40}, {"name": "Sam", "age": 41}),
+    from financial_model.storage import save_household
+
+    save_household(
+        page.session_state["session_database"].path,
+        Household(
+            tax_year=2026,
+            adults=({"name": "Alex", "age": 40}, {"name": "Sam", "age": 41}),
+        ),
     )
     press(page, "New snapshot")
     press(page, "Add account")
@@ -250,7 +250,7 @@ def test_wealth_owner_labels_show_household_names_with_slot_numbers():
 
 @pytest.mark.integration
 def test_wealth_forecast_details_save_and_reload(database_url, monkeypatch):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     page = press(library(), "New snapshot")
     press(page, "Add account")
     field(page, "selectbox", "Tax treatment").select("hsa").run()
@@ -313,7 +313,7 @@ def test_wealth_backup_import_is_new_draft_and_invalid_upload_keeps_edits(
 def test_wealth_saves_incomplete_inputs_and_rejects_invalid_mixed_allocation(
     database_url, monkeypatch
 ):
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     page = press(library(), "New snapshot")
     press(page, "Add account")
     field(page, "text_input", "Balance ($)").set_value("100").run()
@@ -339,7 +339,7 @@ def test_wealth_saves_incomplete_inputs_and_rejects_invalid_mixed_allocation(
 def test_wealth_duplicate_new_date_keeps_original(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     original = saved_example(database_url)
     page = press(library(), "Duplicate")
     assert len(list_wealth_snapshots(database_url)) == 1
@@ -358,7 +358,7 @@ def test_wealth_duplicate_new_date_keeps_original(
 def test_wealth_concurrent_save_preserves_edits_and_allows_copy(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     saved = saved_example(database_url)
     first, second = press(library(), "Edit"), press(library(), "Edit")
     field(first, "text_input", "Balance ($)").set_value("110").run()
@@ -377,7 +377,7 @@ def test_wealth_concurrent_save_preserves_edits_and_allows_copy(
 def test_wealth_reopen_refreshes_only_unchanged_drafts(
     database_url: str, monkeypatch: pytest.MonkeyPatch, edited: bool
 ) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     saved = saved_example(database_url)
     page = press(library(), "Edit")
     if edited:
@@ -403,7 +403,7 @@ def test_wealth_reopen_refreshes_only_unchanged_drafts(
 def test_wealth_failed_save_keeps_draft_and_hides_credentials(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     page = press(library(), "New snapshot")
     field(page, "text_input", "Snapshot name (optional)").set_value("Keep this").run()
 
@@ -505,7 +505,7 @@ def test_wealth_resume_omits_untouched_saved_copies_but_keeps_unsaved_edits(
 def test_wealth_delete_confirmation_and_stale_revision(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     original = saved_example(database_url)
     page = press(library(), "Edit")
     go(page, "wealth")
@@ -529,7 +529,7 @@ def test_wealth_delete_confirmation_and_stale_revision(
 def test_wealth_deleted_open_record_can_only_be_saved_as_new(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(app, "_database_path", lambda: database_url)
+    monkeypatch.setattr(database_pages, "database_path", lambda: database_url)
     saved = saved_example(database_url)
     page = press(library(), "Edit")
     delete_wealth_snapshot(database_url, saved.id, saved.revision)

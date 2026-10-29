@@ -121,9 +121,9 @@ def test_forecast_storage_round_trip_and_duplicate_cannot_replace(
 
 @pytest.mark.integration
 def test_forecast_storage_does_not_create_tables(database_url) -> None:
-    from financial_model.storage import _connect
+    from financial_model.storage_common import connect
 
-    with _connect(database_url) as connection:
+    with connect(database_url) as connection:
         connection.execute("DROP TABLE forecast_runs")
     with pytest.raises(sqlite3.OperationalError):
         list_forecasts(database_url)
@@ -159,10 +159,10 @@ def test_forecast_schema_reapply_preserves_current_runs(
 def test_forecast_database_rejects_invalid_envelopes(
     database_url: str, saved_forecast: SavedForecast, change: dict
 ) -> None:
-    from financial_model.storage import _connect
+    from financial_model.storage_common import connect
 
     raw = saved_forecast.model_dump(mode="json") | change
-    with pytest.raises(sqlite3.IntegrityError), _connect(database_url) as connection:
+    with pytest.raises(sqlite3.IntegrityError), connect(database_url) as connection:
         connection.execute(
             "INSERT INTO forecast_runs VALUES (?, ?, ?)",
             (

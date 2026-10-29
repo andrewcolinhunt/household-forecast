@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from financial_model.schemas import DEFERRAL_LIMIT
 from financial_model.taxes import _ENGINE_LOCK, _tax_system
 
 FloatArray = NDArray[np.float64]
@@ -388,7 +389,11 @@ def yearly_tax(
     if (
         (wages < 0).any()
         or (contributions < 0).any()
-        or (contributions > np.minimum(wages, 24_500 * price[:, None]) + 0.001).any()
+        or (
+            contributions
+            > np.minimum(wages, float(DEFERRAL_LIMIT[POLICY_YEAR]) * price[:, None])
+            + 0.001
+        ).any()
     ):
         message = (
             "Forecast pretax saving must fit wages and the indexed 2026 base limit."

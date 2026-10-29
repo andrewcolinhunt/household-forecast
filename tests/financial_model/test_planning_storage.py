@@ -30,12 +30,8 @@ from financial_model.planning_storage import (
     load_planning_document,
     update_planning_document,
 )
-from financial_model.storage import (
-    MAX_BACKUP_BYTES,
-    RevisionConflictError,
-    list_goals,
-    list_scenarios,
-)
+from financial_model.storage import list_goals, list_scenarios
+from financial_model.storage_common import MAX_BACKUP_BYTES, RevisionConflictError
 
 
 @pytest.mark.integration
@@ -251,9 +247,9 @@ def test_planning_database_rejects_invalid_envelopes(
 ) -> None:
     document = SavedPlanningDocument(inputs=EconomicAssumptions(name="Synthetic"))
     raw = document.model_dump(mode="json") | change
-    from financial_model.storage import _connect
+    from financial_model.storage_common import connect
 
-    with pytest.raises(sqlite3.IntegrityError), _connect(database_url) as connection:
+    with pytest.raises(sqlite3.IntegrityError), connect(database_url) as connection:
         connection.execute(
             "INSERT INTO planning_documents VALUES (?, 1, ?, ?)",
             (str(document.id), json.dumps(raw), document.updated_at.isoformat()),

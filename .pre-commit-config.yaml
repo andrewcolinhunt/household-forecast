@@ -22,6 +22,7 @@ repos:
       - id: mixed-line-ending
       - id: name-tests-test
         args: ["--pytest-test-first"]
+        exclude: ^tests/ui_helpers\.py$ # Shared setup, not a test module.
       - id: trailing-whitespace
 
   - repo: https://github.com/pre-commit/pygrep-hooks

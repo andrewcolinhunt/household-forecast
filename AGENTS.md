@@ -128,7 +128,6 @@ src/financial_model/   # Package source
 tests/financial_model/ # Tests (mirrors src/)
 docs/                  # Jupyter Book 2 / MyST
 scripts/               # Post-install fixups
-skills/                # Canonical in-repo agent skills
 ```
 
 ---

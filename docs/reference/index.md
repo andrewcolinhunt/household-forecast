@@ -336,6 +336,8 @@ See [the database file workflow](#database-files).
 
 Storage functions take a SQLite file path in their `dsn` argument. There is no
 runtime PostgreSQL connection or database URL configuration.
+`financial_model.storage_common` owns connection handling, backup size limits,
+and `RevisionConflictError`.
 
 `financial_model.storage` provides `list_scenarios`, `load_scenario`,
 `create_scenario`, `update_scenario`, and `delete_scenario`. Each call uses a short
@@ -361,9 +363,11 @@ updates. `Household.scenario_defaults()` copies family facts into a new input bu
 It does not copy a calculation, confirmation, employment, or allocation plan. Existing
 scenario documents remain independent of later household-default changes.
 
-`list_wealth_snapshots`, `load_wealth_snapshot`, `create_wealth_snapshot`,
-`update_wealth_snapshot`, and `delete_wealth_snapshot` store complete validated
-documents in `wealth_snapshots`. Listing sorts by financial date, then save time.
+`financial_model.wealth_storage` provides `list_wealth_snapshots`,
+`load_wealth_snapshot`, `create_wealth_snapshot`,
+`update_wealth_snapshot`, and `delete_wealth_snapshot`. These functions store
+complete validated documents in `wealth_snapshots`. Listing sorts by financial
+date, then save time.
 Creation requires revision 1. Updates and deletions use an atomic revision check;
 updates also preserve the financial date. Use a new identity for another date.
 No snapshot operation modifies scenarios, household defaults, or goal assignments.

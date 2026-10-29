@@ -18,6 +18,11 @@ def session_database() -> SessionDatabase:
     return cast(SessionDatabase, st.session_state["session_database"])
 
 
+def database_path() -> str:
+    """Return the current browser session's private SQLite path."""
+    return session_database().path
+
+
 def replace_database(data: bytes | None) -> None:
     """Validate a replacement before clearing old drafts, widgets, and selections."""
     replacement = SessionDatabase(data)

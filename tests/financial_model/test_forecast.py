@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -251,6 +252,36 @@ def test_forecast_pretax_tax_grossup_and_inaccessible_early_retirement(monkeypat
     assert first["unfunded"] == 1000
     assert first["assets"] == 10000
     assert first["accessible"] == 0
+
+
+@pytest.mark.parametrize(
+    ("treatment", "age", "withdrawal", "accessible"),
+    [
+        ("taxable", 59, 1000, 9000),
+        ("taxable", 60, 1000, 9000),
+        ("tax_deferred", 59, 0, 0),
+        ("tax_deferred", 60, 1000, 9000),
+        ("roth", 59, 0, 0),
+        ("roth", 60, 1000, 9000),
+        ("hsa", 59, 0, 0),
+        ("hsa", 60, 0, 0),
+    ],
+)
+def test_forecast_account_access_matches_withdrawals_and_reported_wealth(
+    zero_tax: None, treatment: str, age: int, withdrawal: int, accessible: int
+) -> None:
+    def edit(data: dict[str, Any]) -> None:
+        plan = data["plans"][0]
+        plan["household"]["adults"][0]["age"] = age
+        plan["wealth"]["snapshot"]["accounts"][0].update(
+            tax_treatment=treatment, owner=None if treatment == "taxable" else 1
+        )
+
+    row = calculate_forecast(_edit(forecast_request(), edit)).inspect(0, 0)[0]
+    assert row["withdrawals"] == row["spending_paid"] == withdrawal
+    assert row["accessible"] == accessible
+    assert row["assets"] == 10000 - withdrawal
+    assert row["unfunded"] == 1000 - withdrawal
 
 
 def test_forecast_withdrawal_funds_expenses_across_tax_credit_step(monkeypatch):

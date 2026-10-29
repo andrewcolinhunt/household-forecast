@@ -11,7 +11,8 @@ from uuid import uuid4
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from financial_model import app, forecast_pages
+from financial_model import database_pages, forecast_pages
+from financial_model.database import SessionDatabase
 from financial_model.forecast_models import (
     ForecastExpense,
     ForecastPoint,
@@ -28,6 +29,11 @@ from financial_model.planning import (
     SpendingAssumptions,
     WorkAssumptions,
     select_profile,
+)
+from financial_model.planning_storage import (
+    create_planning_document,
+    delete_planning_document,
+    update_planning_document,
 )
 
 ENTRY = Path(__file__).parents[2] / "streamlit_app.py"
@@ -225,13 +231,14 @@ def calculation_calls(monkeypatch):
     module.calculate_forecast = calculate
     module.forecast_issues = lambda request: ()
     monkeypatch.setitem(sys.modules, "financial_model.forecast", module)
-    monkeypatch.setattr(app, "_database_path", lambda: None)
     return calls
 
 
 def open_page(plan_record) -> AppTest:
     page = AppTest.from_file(str(ENTRY))
-    page.session_state["planning_records"] = {"plan": (plan_record,)}
+    database = SessionDatabase()
+    page.session_state["session_database"] = database
+    create_planning_document(database.path, plan_record)
     page.run().switch_page(PAGE).run()
     assert not page.exception
     return page
@@ -296,7 +303,12 @@ def test_forecast_does_not_calculate_until_requested(
         "Simulated future",
         "Sensitivity",
     ]
-    assert field(page, "button", "Save forecast").disabled
+    assert not field(page, "button", "Save forecast").disabled
+    field(page, "button", "Save forecast").click().run()
+    assert not page.exception
+    assert page.session_state["forecast_saved_ids"] == {
+        str(page.session_state["forecast_document"].id)
+    }
     assert page.get("download_button")
     result_tab(page, "Simulated future")
     assert len(page.get("vega_lite_chart")) == 3
@@ -374,7 +386,7 @@ def test_forecast_older_saved_modes_open_unchanged_and_rerun_exact_inputs(
             ),
         }
     )
-    monkeypatch.setattr(app, "_database_path", lambda: "test")
+    monkeypatch.setattr(database_pages, "database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(
         forecast_pages, "list_planning_documents", lambda dsn, kind: (plan_record,)
@@ -419,7 +431,11 @@ def test_forecast_saved_run_reuses_frozen_plans_without_library(
     page.multiselect[0].select(f"{plan_record.id}:0").run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
-    page.session_state["planning_records"] = {}
+    delete_planning_document(
+        page.session_state["session_database"].path,
+        plan_record.id,
+        plan_record.revision,
+    )
     page.run()
     field(page, "button", "Rerun these inputs").click().run()
     assert not page.exception
@@ -441,7 +457,7 @@ def test_forecast_opened_run_does_not_restore_deleted_plan_options(
             "inputs": plan_record.inputs.model_copy(update={"name": "Current Plan"}),
         }
     )
-    monkeypatch.setattr(app, "_database_path", lambda: "test")
+    monkeypatch.setattr(database_pages, "database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(
         forecast_pages, "list_planning_documents", lambda dsn, kind: (replacement,)
@@ -475,7 +491,7 @@ def test_forecast_plan_read_failure_does_not_offer_cached_plans(
         message = "Saved Plan read failed"
         raise error_type(message)
 
-    monkeypatch.setattr(app, "_database_path", lambda: "test")
+    monkeypatch.setattr(database_pages, "database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: (original,))
     monkeypatch.setattr(forecast_pages, "list_planning_documents", unavailable)
     page.run()
@@ -494,7 +510,7 @@ def test_forecast_saved_run_controls_omit_historical_inventory(
     page.multiselect[0].select(f"{plan_record.id}:0").run()
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
-    monkeypatch.setattr(app, "_database_path", lambda: "test")
+    monkeypatch.setattr(database_pages, "database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: ())
     monkeypatch.setattr(forecast_pages, "list_planning_documents", lambda dsn, kind: ())
     page.run()
@@ -596,7 +612,7 @@ def test_forecast_save_failure_preserves_run_and_can_retry(
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
     records = []
-    monkeypatch.setattr(app, "_database_path", lambda: "test")
+    monkeypatch.setattr(database_pages, "database_path", lambda: "test")
     monkeypatch.setattr(forecast_pages, "list_forecasts", lambda dsn: tuple(records))
     monkeypatch.setattr(
         forecast_pages, "list_planning_documents", lambda dsn, kind: (plan_record,)
@@ -649,7 +665,7 @@ def test_forecast_duplicate_names_have_distinct_plot_series(
     )
     page = open_page(plan_record)
     duplicate = plan_record.model_copy(update={"id": uuid4()})
-    page.session_state["planning_records"] = {"plan": (plan_record, duplicate)}
+    create_planning_document(page.session_state["session_database"].path, duplicate)
     page.run()
     page.multiselect[0].select(f"{plan_record.id}:0").select(f"{duplicate.id}:0").run()
     page.button_group(key="mode_0").set_value(mode).run()
@@ -802,7 +818,7 @@ def test_forecast_detail_tabs_share_future_and_do_not_calculate(
 ) -> None:
     page = open_page(plan_record)
     duplicate = plan_record.model_copy(update={"id": uuid4()})
-    page.session_state["planning_records"] = {"plan": (plan_record, duplicate)}
+    create_planning_document(page.session_state["session_database"].path, duplicate)
     page.run()
     page.multiselect[0].select(f"{plan_record.id}:0").select(f"{duplicate.id}:0").run()
     field(page, "button", "Run forecast").click().run()
@@ -1004,9 +1020,10 @@ def test_forecast_sensitivity_requires_action_and_uses_frozen_plan(
     field(page, "button", "Run forecast").click().run()
     original = page.session_state["forecast_document"]
     changed = plan_record.inputs.model_copy(update={"name": "Changed in library"})
-    page.session_state["planning_records"] = {
-        "plan": (plan_record.model_copy(update={"inputs": changed}),)
-    }
+    update_planning_document(
+        page.session_state["session_database"].path,
+        plan_record.model_copy(update={"inputs": changed}),
+    )
 
     result_tab(page, "Sensitivity")
     assert not sensitivity_calls

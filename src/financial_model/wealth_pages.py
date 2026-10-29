@@ -10,18 +10,10 @@ from uuid import uuid4
 import streamlit as st
 
 from financial_model import input_forms as forms
-from financial_model.scenario_pages import category_link, navigate
+from financial_model.navigation import category_link, navigate
 from financial_model.setup_pages import _setup_error
-from financial_model.storage import (
-    MAX_BACKUP_BYTES,
-    RevisionConflictError,
-    create_wealth_snapshot,
-    delete_wealth_snapshot,
-    import_wealth_backup,
-    list_wealth_snapshots,
-    load_household,
-    update_wealth_snapshot,
-)
+from financial_model.storage import load_household
+from financial_model.storage_common import MAX_BACKUP_BYTES, RevisionConflictError
 from financial_model.wealth import (
     AccountPosition,
     DebtPosition,
@@ -30,6 +22,13 @@ from financial_model.wealth import (
     SavedWealthSnapshot,
     TaxTreatment,
     WealthSnapshot,
+)
+from financial_model.wealth_storage import (
+    create_wealth_snapshot,
+    delete_wealth_snapshot,
+    import_wealth_backup,
+    list_wealth_snapshots,
+    update_wealth_snapshot,
 )
 
 LABELS = {
@@ -98,11 +97,9 @@ def _open(
     navigate("Wealth", target="library", view="editor")
 
 
-def _read(dsn: str | None) -> tuple[SavedWealthSnapshot, ...]:
+def _read(dsn: str) -> tuple[SavedWealthSnapshot, ...]:
     """Read current snapshots without offering cached choices after failure."""
-    st.session_state["wealth_store_available"] = bool(dsn)
-    if not dsn:
-        return ()
+    st.session_state["wealth_store_available"] = True
     try:
         return list_wealth_snapshots(dsn)
     except (sqlite3.Error, ValueError):
@@ -176,13 +173,11 @@ def _investment_choice(row: dict[str, Any]) -> None:
         st.session_state.pop(_key(row, field), None)
 
 
-def _owner_labels(dsn: str | None) -> dict[int | None, str]:
+def _owner_labels(dsn: str) -> dict[int | None, str]:
     """Label household slots without deriving ownership from account names."""
     labels: dict[int | None, str] = {None: "Not entered", 1: "Adult 1", 2: "Adult 2"}
     try:
-        household = (
-            load_household(dsn) if dsn else st.session_state.get("local_household")
-        )
+        household = load_household(dsn)
     except (sqlite3.Error, ValueError):
         return labels
     if household:
@@ -535,7 +530,7 @@ def _backups(
         )
 
 
-def wealth_editor_page(dsn: str | None) -> None:
+def wealth_editor_page(dsn: str) -> None:
     """Edit a dated snapshot without invoking the annual tax or allocation engine."""
     records = _read(dsn)
     if "wealth_active" not in st.session_state:
@@ -570,11 +565,10 @@ def wealth_editor_page(dsn: str | None) -> None:
     save, copy = st.columns(2)
     if (
         save.button("Save snapshot", type="primary", disabled=not available)
-        and dsn
         and snapshot
     ):
         _save(dsn, snapshot, new=False)
-    if copy.button("Save as new snapshot", disabled=not available) and dsn and snapshot:
+    if copy.button("Save as new snapshot", disabled=not available) and snapshot:
         _save(dsn, snapshot, new=True)
     if latest:
         with st.expander("Reload saved snapshot"):
@@ -609,7 +603,7 @@ def _card(record: SavedWealthSnapshot) -> None:
 
 
 @st.dialog("Delete wealth snapshot?", dismissible=False)
-def _confirm_delete(dsn: str | None, record: SavedWealthSnapshot) -> None:
+def _confirm_delete(dsn: str, record: SavedWealthSnapshot) -> None:
     """Delete the reviewed revision only, after an explicit shared-record confirmation."""
     st.text(f"{record.snapshot.title} · {record.snapshot.as_of} · {str(record.id)[:8]}")
     st.caption(
@@ -619,10 +613,7 @@ def _confirm_delete(dsn: str | None, record: SavedWealthSnapshot) -> None:
     if cancel.button("Cancel"):
         st.session_state.pop("wealth_pending_delete", None)
         st.rerun()
-    if (
-        confirm.button("Delete wealth snapshot", type="primary", disabled=not dsn)
-        and dsn
-    ):
+    if confirm.button("Delete wealth snapshot", type="primary"):
         try:
             delete_wealth_snapshot(dsn, record.id, record.revision)
         except (RevisionConflictError, sqlite3.Error) as error:
@@ -636,7 +627,7 @@ def _confirm_delete(dsn: str | None, record: SavedWealthSnapshot) -> None:
         st.rerun()
 
 
-def wealth_page(dsn: str | None) -> None:
+def wealth_page(dsn: str) -> None:
     """List reusable dated positions separately from annual planning scenarios."""
     st.title("Wealth")
     st.caption(

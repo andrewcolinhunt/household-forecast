@@ -9,21 +9,20 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from financial_model.storage import (
-    RevisionConflictError,
-    create_wealth_snapshot,
-    delete_wealth_snapshot,
-    import_backup,
-    import_wealth_backup,
-    list_scenarios,
-    list_wealth_snapshots,
-    load_wealth_snapshot,
-    update_wealth_snapshot,
-)
+from financial_model.storage import import_backup, list_scenarios
+from financial_model.storage_common import RevisionConflictError
 from financial_model.wealth import (
     AccountPosition,
     SavedWealthSnapshot,
     WealthSnapshot,
+)
+from financial_model.wealth_storage import (
+    create_wealth_snapshot,
+    delete_wealth_snapshot,
+    import_wealth_backup,
+    list_wealth_snapshots,
+    load_wealth_snapshot,
+    update_wealth_snapshot,
 )
 
 

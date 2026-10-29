@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,7 +11,6 @@ from pydantic import ValidationError
 from financial_model.model import evaluate_scenario
 from financial_model.schemas import SavedScenario, Scenario
 from financial_model.storage import (
-    RevisionConflictError,
     create_scenario,
     delete_scenario,
     import_backup,
@@ -20,6 +18,7 @@ from financial_model.storage import (
     load_scenario,
     update_scenario,
 )
+from financial_model.storage_common import RevisionConflictError
 
 
 @pytest.fixture
@@ -248,49 +247,6 @@ def test_household_revision_checks_and_scenario_isolation(database_url, document
     assert load_scenario(database_url, document.id) == document
     assert "revision" not in changed.scenario_defaults()
     assert "allocation_plan" not in changed.scenario_defaults()
-
-
-def test_connect_requires_existing_database_and_closes_connection(
-    tmp_path: Path,
-) -> None:
-    from financial_model.storage import _connect
-
-    path = tmp_path / "missing.sqlite"
-    with pytest.raises(sqlite3.OperationalError), _connect(str(path)):
-        pytest.fail("A missing database must not be created implicitly.")
-    assert not path.exists()
-
-
-def test_connect_enforces_foreign_keys_and_closes_connection(database_url: str) -> None:
-    from financial_model.storage import _connect
-
-    with _connect(database_url) as connection:
-        assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert connection.execute("PRAGMA trusted_schema").fetchone()[0] == 0
-        assert connection.execute("PRAGMA application_id").fetchone()[0] == 1179471692
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
-    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
-        connection.execute("SELECT 1")
-
-
-def test_connect_rejects_growth_beyond_upload_limit(
-    database_url: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from financial_model import storage
-
-    with storage._connect(database_url) as connection:
-        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
-    limit = Path(database_url).stat().st_size + page_size
-    monkeypatch.setattr(storage, "MAX_DATABASE_BYTES", limit)
-    with (
-        pytest.raises(sqlite3.OperationalError, match="full"),
-        storage._connect(database_url) as connection,
-    ):
-        connection.execute("CREATE TABLE growth_test (data BLOB)")
-        connection.execute("INSERT INTO growth_test VALUES (zeroblob(?))", (limit,))
-    assert Path(database_url).stat().st_size <= limit
-    with storage._connect(database_url) as connection:
-        assert connection.execute("SELECT count(*) FROM growth_test").fetchone()[0] == 0
 
 
 @pytest.mark.integration

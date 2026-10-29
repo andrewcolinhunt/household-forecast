@@ -82,7 +82,7 @@ def rmd_divisor(age: int) -> float:
     return _UNIFORM_LIFETIME[min(age, 120) - 72]
 
 
-def contribution_limits(age: int) -> tuple[float, float]:
+def contribution_limits() -> tuple[float, float]:
     """Return regular employee and total plan caps in 2026 dollars.
 
     Catch-up contributions are excluded at every age: the current inputs do

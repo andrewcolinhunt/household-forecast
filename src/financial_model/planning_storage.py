@@ -8,7 +8,11 @@ from typing import Any
 from uuid import UUID
 
 from financial_model.planning import Kind, PlanningInputs, SavedPlanningDocument
-from financial_model.storage import MAX_BACKUP_BYTES, RevisionConflictError, _connect
+from financial_model.storage_common import (
+    MAX_BACKUP_BYTES,
+    RevisionConflictError,
+    connect,
+)
 
 
 def list_planning_documents(dsn: str, kind: Kind) -> tuple[SavedPlanningDocument, ...]:
@@ -18,7 +22,7 @@ def list_planning_documents(dsn: str, kind: Kind) -> tuple[SavedPlanningDocument
         if kind == "plan"
         else "updated_at DESC, id"
     )
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         rows = connection.execute(
             f"SELECT document FROM planning_documents WHERE document -> 'inputs' ->> 'kind' = ? ORDER BY {order}",
             (kind,),
@@ -28,7 +32,7 @@ def list_planning_documents(dsn: str, kind: Kind) -> tuple[SavedPlanningDocument
 
 def load_planning_document(dsn: str, document_id: UUID) -> SavedPlanningDocument | None:
     """Read a latest input document, without replacing a caller's draft."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "SELECT document FROM planning_documents WHERE id = ?", (str(document_id),)
         ).fetchone()
@@ -42,7 +46,7 @@ def create_planning_document(
     if document.revision != 1:
         msg = "A new planning document must start at revision 1."
         raise ValueError(msg)
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         connection.execute(
             "INSERT INTO planning_documents (id, revision, document, updated_at) VALUES (?, ?, ?, ?)",
             (
@@ -73,7 +77,7 @@ def update_planning_document(
     updated = SavedPlanningDocument(
         id=document.id, revision=document.revision + 1, inputs=document.inputs
     )
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "UPDATE planning_documents SET revision = ?, document = ?, updated_at = ? WHERE id = ? AND revision = ? AND document -> 'inputs' ->> 'kind' = ? RETURNING id",
             (
@@ -93,7 +97,7 @@ def update_planning_document(
 
 def delete_planning_document(dsn: str, document_id: UUID, revision: int) -> None:
     """Delete only the revision reviewed by the user; embedded Plan copies survive."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "DELETE FROM planning_documents WHERE id = ? AND revision = ? RETURNING id",
             (str(document_id), revision),

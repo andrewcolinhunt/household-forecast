@@ -31,6 +31,5 @@ def test_rmd_divisor_rejects_age_outside_table():
         rmd_divisor(71)
 
 
-@pytest.mark.parametrize("age", [30, 50, 60, 64])
-def test_contribution_limits_do_not_invent_catch_up_contributions(age):
-    assert contribution_limits(age) == (24500, 72000)
+def test_contribution_limits_do_not_invent_catch_up_contributions():
+    assert contribution_limits() == (24500, 72000)

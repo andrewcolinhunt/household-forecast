@@ -20,9 +20,9 @@ from financial_model.planning_storage import (
 )
 from financial_model.storage import (
     list_scenarios,
-    list_wealth_snapshots,
     load_household,
 )
+from financial_model.wealth_storage import list_wealth_snapshots
 
 
 @pytest.fixture(scope="module")

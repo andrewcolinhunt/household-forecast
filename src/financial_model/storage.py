@@ -1,16 +1,12 @@
-"""Portable SQLite scenarios with atomic revision checks."""
+"""Annual scenarios, household defaults, and goals in SQLite."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID
 
-from financial_model.database import MAX_DATABASE_BYTES
 from financial_model.migration import convert_legacy_inputs
 from financial_model.schemas import (
     AllocationPlan,
@@ -19,34 +15,16 @@ from financial_model.schemas import (
     SavedScenario,
     Scenario,
 )
-from financial_model.wealth import SavedWealthSnapshot, WealthSnapshot
-
-MAX_BACKUP_BYTES = 1_000_000
-
-
-class RevisionConflictError(Exception):
-    """The record changed or was deleted after this session loaded it."""
-
-
-@contextmanager
-def _connect(dsn: str) -> Iterator[sqlite3.Connection]:
-    """Open an existing database and commit or roll back before closing it."""
-    connection = sqlite3.connect(Path(dsn).resolve().as_uri() + "?mode=rw", uri=True)
-    connection.row_factory = sqlite3.Row
-    try:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA trusted_schema = OFF")
-        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
-        connection.execute(f"PRAGMA max_page_count = {MAX_DATABASE_BYTES // page_size}")
-        with connection:
-            yield connection
-    finally:
-        connection.close()
+from financial_model.storage_common import (
+    MAX_BACKUP_BYTES,
+    RevisionConflictError,
+    connect,
+)
 
 
 def list_scenarios(dsn: str) -> tuple[SavedScenario, ...]:
     """Load annual plans in stable, case-insensitive name order."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         rows = connection.execute(
             "SELECT document FROM scenarios ORDER BY lower(document -> 'inputs' ->> 'name'), id"
         ).fetchall()
@@ -55,7 +33,7 @@ def list_scenarios(dsn: str) -> tuple[SavedScenario, ...]:
 
 def load_scenario(dsn: str, scenario_id: UUID) -> SavedScenario | None:
     """Read one shared scenario, returning None when it no longer exists."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "SELECT document FROM scenarios WHERE id = ?", (str(scenario_id),)
         ).fetchone()
@@ -67,7 +45,7 @@ def create_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
     if document.revision != 1:
         message = "A new scenario must start at revision 1."
         raise ValueError(message)
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         _register_goals(connection, document)
         connection.execute(
             "INSERT INTO scenarios (id, revision, document, updated_at) VALUES (?, ?, ?, ?)",
@@ -102,7 +80,7 @@ def update_scenario(dsn: str, document: SavedScenario) -> SavedScenario:
         inputs=document.inputs,
         result=document.result,
     )
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         _register_goals(connection, document)
         row = connection.execute(
             "UPDATE scenarios SET revision = ?, document = ?, updated_at = ? "
@@ -133,7 +111,7 @@ def delete_scenario(dsn: str, scenario_id: UUID, revision: int) -> None:
     Raises:
         RevisionConflictError: If the scenario changed or was already deleted.
     """
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "DELETE FROM scenarios WHERE id = ? AND revision = ? RETURNING id",
             (str(scenario_id), revision),
@@ -163,7 +141,7 @@ def import_backup(
 
 def list_goals(dsn: str) -> tuple[Goal, ...]:
     """Read the household's shared goal catalogue."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         rows = connection.execute(
             "SELECT id, name, revision FROM goals ORDER BY name, id"
         ).fetchall()
@@ -172,7 +150,7 @@ def list_goals(dsn: str) -> tuple[Goal, ...]:
 
 def create_goal(dsn: str, goal: Goal) -> Goal:
     """Create a user-named purpose without assigning any assets."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         connection.execute(
             "INSERT INTO goals (id, name, revision) VALUES (?, ?, 1)",
             (str(goal.id), goal.name),
@@ -182,7 +160,7 @@ def create_goal(dsn: str, goal: Goal) -> Goal:
 
 def update_goal(dsn: str, goal: Goal) -> Goal:
     """Rename only the reviewed goal revision, preserving all assignments."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "UPDATE goals SET name = ?, revision = revision + 1 WHERE id = ? AND revision = ? RETURNING id, name, revision",
             (goal.name, str(goal.id), goal.revision),
@@ -196,7 +174,7 @@ def update_goal(dsn: str, goal: Goal) -> Goal:
 def delete_goal(dsn: str, goal: Goal) -> None:
     """Remove an unused goal; foreign keys protect all saved scenario references."""
     try:
-        with _connect(dsn) as connection:
+        with connect(dsn) as connection:
             row = connection.execute(
                 "DELETE FROM goals WHERE id = ? AND revision = ? RETURNING id",
                 (str(goal.id), goal.revision),
@@ -261,7 +239,7 @@ def resolve_goal_conflicts(
 
 def load_household(dsn: str) -> Household | None:
     """Read the shared family defaults, if they have been configured."""
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         row = connection.execute(
             "SELECT document FROM household WHERE id = TRUE"
         ).fetchone()
@@ -271,7 +249,7 @@ def load_household(dsn: str) -> Household | None:
 def save_household(dsn: str, household: Household) -> Household:
     """Save defaults with a revision check, without modifying any scenario."""
     updated = household.model_copy(update={"revision": household.revision + 1})
-    with _connect(dsn) as connection:
+    with connect(dsn) as connection:
         if household.revision == 0:
             row = connection.execute(
                 "INSERT INTO household (id, revision, document) VALUES (TRUE, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING id",
@@ -292,108 +270,3 @@ def save_household(dsn: str, household: Household) -> Household:
             )
             raise RevisionConflictError(message)
     return updated
-
-
-def list_wealth_snapshots(dsn: str) -> tuple[SavedWealthSnapshot, ...]:
-    """Read dated wealth documents, newest financial date first."""
-    with _connect(dsn) as connection:
-        rows = connection.execute(
-            "SELECT document FROM wealth_snapshots "
-            "ORDER BY document -> 'snapshot' ->> 'as_of' DESC, updated_at DESC, id"
-        ).fetchall()
-    return tuple(
-        SavedWealthSnapshot.model_validate_json(row["document"]) for row in rows
-    )
-
-
-def load_wealth_snapshot(dsn: str, snapshot_id: UUID) -> SavedWealthSnapshot | None:
-    """Read one wealth document without substituting newer data into an open draft."""
-    with _connect(dsn) as connection:
-        row = connection.execute(
-            "SELECT document FROM wealth_snapshots WHERE id = ?", (str(snapshot_id),)
-        ).fetchone()
-    return SavedWealthSnapshot.model_validate_json(row["document"]) if row else None
-
-
-def create_wealth_snapshot(
-    dsn: str, document: SavedWealthSnapshot
-) -> SavedWealthSnapshot:
-    """Save a new independent inventory atomically, without evaluating a scenario."""
-    if document.revision != 1:
-        message = "A new wealth snapshot must start at revision 1."
-        raise ValueError(message)
-    with _connect(dsn) as connection:
-        connection.execute(
-            "INSERT INTO wealth_snapshots (id, revision, document, updated_at) "
-            "VALUES (?, ?, ?, ?)",
-            (
-                str(document.id),
-                document.revision,
-                document.model_dump_json(),
-                document.updated_at.astimezone(UTC).isoformat(),
-            ),
-        )
-    return document
-
-
-def update_wealth_snapshot(
-    dsn: str, document: SavedWealthSnapshot
-) -> SavedWealthSnapshot:
-    """Replace the reviewed revision; a new financial date requires a new record.
-
-    Args:
-        dsn: Path of the active SQLite database.
-        document: Inventory with the ID and revision previously loaded.
-
-    Returns:
-        The committed inventory with incremented revision and save timestamp.
-
-    Raises:
-        RevisionConflictError: If the revision or financial date no longer matches.
-    """
-    updated = SavedWealthSnapshot(
-        id=document.id, revision=document.revision + 1, snapshot=document.snapshot
-    )
-    with _connect(dsn) as connection:
-        row = connection.execute(
-            "UPDATE wealth_snapshots SET revision = ?, document = ?, updated_at = ? "
-            "WHERE id = ? AND revision = ? "
-            "AND document -> 'snapshot' ->> 'as_of' = ? RETURNING id",
-            (
-                updated.revision,
-                updated.model_dump_json(),
-                updated.updated_at.astimezone(UTC).isoformat(),
-                str(document.id),
-                document.revision,
-                document.snapshot.as_of.isoformat(),
-            ),
-        ).fetchone()
-        if row is None:
-            message = (
-                "This wealth snapshot changed or was deleted, or its financial date changed. "
-                "Reload or save a new copy."
-            )
-            raise RevisionConflictError(message)
-    return updated
-
-
-def delete_wealth_snapshot(dsn: str, snapshot_id: UUID, revision: int) -> None:
-    """Delete only the saved wealth revision reviewed in the confirmation dialog."""
-    with _connect(dsn) as connection:
-        row = connection.execute(
-            "DELETE FROM wealth_snapshots WHERE id = ? AND revision = ? RETURNING id",
-            (str(snapshot_id), revision),
-        ).fetchone()
-        if row is None:
-            message = (
-                "This wealth snapshot changed or was deleted. Refresh and try again."
-            )
-            raise RevisionConflictError(message)
-
-
-def import_wealth_backup(data: bytes) -> WealthSnapshot:
-    """Validate a wealth backup and discard its database identity for a new draft."""
-    if len(data) > MAX_BACKUP_BYTES:
-        message = "Wealth backup exceeds the 1 MB limit."
-        raise ValueError(message)
-    return SavedWealthSnapshot.model_validate_json(data).snapshot

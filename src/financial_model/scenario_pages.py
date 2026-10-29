@@ -6,9 +6,12 @@ from typing import Any, cast
 
 import streamlit as st
 
+from financial_model import database_pages
 from financial_model import input_forms as forms
+from financial_model.navigation import category_link
 from financial_model.planning import Kind
 from financial_model.schemas import default_allocation_plan
+from financial_model.setup_pages import read_goal_catalogue
 
 CATEGORIES = (
     "Plans",
@@ -21,31 +24,6 @@ CATEGORIES = (
     "Economy",
     "Goals",
 )
-
-
-def navigate(
-    category: str, *, target: str | None = None, view: str | None = None
-) -> None:
-    """Request a category on the next rerun without changing any draft contents."""
-    st.session_state["pending_category"] = category
-    if target is not None:
-        st.session_state["workspace_target"] = target
-    if view is not None:
-        st.session_state.setdefault("workspace_views", {})[category] = view
-    st.rerun()
-
-
-def category_link(
-    label: str,
-    category: str,
-    *,
-    target: str | None = None,
-    view: str | None = None,
-    key: str | None = None,
-) -> None:
-    """Render an explicit navigation action within the current editing context."""
-    if st.button(label, key=key):
-        navigate(category, target=target, view=view)
 
 
 def _annual_buffer() -> dict[str, Any]:
@@ -65,12 +43,12 @@ def _annual_buffer() -> dict[str, Any]:
     return data
 
 
-def _annual_category(category: str, dsn: str | None) -> None:
+def _annual_category(category: str, dsn: str) -> None:
     """Edit only the active concern in one retained annual Scenario buffer."""
     from financial_model import app
 
     data = _annual_buffer()
-    app._read_goal_catalogue(dsn)
+    read_goal_catalogue(dsn)
     catalogue = {str(g.id): g for g in st.session_state.get("goals", ())}
     for row in data["allocation_plan"]["rows"]:
         if row["goal"]["id"] in catalogue:
@@ -135,7 +113,7 @@ def _annual_category(category: str, dsn: str | None) -> None:
     app._remember_draft()
 
 
-def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
+def _annual_assembly(data: dict[str, Any], scope: str, dsn: str) -> None:
     """Assemble an annual case and preserve its explicit calculate/save/result actions."""
     from financial_model import app, planning_pages
 
@@ -233,7 +211,13 @@ def _annual_assembly(data: dict[str, Any], scope: str, dsn: str | None) -> None:
 
 def workspace() -> None:
     """Render only the open category, retaining the category and target across Compare."""
-    from financial_model import app, planning_pages, setup_pages, wealth_pages
+    from financial_model import (
+        app,
+        plan_pages,
+        planning_pages,
+        setup_pages,
+        wealth_pages,
+    )
 
     forms.compact_styles()
 
@@ -251,7 +235,7 @@ def workspace() -> None:
     category = next(
         name for name, tab in zip(CATEGORIES, tabs, strict=True) if tab.open
     )
-    dsn = app._database_path()
+    dsn = database_pages.database_path()
     target = st.session_state.get("workspace_target", "library")
     with tabs[CATEGORIES.index(category)]:
         if target == "annual" and category in {
@@ -264,7 +248,7 @@ def workspace() -> None:
             st.session_state["records"] = app._read_store(dsn)
             _annual_category(category, dsn)
         elif target == "plan" and category == "Household":
-            planning_pages.plan_context(category, dsn)
+            plan_pages.plan_context(dsn)
         elif category == "Household":
             if (
                 st.session_state.get("workspace_views", {}).get("Household")
@@ -284,7 +268,7 @@ def workspace() -> None:
                 )
                 planning_pages.category_page("household", dsn)
         elif category == "Goals":
-            app._read_goal_catalogue(dsn)
+            read_goal_catalogue(dsn)
             st.session_state["records"] = app._read_store(dsn)
             setup_pages.goals_page(dsn, tuple(st.session_state["records"]))
         elif category == "Wealth":
@@ -302,5 +286,5 @@ def workspace() -> None:
             ):
                 st.divider()
                 st.session_state["records"] = app._read_store(dsn)
-                app._read_goal_catalogue(dsn)
+                read_goal_catalogue(dsn)
                 app.scenarios_page()
