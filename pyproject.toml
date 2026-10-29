@@ -38,7 +38,6 @@ ruff         = "==0.13.2"
 pre-commit   = "=4.3.0,<5"
 mypy         = "==1.18.2"
 ipython      = ">=8,<9"  # PolicyEngine Core's supported range
-ipykernel    = "*"
 psutil       = ">=6,<7"  # Keep the conda and PolicyEngine requirements aligned
 pyyaml       = ">=6,<7"
 pip          = "*"  # Required by the generated Community Cloud environment
@@ -47,6 +46,8 @@ nodejs       = ">=20"
 
 [tool.pixi.pypi-dependencies]
 household-forecast = { path = ".", editable = true }
+# The PyPI kernel uses bundled ZeroMQ without unused Kerberos authentication.
+ipykernel = ">=7.3,<8"
 # Small runtime kit
 rootutils = ">=1.0"
 pydantic  = ">=2.11,<3"
