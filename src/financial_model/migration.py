@@ -39,7 +39,7 @@ def convert_legacy_inputs(
     additional = ZERO
     for raw in data["adults"]:
         person = dict(raw)
-        rate = TypeAdapter(Rate).validate_python(person.pop("savings_rate"))
+        rate: Decimal = TypeAdapter(Rate).validate_python(person.pop("savings_rate"))
         adult = PersonInputs.model_validate(person)
         additional += max(dollars(rate * adult.wages) - adult.employee_401k, ZERO)
         adults.append(adult)
