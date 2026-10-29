@@ -1,4 +1,4 @@
-"""Public files exclude private databases, credentials, and private term lists."""
+"""Public files exclude private data; repository integration checks require Git."""
 
 from __future__ import annotations
 
@@ -145,6 +145,7 @@ def test_load_private_terms_requires_external_file(tmp_path: Path) -> None:
         load_private_terms(private, root)
 
 
+@pytest.mark.integration
 def test_history_contents_includes_deleted_files(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(["git", "config", "user.name", "Example"], cwd=tmp_path, check=True)
@@ -169,6 +170,7 @@ def test_history_contents_includes_deleted_files(tmp_path: Path) -> None:
     assert findings == ["old.txt:1: private term"]
 
 
+@pytest.mark.integration
 def test_history_contents_checks_every_name_for_reused_blob(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     for name in ("public.txt", ".env.production"):
@@ -196,6 +198,7 @@ def test_history_contents_checks_every_name_for_reused_blob(tmp_path: Path) -> N
     assert ".env.production: private file" in findings
 
 
+@pytest.mark.integration
 def test_tracked_contents_does_not_read_private_symlink(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     private = tmp_path.parent / "private-notes.txt"
@@ -205,6 +208,7 @@ def test_tracked_contents_does_not_read_private_symlink(tmp_path: Path) -> None:
     assert list(tracked_contents(tmp_path)) == [("link", str(private).encode())]
 
 
+@pytest.mark.integration
 def test_repository_tracked_files_exclude_private_content() -> None:
     findings = [
         finding
@@ -214,6 +218,7 @@ def test_repository_tracked_files_exclude_private_content() -> None:
     assert not findings, "\n".join(findings)
 
 
+@pytest.mark.integration
 def test_main_checks_unpacked_release_and_fails_if_missing(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
@@ -244,6 +249,7 @@ def test_main_checks_unpacked_release_and_fails_if_missing(tmp_path: Path) -> No
     assert "release directory does not exist" in missing.stderr
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "name",
     [
