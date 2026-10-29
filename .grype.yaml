@@ -1,0 +1,10 @@
+fail-on-severity: high
+check-for-app-update: false
+match:
+  stock:
+    # Conda packages use NVD/CPE matches; Python metadata also uses Python advisories.
+    using-cpes: true
+db:
+  require-update-check: true
+  validate-age: true
+  validate-by-hash-on-start: true
