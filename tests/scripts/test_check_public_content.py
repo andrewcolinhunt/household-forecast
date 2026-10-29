@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -120,6 +123,16 @@ def test_check_content_redacts_private_terms_and_matches_words() -> None:
     )
     assert result == ["example.py:2: private term"]
     assert not check_content("example.py", b"Morgan Exampleton", ("Morgan Example",))
+
+
+def test_check_content_redacts_private_filename() -> None:
+    findings = check_content(
+        "Morgan Example.txt", b"Morgan Example", ("Morgan Example",)
+    )
+    assert findings == [
+        "[redacted filename]: private term in filename",
+        "[redacted filename]:1: private term",
+    ]
 
 
 def test_check_content_allows_synthetic_examples_and_author_contact() -> None:
@@ -270,3 +283,221 @@ def test_private_outputs_are_ignored(name: str) -> None:
         ["git", "check-ignore", "--no-index", "-q", name], cwd=ROOT, check=False
     )
     assert result.returncode == 0
+
+
+def _git(root: Path, *arguments: str) -> str:
+    return subprocess.check_output(["git", *arguments], cwd=root, text=True).strip()
+
+
+@pytest.fixture
+def push_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q", "-b", "main")
+    _git(repository, "config", "user.name", "Example")
+    _git(repository, "config", "user.email", "example@example.com")
+    _git(repository, "commit", "--allow-empty", "-qm", "Initial example")
+    private = tmp_path / "private.json"
+    private.write_text(json.dumps(["Morgan Example"]))
+    _git(
+        repository,
+        "config",
+        "--local",
+        "household-forecast.privateTermsFile",
+        str(private),
+    )
+    return repository
+
+
+def _check_push(root: Path, *refs: str) -> subprocess.CompletedProcess[str]:
+    updates = "".join(
+        f"{ref} {_git(root, 'rev-parse', ref)} refs/heads/example-{number} {'0' * 40}\n"
+        for number, ref in enumerate(refs)
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/check_public_content.py"),
+            "--root",
+            str(root),
+            "--pre-push",
+        ],
+        input=updates,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+@pytest.mark.integration
+def test_pre_push_checks_deleted_contents_and_all_pushed_refs(
+    push_repository: Path,
+) -> None:
+    root = push_repository
+    clean = _git(root, "rev-parse", "HEAD")
+    (root / "old.txt").write_text("Morgan Example")
+    _git(root, "add", "old.txt")
+    _git(root, "commit", "-qm", "Add example")
+    _git(root, "rm", "old.txt")
+    _git(root, "commit", "-qm", "Remove example")
+    result = _check_push(root, clean, "HEAD")
+    assert result.returncode == 1
+    assert "old.txt:1: private term" in result.stdout
+    assert "Morgan Example" not in result.stdout + result.stderr
+
+
+@pytest.mark.integration
+def test_pre_push_checks_reused_private_filename_after_deletion(
+    push_repository: Path,
+) -> None:
+    root = push_repository
+    for name in ("example.txt", ".env.production"):
+        (root / name).write_text("same contents")
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "Add example")
+    _git(root, "rm", ".env.production")
+    _git(root, "commit", "-qm", "Remove private path")
+    result = _check_push(root, "HEAD")
+    assert result.returncode == 1
+    assert ".env.production: private file" in result.stdout
+
+
+@pytest.mark.integration
+def test_pre_push_ignores_unrelated_history_and_uncommitted_files(
+    push_repository: Path,
+) -> None:
+    root = push_repository
+    _git(root, "checkout", "-qb", "private")
+    (root / "private.txt").write_text("Morgan Example")
+    _git(root, "add", "private.txt")
+    _git(root, "commit", "-qm", "Private branch")
+    _git(root, "checkout", "-q", "main")
+    (root / "uncommitted.txt").write_text("Morgan Example")
+    _git(root, "add", "uncommitted.txt")
+    result = _check_push(root, "HEAD")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("location", ["author", "message", "tag"])
+def test_pre_push_checks_commit_metadata_and_annotated_tags(
+    push_repository: Path, location: str
+) -> None:
+    root = push_repository
+    if location == "author":
+        _git(root, "config", "user.name", "Morgan Example")
+    message = "Morgan Example" if location == "message" else "Example change"
+    _git(root, "commit", "--allow-empty", "-qm", message)
+    ref = "HEAD"
+    if location == "tag":
+        _git(root, "tag", "-a", "v1", "-m", "Morgan Example")
+        ref = "refs/tags/v1"
+    result = _check_push(root, ref)
+    assert result.returncode == 1
+    assert "private term" in result.stdout
+    assert "Morgan Example" not in result.stdout + result.stderr
+
+
+@pytest.mark.integration
+def test_pre_push_fails_when_configured_terms_are_missing(
+    push_repository: Path,
+) -> None:
+    _git(
+        push_repository,
+        "config",
+        "--local",
+        "household-forecast.privateTermsFile",
+        "../missing.json",
+    )
+    result = _check_push(push_repository, "HEAD")
+    assert result.returncode == 2
+    assert "Cannot load private terms" in result.stderr
+
+
+@pytest.mark.integration
+def test_pre_push_allows_ref_deletion(push_repository: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/check_public_content.py"),
+            "--root",
+            str(push_repository),
+            "--pre-push",
+        ],
+        input=f"(delete) {'0' * 40} refs/heads/old {_git(push_repository, 'rev-parse', 'HEAD')}\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.integration
+def test_setup_installs_guard_repeatably_and_preserves_existing_hook(
+    push_repository: Path,
+) -> None:
+    root = push_repository
+    scripts = root / "scripts"
+    scripts.mkdir()
+    for name in ("setup.sh", "pre-push"):
+        shutil.copyfile(ROOT / "scripts" / name, scripts / name)
+    hook = root / ".git/hooks/pre-push"
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    command = ["bash", "scripts/setup.sh"]
+    blocked = subprocess.run(
+        command, cwd=root, capture_output=True, text=True, check=False
+    )
+    assert blocked.returncode == 1
+    assert "manual integration" in blocked.stderr
+    assert hook.read_text() == "#!/bin/sh\nexit 1\n"
+    hook.unlink()
+    for _ in range(2):
+        result = subprocess.run(
+            command, cwd=root, capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stderr
+        assert hook.is_symlink()
+        assert hook.resolve() == scripts / "pre-push"
+        assert hook.stat().st_mode & 0o111
+
+
+@pytest.mark.integration
+def test_installed_hook_blocks_actual_push_of_deleted_private_data(
+    push_repository: Path, tmp_path: Path
+) -> None:
+    root = push_repository
+    clean = _git(root, "rev-parse", "HEAD")
+    (root / "old.txt").write_text("Morgan Example")
+    _git(root, "add", "old.txt")
+    _git(root, "commit", "-qm", "Add example")
+    _git(root, "rm", "old.txt")
+    _git(root, "commit", "-qm", "Remove example")
+    scripts = root / "scripts"
+    scripts.mkdir()
+    for name in ("pre-push", "check_public_content.py"):
+        shutil.copyfile(ROOT / "scripts" / name, scripts / name)
+    (scripts / "pre-push").chmod(0o755)
+    (root / ".git/hooks/pre-push").symlink_to(scripts / "pre-push")
+    # Substitute only Pixi's environment launcher; exercise the real Git hook.
+    home = tmp_path / "home"
+    launcher = home / ".pixi/bin/pixi"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text(
+        f'#!/bin/sh\nshift 4\nexec {shlex.quote(sys.executable)} "$@"\n'
+    )
+    launcher.chmod(0o755)
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "-q", str(remote))
+    environment = {**os.environ, "HOME": str(home)}
+    for ref, expected in ((clean, 0), ("HEAD", 1)):
+        result = subprocess.run(
+            ["git", "push", str(remote), f"{ref}:refs/heads/main"],
+            cwd=root,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == expected, result.stdout + result.stderr
+    assert "old.txt:1: private term" in result.stdout
+    assert _git(remote, "rev-parse", "refs/heads/main") == clean

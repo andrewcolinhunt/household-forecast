@@ -58,6 +58,7 @@ See [getting started](docs/getting-started/index.md) for a walkthrough and the
 
 Source code is in `src/financial_model/`; tests are in `tests/financial_model/`.
 Pixi manages dependencies through `pyproject.toml` and `pixi.lock`.
+See [Contributing](CONTRIBUTING.md) for privacy checks and the development workflow.
 
 ```bash
 pixi run --locked fmt

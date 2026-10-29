@@ -7,7 +7,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -75,8 +75,14 @@ def check_content(
     Returns:
         Findings describing the location and category of each match.
     """
+    terms = [
+        re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.I)
+        for term in private_terms
+    ]
+    private_name = any(pattern.search(name) for pattern in terms)
+    label = "[redacted filename]" if private_name else name
     path = PurePosixPath(name)
-    findings = []
+    findings = [f"{label}: private term in filename"] if private_name else []
     if (
         PRIVATE_DIRECTORIES.intersection(path.parts)
         or name.endswith(PRIVATE_SUFFIXES)
@@ -88,13 +94,9 @@ def check_content(
         or name.endswith(".streamlit/secrets.toml")
         or path.name == "CLAUDE.local.md"
     ):
-        findings.append(f"{name}: private file")
+        findings.append(f"{label}: private file")
     if data.startswith(b"SQLite format 3\x00"):
-        findings.append(f"{name}: SQLite database")
-    terms = [
-        re.compile(r"(?<!\w)" + re.escape(term) + r"(?!\w)", re.I)
-        for term in private_terms
-    ]
+        findings.append(f"{label}: SQLite database")
     for number, line in enumerate(
         data.decode("utf-8", errors="replace").splitlines(), 1
     ):
@@ -104,9 +106,9 @@ def check_content(
                 category != "credential URL" or not _synthetic_database_url(match[0])
                 for match in matches
             ):
-                findings.append(f"{name}:{number}: {category}")
+                findings.append(f"{label}:{number}: {category}")
         if any(pattern.search(line) for pattern in terms):
-            findings.append(f"{name}:{number}: private term")
+            findings.append(f"{label}:{number}: private term")
     return findings
 
 
@@ -125,17 +127,29 @@ def tracked_contents(root: Path) -> Iterator[tuple[str, bytes]]:
             yield name, path.read_bytes()
 
 
-def history_contents(root: Path) -> Iterator[tuple[str, bytes]]:
-    """Yield all reachable Git blobs and commit messages, including deleted files."""
+def history_contents(
+    root: Path, revisions: tuple[str, ...] = ("--all",)
+) -> Iterator[tuple[str, bytes]]:
+    """Yield reachable file names, blobs, commit metadata, and annotated tags."""
     # One blob can have several names; rev-list reports only one of those names.
     names = subprocess.check_output(
-        ["git", "log", "--all", "-m", "--format=", "--name-only", "-z", "--no-renames"],
+        [
+            "git",
+            "log",
+            "-m",
+            "--format=",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            *revisions,
+            "--",
+        ],
         cwd=root,
     )
     for name in sorted(set(filter(None, names.split(b"\0")))):
         yield name.decode(), b""
     entries = subprocess.check_output(
-        ["git", "rev-list", "--objects", "--all"], cwd=root
+        ["git", "rev-list", "--objects", *revisions, "--"], cwd=root
     )
     with subprocess.Popen(
         ["git", "cat-file", "--batch"],
@@ -154,9 +168,54 @@ def history_contents(root: Path) -> Iterator[tuple[str, bytes]]:
             process.stdout.read(1)
             if kind == b"blob":
                 yield path.decode(), data
-            elif kind == b"commit":
-                yield f"commit {object_id.decode()[:12]}", data.split(b"\n\n", 1)[1]
+            elif kind in {b"commit", b"tag"}:
+                yield f"{kind.decode()} {object_id.decode()[:12]}", data
         process.stdin.close()
+
+
+def push_contents(root: Path, updates: Iterable[str]) -> Iterator[tuple[str, bytes]]:
+    """Scan pushed tips and their ancestry, without unrelated local branches.
+
+    Full ancestry also covers deleted files and newly created remote branches.
+    Only commits and tags pointing to commits are accepted by this guard.
+    """
+    revisions = set()
+    for update in updates:
+        fields = update.split()
+        if len(fields) != 4 or not re.fullmatch(
+            r"[0-9a-f]{40}|[0-9a-f]{64}", fields[1]
+        ):
+            message = "Invalid pre-push input."
+            raise ValueError(message)
+        _, object_id, remote_ref, _ = fields
+        if set(object_id) == {"0"}:
+            continue
+        subprocess.run(
+            ["git", "rev-parse", "--verify", f"{object_id}^{{commit}}"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        yield "pushed ref", remote_ref.encode()
+        revisions.add(object_id)
+    if revisions:
+        yield from history_contents(root, tuple(sorted(revisions)))
+
+
+def configured_private_terms(root: Path) -> Path | None:
+    """Read the local-only location of the private terms file, when configured."""
+    result = subprocess.run(
+        ["git", "config", "--local", "--get", "household-forecast.privateTermsFile"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 1:
+        return None
+    result.check_returncode()
+    return root / Path(result.stdout.strip()).expanduser()
 
 
 def load_private_terms(path: Path, root: Path) -> tuple[str, ...]:
@@ -186,17 +245,33 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--private-terms", type=Path)
-    parser.add_argument("--history", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--history", action="store_true")
+    mode.add_argument(
+        "--pre-push", action="store_true", help="Read Git pre-push updates from stdin."
+    )
     parser.add_argument(
         "--directory", type=Path, help="Also scan an unpacked release directory."
     )
     args = parser.parse_args()
+    if args.pre_push and args.directory:
+        parser.error("--directory cannot be used with --pre-push.")
     if args.directory is not None and not args.directory.is_dir():
         parser.error("The release directory does not exist.")
-    terms = (
-        load_private_terms(args.private_terms, args.root) if args.private_terms else ()
+    private_path = args.private_terms
+    if args.pre_push and private_path is None:
+        private_path = configured_private_terms(args.root)
+    try:
+        terms = load_private_terms(private_path, args.root) if private_path else ()
+    except (OSError, ValueError):
+        parser.error(
+            "Cannot load private terms. Check the configured external JSON file."
+        )
+    sources = (
+        [push_contents(args.root, sys.stdin)]
+        if args.pre_push
+        else [tracked_contents(args.root)]
     )
-    sources = [tracked_contents(args.root)]
     if args.history:
         sources.append(history_contents(args.root))
     if args.directory:
@@ -210,14 +285,19 @@ def main() -> None:
             for path in args.directory.rglob("*")
             if path.is_file() or path.is_symlink()
         )
-    findings = sorted(
-        {
-            finding
-            for source in sources
-            for name, data in source
-            for finding in check_content(name, data, terms)
-        }
-    )
+    try:
+        findings = sorted(
+            {
+                finding
+                for source in sources
+                for name, data in source
+                for finding in check_content(name, data, terms)
+            }
+        )
+    except (ValueError, subprocess.CalledProcessError):
+        parser.error(
+            "Cannot scan pushed history. Only commits and tags pointing to commits are supported."
+        )
     if findings:
         sys.stdout.write("\n".join(findings) + "\n")
         raise SystemExit(1)

@@ -8,6 +8,20 @@
 
 set -euo pipefail
 
+repo=$(git rev-parse --show-toplevel)
+hook=$(git rev-parse --git-path hooks/pre-push)
+source="$repo/scripts/pre-push"
+if [[ -e "$hook" || -L "$hook" ]]; then
+    if [[ ! -L "$hook" || "$(readlink "$hook")" != "$source" ]]; then
+        echo "setup: an existing pre-push hook needs manual integration with scripts/pre-push." >&2
+        exit 1
+    fi
+else
+    mkdir -p "$(dirname "$hook")"
+    ln -s "$source" "$hook"
+fi
+chmod +x "$source"
+
 # Pre-commit hooks: install if pre-commit is on PATH.
 if command -v pre-commit >/dev/null 2>&1; then
     echo "setup: installing pre-commit hooks..."
