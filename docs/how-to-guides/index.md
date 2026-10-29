@@ -8,8 +8,9 @@ uploads a database you previously downloaded. **Load example** opens fictional
 starter data with two Plans to compare. Opening another database, loading the
 example, or choosing **New database** replaces the current session's contents
 after confirmation.
-Uploads are limited to 50 MiB. Invalid or incompatible files leave the current
-database unchanged.
+Uploads are limited to 50 MiB and must use the current SQLite database and
+document formats. Invalid or incompatible files leave the current database
+unchanged.
 
 1. Open your latest database file, load the example, or start with the empty database.
 2. Edit assumptions and use the normal **Save** actions in each editor. Save
@@ -470,28 +471,6 @@ Backups include goal identities and names. If an imported identity has a differe
 current name, explicitly keep the shared goal or create a separate one. Version-one
 backups require review of the proposed destinations before loading. Their old extra
 saving becomes a fixed annual Retirement allocation; taxes are recalculated.
-
-## Export an existing PostgreSQL database
-
-The app no longer connects to PostgreSQL. To keep an existing current-format
-household database, export it once to SQLite. Set `FINANCIAL_MODEL_DATABASE_URL`
-to its connection string in your shell, then choose a private output location:
-
-```bash
-pixi run --locked -e postgres-export python scripts/export_postgres.py /private/path/household-forecast.sqlite
-```
-
-The optional `postgres-export` environment supplies the PostgreSQL driver; the
-app and its cloud environment do not need it. The exporter reads a consistent
-snapshot without changing the source and refuses to overwrite an existing file.
-It preserves saved identities, revisions, household defaults, goal relationships,
-and frozen forecast results. It creates the local file with owner-only access.
-
-Open the resulting file with **Open database** and review its saved libraries and
-forecasts before continuing. Keep the original database and a private backup
-until you have verified the exported file. The exporter accepts current-format
-records only; it does not guess how to upgrade historical input formats. See
-[historical conversion rules](#historical-conversions) if it reports an older schema.
 
 ## Prepare a private deployment
 

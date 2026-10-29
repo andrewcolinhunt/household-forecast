@@ -58,7 +58,6 @@ repos:
           - pytest
           - pydantic
           - streamlit==1.64.0
-          - psycopg[binary]==3.3.6
           - numpy==2.5.3
           - types-PyYAML
 

@@ -178,9 +178,8 @@ copies and their provenance survive; the import does not populate source librari
 Earlier planning documents require explicit conversion to version 4. The pure
 `financial_model.planning_migration.convert_planning_documents` function converts
 versions 1 and 3 using reviewed inputs; `timeline_conversion_review` compares old
-and new annual spending. These functions do not read or update a database. The
-historical PostgreSQL preview/apply commands have been retired. The current app
-and PostgreSQL exporter accept current-format records only.
+and new annual spending. These functions do not read or update a database.
+Uploaded SQLite databases require current-format records.
 
 The optional `profile_contexts` argument maps standalone Spending or Retirement
 source UUIDs to reviewed Plan UUIDs. Conversion needs that
@@ -334,8 +333,7 @@ calculations. They do not include application code or credentials. Sessions have
 no shared database, automatic synchronization, or durable hosted persistence.
 See [the database file workflow](#database-files).
 
-Storage functions take a SQLite file path in their `dsn` argument. There is no
-runtime PostgreSQL connection or database URL configuration.
+Storage functions take a SQLite file path in their `dsn` argument.
 `financial_model.storage_common` owns connection handling, backup size limits,
 and `RevisionConflictError`.
 
@@ -411,7 +409,7 @@ Difference percentiles are absent outside the baseline's planning horizon.
 `list_forecasts(dsn)` reads current-format runs in reverse creation order.
 `import_forecast_backup(bytes)` validates an exported document up to 10 MB and
 preserves its identity. Only the current format can be saved or imported.
-Uploaded databases and the PostgreSQL exporter require current-format runs.
+Uploaded SQLite databases require current-format runs.
 Runtime reads do not delete or migrate results.
 
 See [forecast methodology](#forecast-method) for conventions, limitations, and
