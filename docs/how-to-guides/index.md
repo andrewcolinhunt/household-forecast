@@ -479,8 +479,8 @@ Hosting is a separate setup step; running locally does not publish the app.
 Uploaded databases are processed on the server, so restrict access before using
 household data.
 
-1. Generate deployment dependencies with `pixi run --locked export-cloud` and
-   verify them with `pixi run --locked check-cloud`. Commit `environment.yml`.
+1. Generate deployment dependencies with `pixi run export-cloud` and
+   verify them with `pixi run check-cloud`. Commit `environment.yml`.
 2. Deploy the GitHub repository with entry point `streamlit_app.py` and Python
    3.12. Community Cloud installs the generated `environment.yml`.
 3. Set app sharing to **Only specific people can view this app** and invite the

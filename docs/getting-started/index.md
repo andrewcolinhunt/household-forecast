@@ -3,9 +3,9 @@
 Run the app locally with Python dependencies managed by [Pixi](https://pixi.sh):
 
 ```bash
-pixi install --locked
-pixi run --locked setup
-pixi run --locked app
+pixi install
+pixi run setup
+pixi run app
 ```
 
 Open <http://localhost:8501>. The first calculation loads the tax engine and can

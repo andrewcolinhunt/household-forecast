@@ -23,13 +23,18 @@ power. See the [annual calculation assumptions](docs/concepts/index.md) and
 
 ## Run locally
 
-Install [Pixi](https://pixi.sh), then run these commands from the repository
-directory:
+Install [Pixi](https://pixi.sh) **0.83.0**, matching the project manifest:
 
 ```bash
-pixi install --locked
-pixi run --locked setup
-pixi run --locked app
+curl -fsSL https://pixi.sh/install.sh | PIXI_VERSION=v0.83.0 bash
+```
+
+Then run these commands from the repository directory:
+
+```bash
+pixi install
+pixi run setup
+pixi run app
 ```
 
 Open [localhost:8501](http://localhost:8501).
@@ -61,9 +66,9 @@ Pixi manages dependencies through `pyproject.toml` and `pixi.lock`.
 See [Contributing](CONTRIBUTING.md) for privacy checks and the development workflow.
 
 ```bash
-pixi run --locked fmt
-pixi run --locked test
-pixi run --locked docs-build
+pixi run fmt
+pixi run test
+pixi run docs-build
 ```
 
 ## License and contact

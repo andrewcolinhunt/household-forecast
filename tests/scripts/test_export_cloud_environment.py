@@ -29,12 +29,26 @@ def test_render_environment_matches_locked_linux_packages() -> None:
     assert any(pin.startswith("python=3.12.") for pin in result["dependencies"][:-1])
 
 
-@pytest.mark.parametrize("change", ["version", "source", "reference"])
+def test_render_environment_accepts_versionless_editable_record() -> None:
+    lock = yaml.safe_load((ROOT / "pixi.lock").read_text())
+    editable = next(p for p in lock["packages"] if p.get("pypi") == "./")
+    assert "version" not in editable
+    assert "sha256" not in editable
+    assert "-e ." in yaml.safe_load(render_environment(lock))["dependencies"][-1]["pip"]
+
+
+@pytest.mark.parametrize("version", [6, 8])
+def test_render_environment_rejects_other_lock_versions(version: int) -> None:
+    lock = yaml.safe_load((ROOT / "pixi.lock").read_text())
+    lock["version"] = version
+    with pytest.raises(ValueError, match="Expected Pixi lock format 7"):
+        render_environment(lock)
+
+
+@pytest.mark.parametrize("change", ["source", "reference"])
 def test_render_environment_rejects_unsupported_lock(change: str) -> None:
     lock = deepcopy(yaml.safe_load((ROOT / "pixi.lock").read_text()))
-    if change == "version":
-        lock["version"] = 7
-    elif change == "reference":
+    if change == "reference":
         lock["environments"]["default"]["packages"]["linux-64"].append(
             {"other": "package"}
         )

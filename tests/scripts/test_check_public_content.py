@@ -462,8 +462,9 @@ def test_setup_installs_guard_repeatably_and_preserves_existing_hook(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("custom_pixi", [False, True])
 def test_installed_hook_blocks_actual_push_of_deleted_private_data(
-    push_repository: Path, tmp_path: Path
+    push_repository: Path, tmp_path: Path, custom_pixi: bool
 ) -> None:
     root = push_repository
     clean = _git(root, "rev-parse", "HEAD")
@@ -480,8 +481,8 @@ def test_installed_hook_blocks_actual_push_of_deleted_private_data(
     (root / ".git/hooks/pre-push").symlink_to(scripts / "pre-push")
     # Substitute only Pixi's environment launcher; exercise the real Git hook.
     home = tmp_path / "home"
-    launcher = home / ".pixi/bin/pixi"
-    launcher.parent.mkdir(parents=True)
+    launcher = tmp_path / "selected-pixi" if custom_pixi else home / ".pixi/bin/pixi"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
     launcher.write_text(
         f'#!/bin/sh\nshift 4\nexec {shlex.quote(sys.executable)} "$@"\n'
     )
@@ -489,6 +490,9 @@ def test_installed_hook_blocks_actual_push_of_deleted_private_data(
     remote = tmp_path / "remote.git"
     _git(tmp_path, "init", "--bare", "-q", str(remote))
     environment = {**os.environ, "HOME": str(home)}
+    environment.pop("PIXI_EXE", None)
+    if custom_pixi:
+        environment["PIXI_EXE"] = str(launcher)
     for ref, expected in ((clean, 0), ("HEAD", 1)):
         result = subprocess.run(
             ["git", "push", str(remote), f"{ref}:refs/heads/main"],

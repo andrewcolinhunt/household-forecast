@@ -36,7 +36,6 @@ __pycache__/
 # Python packaging
 *.egg-info/
 *.egg
-src/financial_model/_version.py
 dist/
 build/
 

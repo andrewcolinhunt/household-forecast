@@ -1,6 +1,6 @@
 [project]
 name = "household-forecast"
-dynamic = ["version"]
+version = "0.1.0.dev0"
 description = "A financial model for personal and family financial planning"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,14 +9,8 @@ dependencies = []  # All dependencies managed by Pixi
 
 # Build settings ----------------------------------------------------------------------
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.version]
-source = "vcs"
-
-[tool.hatch.build.hooks.vcs]
-version-file = "src/financial_model/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/financial_model"]
@@ -27,7 +21,7 @@ packages = ["src/financial_model"]
 [tool.pixi.workspace]
 channels  = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
-requires-pixi = "==0.66.0"
+requires-pixi = "==0.83.0"
 
 [tool.pixi.dependencies]
 python       = ">=3.12.16,<3.13"
