@@ -2,4 +2,4 @@
 set -eu
 
 cd "$(git rev-parse --show-toplevel)"
-exec "$HOME/.pixi/bin/pixi" run --locked --no-install python scripts/check_public_content.py --pre-push
+exec "${PIXI_EXE:-$HOME/.pixi/bin/pixi}" run --locked --no-install python scripts/check_public_content.py --pre-push

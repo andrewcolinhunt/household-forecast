@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-time post-install fixups. Invoked by `pixi run --locked setup` once after
+# One-time post-install fixups. Invoked by `pixi run setup` once after
 # cloning. Idempotent: rerunning is cheap and safe.
 #
 # Add steps below as the project accretes post-install concerns.

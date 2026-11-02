@@ -36,6 +36,7 @@ repos:
     rev: "v3.6.2"
     hooks:
       - id: prettier
+        language_version: system
         exclude: ^environment\.yml$ # Deterministic generated output.
         types_or: [yaml, json]
 

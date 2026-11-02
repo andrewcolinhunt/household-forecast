@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def render_environment(lock: dict[str, Any]) -> str:
-    """Export supported lock-v6 package records with exact resolved versions.
+    """Export supported lock-v7 package records with exact resolved versions.
 
     Args:
         lock: Parsed Pixi lock file with the default Linux environment.
@@ -24,8 +24,8 @@ def render_environment(lock: dict[str, Any]) -> str:
     Raises:
         ValueError: If the lock format or a package source is unsupported.
     """
-    if lock.get("version") != 6:
-        message = "Expected Pixi lock format 6; review the exporter before upgrading."
+    if lock.get("version") != 7:
+        message = "Expected Pixi lock format 7; review the exporter before upgrading."
         raise ValueError(message)
     environment = lock["environments"]["default"]
     records = {

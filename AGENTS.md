@@ -18,13 +18,14 @@ with explicit account, benefit, economic, and future-tax assumptions. See
 
 | Setting     | Value                       |
 | ----------- | --------------------------- |
-| Environment | Pixi (`~/.pixi/bin/pixi`)   |
+| Environment | Pixi 0.83.0   |
 | Formatting  | Ruff                        |
 | Testing     | Pytest                      |
 | Docs        | Jupyter Book 2 (MyST)       |
 
-IMPORTANT: Always use the full pixi path (`~/.pixi/bin/pixi`) when running
-commands. The short `pixi` form is for user-facing docs only.
+Use the full path to the selected Pixi 0.83.0 executable. The examples assume
+`~/.pixi/bin/pixi`; use a separate versioned executable while other repositories
+still need older clients. The short `pixi` form is for user-facing docs only.
 
 ---
 
@@ -44,14 +45,23 @@ commands. The short `pixi` form is for user-facing docs only.
 
 ### Pixi lock discipline
 
-Use `--locked` for routine installs and tasks so Pixi stops instead of silently
-rewriting `pixi.lock`. Run an unlocked Pixi command only when intentionally
-changing dependencies, and commit `pyproject.toml` and `pixi.lock` together.
+Use `--locked` in CI and agent work unrelated to dependency changes. Ordinary
+local development may use `pixi install` and `pixi run`. Refresh the committed
+lock intentionally when dependency metadata changes, starting from the existing
+lock. Inspect unexpected changes before restoring them. Source, comment, task,
+and version-only edits should preserve lock bytes. Regenerate and verify
+`environment.yml` after a lock refresh; its exporter supports lock format 7.
 
-If `pixi.lock` becomes dirty unexpectedly, inspect the diff. When the only
-changes are the editable project's Git-derived `version` and `sha256`, and no
-dependency change was intended, restore `pixi.lock`. Do not discard it when
-`pyproject.toml` or dependencies were intentionally changed.
+Keep a literal `[project].version` and read runtime versions from installed
+metadata. Feature commits do not bump the version; release preparation and the
+next development series do. Existing model/tax revisions govern recalculation,
+independently of this package version. See CONTRIBUTING for the release workflow.
+
+Install each worktree's own `.pixi/envs/default`; do not share installed
+environments or notebook interpreters. Shared package caches are fine. Preserve
+the privacy pre-push hook; set `PIXI_EXE` to the selected executable's full path
+when pushing with a separately installed Pixi. Do not replace a shared binary
+while other repositories require an older client.
 
 ---
 
