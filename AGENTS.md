@@ -10,7 +10,25 @@ Simplifi handles expense and account tracking. Develop this app around comparing
 decisions and explaining their consequences; imports serve that planning work.
 The app compares a single year and forecasts saved Plans through retirement,
 with explicit account, benefit, economic, and future-tax assumptions. See
-`docs/concepts/decision-planning.md` and the current direction in `_dev/README.md`.
+`docs/concepts/decision-planning.md`.
+
+## Committed content
+
+Committed code, tests, documentation, and generated artifacts must make sense
+from a fresh checkout and references available to the repository's intended
+audience. Do not cite private or uncommitted planning documents by path,
+title, identifier, or section number. State the relevant behavior, constraint,
+or rationale directly, or reference documentation available to that audience.
+
+Use portable paths and synthetic example identities, and omit incidental
+personal or organizational metadata. Preserve required attribution, copyright
+and license notices, intentionally published project metadata, and the meaning
+and validation of evidence. Do not rewrite immutable evidence or weaken
+identity checks to satisfy this rule.
+
+The stricter [personal-data requirements](CONTRIBUTING.md#keep-personal-data-private)
+also apply: household databases, exports, and personal financial details stay
+outside committed source. Examples and screenshots use fictional data.
 
 ---
 
@@ -158,3 +176,8 @@ scripts/               # Post-install fixups
 Personal agent settings are tool-specific and must remain gitignored. Claude
 Code users may use `CLAUDE.local.md`, typically symlinked into the personal
 notes repo under `_dev/`.
+
+That setup is optional; a fresh checkout need not contain `_dev/`. Before
+editing through a notes symlink, resolve its target repository and read that
+repository's instructions. Keep its branch and commit rules separate from this
+project's workflow.
