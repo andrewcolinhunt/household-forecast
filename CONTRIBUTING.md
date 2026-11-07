@@ -56,6 +56,9 @@ have an automated publication workflow.
 Use fictional data in code, tests, issues, pull requests, and screenshots. Keep
 household databases and exports outside the source repository.
 
+Follow the [committed-content policy](AGENTS.md#committed-content) for
+self-contained explanations, portable examples, and generated artifacts.
+
 The pre-push check scans each pushed branch or tag and its full history. Deleting
 a private file in a later commit does not remove it from that history. The check
 also examines commit metadata and tag annotations. It ignores unrelated local
